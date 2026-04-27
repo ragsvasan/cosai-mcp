@@ -218,7 +218,8 @@ class AuditLogger:
                     d = json.loads(line)
                 except json.JSONDecodeError as exc:
                     raise AuditChainError(
-                        f"Line {lineno}: invalid JSON — {exc}"
+                        f"Line {lineno}: invalid JSON — {exc}",
+                        lineno=lineno,
                     ) from exc
 
                 stored_hash = d.get("chain_hash", "")
@@ -227,7 +228,8 @@ class AuditLogger:
                 if stored_prev != prev_hash:
                     raise AuditChainError(
                         f"Line {lineno}: prev_hash mismatch — "
-                        f"expected {prev_hash!r}, got {stored_prev!r}"
+                        f"expected {prev_hash!r}, got {stored_prev!r}",
+                        lineno=lineno,
                     )
 
                 # Recompute chain_hash from entry without chain_hash field
@@ -236,7 +238,8 @@ class AuditLogger:
                 if stored_hash != expected_hash:
                     raise AuditChainError(
                         f"Line {lineno}: chain_hash mismatch for entry "
-                        f"{d.get('entry_id', '?')!r} — log may have been tampered with"
+                        f"{d.get('entry_id', '?')!r} — log may have been tampered with",
+                        lineno=lineno,
                     )
 
                 prev_hash = stored_hash
@@ -310,4 +313,15 @@ class AuditChainError(Exception):
 
     Indicates the log was tampered with, truncated, or corrupted.
     Callers should treat this as a security incident.
+
+    Attributes
+    ----------
+    lineno:
+        1-based line number in the audit log where the break was detected,
+        or None if the error is not line-specific (e.g. invalid JSON on
+        an unknown line before counting starts).
     """
+
+    def __init__(self, message: str, lineno: int | None = None) -> None:
+        super().__init__(message)
+        self.lineno = lineno
