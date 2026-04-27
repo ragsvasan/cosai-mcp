@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "id": "T10-003",
+  "category": "T10",
+  "severity": "high",
+  "cosai_ref": "T10",
+  "owasp_ref": "MCP-Top10-A10",
+  "cwe": ["CWE-400", "CWE-834"],
+  "probes": [
+    {
+      "id": "T10-003-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {}}}}}}}}}}}}}}}}}}}}}
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true
+        }
+      ]
+    }
+  ],
+  "remediation": "Enforce maximum input nesting depth and payload size limits on all tool arguments. Implement per-session call budgets and recursive-depth tracking to prevent Denial-of-Wallet attacks.",
+  "references": ["https://cosai.org/T10"]
+}

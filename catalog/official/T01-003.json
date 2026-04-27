@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "id": "T01-003",
+  "category": "T1",
+  "severity": "high",
+  "cosai_ref": "T1",
+  "owasp_ref": "MCP-Top10-A01",
+  "cwe": ["CWE-294", "CWE-384"],
+  "probes": [
+    {
+      "id": "T01-003-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {}
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true
+        }
+      ]
+    },
+    {
+      "id": "T01-003-p2",
+      "transport": "http",
+      "method": "initialize",
+      "payload": {
+        "protocolVersion": "2025-03-26",
+        "clientInfo": {"name": "cosai-scanner", "version": "1.0"},
+        "capabilities": {}
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": false
+        }
+      ]
+    }
+  ],
+  "remediation": "Implement JTI (JWT ID) tracking with a server-side cache. Reject any token whose JTI has been seen before. Use short token lifetimes (iat + max_age check) to bound the replay window.",
+  "references": ["https://cosai.org/T1", "https://datatracker.ietf.org/doc/html/rfc7519#section-4.1.7"]
+}

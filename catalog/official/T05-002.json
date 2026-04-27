@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "id": "T05-002",
+  "category": "T5",
+  "severity": "critical",
+  "cosai_ref": "T5",
+  "owasp_ref": "MCP-Top10-A05",
+  "cwe": ["CWE-522", "CWE-200"],
+  "probes": [
+    {
+      "id": "T05-002-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {}
+      },
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "Bearer sk-"
+        },
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "Bearer ghp_"
+        }
+      ]
+    }
+  ],
+  "remediation": "Never include Authorization header values or bearer tokens in tool response bodies. Apply credential-scrubbing middleware at the MCP response layer.",
+  "references": ["https://cosai.org/T5"]
+}

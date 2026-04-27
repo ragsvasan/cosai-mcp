@@ -33,14 +33,20 @@ P0: Scaffold
   T8/T10       T2/T6/T11 Engine     Harness T2/T6/T7
   (‖ within)             ‖          ‖
   └─────┬──────┘─────────┤──────────┘
-        ↓                P7
-      P8: CLI +          Middleware
-      Adoption Paths     T4/T9/T12
-        ↓                ‖
+        ↓                ↓          ‖
+      P4c                P7
+      Gap probes         Middleware
+      T5/T8-003          T4/T9/T12
+      T10-003            ‖
+      T06-002            ‖
+        ↓                ↓
+      P8: CLI +
+      Adoption Paths
+        ↓
       P9: CI/CD + Supply Chain
 ```
 
-P1 ‖ P2 → P3 → (P4a ‖ P4b ‖ P5 ‖ P6 ‖ P7) → P8 → P9
+P1 ‖ P2 → P3 → (P4a ‖ P4b ‖ P5 ‖ P6 ‖ P7) → P4c → P8 → P9
 
 ---
 
@@ -302,6 +308,167 @@ pytest tests/probes/t02_* tests/probes/t06_* tests/probes/t11_* -v
 
 ---
 
+## Phase 4c — Gap Closure: T5 / T8-003 / T10-003 / T6-002 / T1-003  (→ P4a + P4b)
+
+**What:** Fills the coverage gaps identified in the 2026 CoSAI whitepaper cross-reference. Five targeted additions — new catalog entries, probe tests, and two middleware implementations. This is the last black-box phase before the stateful harness (P6) and report engine (P5).
+
+**Status:** NEXT — slotted after P4a + P4b + P7 complete.
+
+### T5 — Inadequate Data Protection (`protection.py` + catalog probes)
+
+**Delivers:**
+- `cosai_mcp/middleware/protection.py` — PII scrubber:
+  - RE2 patterns for: SSN (`\d{3}-\d{2}-\d{4}`), credit card (Luhn-checkable 13–16 digits), email, US phone, JWT header (`eyJ`...), common API key formats (40-char hex, `sk-...`, `ghp_...`)
+  - `PIIScrubber.scrub(text) -> ScrubResult`: replaces matches with `[REDACTED:<type>]`; returns `ScrubResult(text, redacted_count, findings)`
+  - `ContextLeakChecker.check(session_id, content)`: flags content that contains another session's ID (cross-session bleed signal)
+  - All patterns RE2-only — no backtracking; validated at module load
+- `catalog/official/T05-001.json` — context leakage probe: tools/call to a data-returning tool; asserts response body does NOT contain SSN / credit card / API key patterns
+- `catalog/official/T05-002.json` — credential exfiltration probe: tool response with `Authorization: Bearer sk-...`; asserts scrubbed before reaching caller
+
+**Tests (`tests/middleware/test_t5_protection.py`):**
+- `test_ssn_pattern_scrubbed` — `"SSN: 123-45-6789"` → `"SSN: [REDACTED:ssn]"`
+- `test_credit_card_scrubbed` — 16-digit Luhn-valid number scrubbed
+- `test_jwt_header_scrubbed` — `eyJhbGciOi...` replaced
+- `test_api_key_sk_scrubbed` — `sk-abc123...` (40 chars) replaced
+- `test_ghp_token_scrubbed` — `ghp_...` GitHub PAT replaced
+- `test_clean_text_unchanged` — benign text; `redacted_count == 0`
+- `test_multiple_pii_types` — SSN + email in same string; both redacted
+- `test_context_leak_checker_flags_foreign_session_id` — content contains `sess_XYZ` while current session is `sess_ABC` → flagged
+- `test_context_leak_checker_passes_own_session` — own session ID in own response → not flagged
+- `test_re2_patterns_validated_at_load` — confirm module loads without RE2 compile error
+- `test_t05_001_catalog_loads` — T05-001.json passes schema validation + signature check
+- `test_t05_001_secure_server_passes` — server returns clean data → probe passes
+- `test_t05_001_vulnerable_server_fails` — server returns SSN in body → probe fails
+- `test_t05_002_credential_exfil_rejected` — server returns Bearer token in body → probe fails
+
+**Catalog signing:** `catalog/official/T05-001.json.sig` + `T05-002.json.sig` (Ed25519).
+
+---
+
+### T8-003 — 0.0.0.0 Binding Detection (`catalog/official/T08-003.json`)
+
+**Context:** T08-001 and T08-002 cover SSRF and protocol version. The primary T8 risk from the CoSAI whitepaper — a server bound to `0.0.0.0` instead of loopback — has no catalog entry yet.
+
+**Delivers:**
+- `catalog/official/T08-003.json` — probe: connect to the target on a non-loopback interface IP (the scanner detects the server's actual bind address by checking if it responds on its LAN IP, not just localhost); assert that if the scan target is `127.0.0.1:PORT`, connecting to the same PORT on the non-loopback interface FAILS (connection refused or timeout)
+  - Implementation note: this probe sends an `initialize` to `http://<LAN_IP>:<port>` (substituted via scan config, not catalog-controlled); asserts `response.error == true` or connection refused → PASS means server is properly loopback-bound
+- `cosai_mcp/middleware/network.py` — `BindAddressValidator`:
+  - `is_loopback_only(host) -> bool`: resolves hostname; returns `True` if all resolved IPs are in loopback range
+  - `check_bind_address(host, port) -> BindCheckResult`: attempts connect; classifies as loopback-only or exposed
+
+**Tests (`tests/probes/test_t08_binding.py`):**
+- `test_t08_003_catalog_loads` — T08-003.json passes schema + signature
+- `test_loopback_bound_server_passes` — server only responds on 127.0.0.1; probe passes
+- `test_exposed_server_fails` — server responds on 0.0.0.0 equivalent; probe fails
+- `test_bind_address_validator_loopback` — `127.0.0.1` classified as loopback-only
+- `test_bind_address_validator_nonloopback` — `0.0.0.0` classified as exposed
+- `test_all_t08_probes_pass_on_secure_server` — T08-001 + T08-002 + T08-003 all pass
+
+---
+
+### T10-003 — Recursive Payload / Denial of Wallet (`catalog/official/T10-003.json` + `resources.py`)
+
+**Context:** DoW (Denial of Wallet) — one tool call triggering unbounded recursive LLM inference — is the highest-cost T10 attack pattern. Rate limiting (T10-002) and size limiting (T10-001) are done. Recursive depth and progress notifications are not.
+
+**Delivers:**
+- `catalog/official/T10-003.json` — two probes:
+  - p1: tools/call with a payload designed to trigger maximum depth (nested JSON structure `{"a": {"a": {"a": ...}}}` 20 levels deep); asserts response.error (server rejects or depth-limits)
+  - p2: long-running tools/call (simulated via SSE stream); asserts a `notifications/progress` event appears within 5 seconds (heartbeat present)
+- `cosai_mcp/middleware/resources.py` — `BudgetEnforcer` + `LoopDetector`:
+  - `BudgetEnforcer(max_calls, max_wall_seconds)`: counts `tools/call` per session; raises `BudgetExceededError` when limit hit
+  - `LoopDetector(max_depth)`: tracks parent_id chain in audit log; raises `RecursiveLoopError` when depth > max
+  - `HeartbeatMonitor.expect_progress(tool_name, timeout_seconds)`: raises `MissingHeartbeatError` if no `notifications/progress` within timeout
+
+**Tests (`tests/middleware/test_t10_resources.py`):**
+- `test_budget_enforcer_allows_within_limit` — 9 calls, limit 10 → no error
+- `test_budget_enforcer_rejects_at_limit` — 11th call → `BudgetExceededError`
+- `test_loop_detector_allows_shallow_chain` — depth 3, limit 5 → no error
+- `test_loop_detector_rejects_deep_chain` — depth 6, limit 5 → `RecursiveLoopError`
+- `test_heartbeat_monitor_passes_with_progress` — progress event at 2s, timeout 5s → passes
+- `test_heartbeat_monitor_fails_without_progress` — no progress event within timeout → `MissingHeartbeatError`
+- `test_t10_003_catalog_loads` — T10-003.json passes schema + signature
+- `test_t10_003_p1_secure_server_rejects_deep_payload` → probe passes
+- `test_t10_003_p1_vulnerable_server_executes_deep_payload` → probe fails
+- `test_t10_003_p2_heartbeat_present` → probe passes
+- `test_t10_003_p2_heartbeat_absent` → probe fails
+
+---
+
+### T06-002 — Typosquatting Detection (`catalog/official/T06-002.json` + `integrity.py`)
+
+**Context:** The CoSAI whitepaper identifies typosquatting as a primary supply chain vector. T11-001 covers unlisted tool names. T06-002 covers names that are close to — but not identical to — trusted names (Levenshtein distance ≤ 2).
+
+**Delivers:**
+- `catalog/official/T06-002.json` — probe: `tools/list` response includes a tool named `anthropic_mcp_tool` (one character off from a canonical `anthropic-mcp-tools` style name); asserts server does NOT silently include it without flagging (`response.result.tools` must not contain a tool whose name has Levenshtein distance ≤ 2 from any allowlisted name unless explicitly approved)
+  - Implementation: probe sends `tools/list`, response tools are checked against the scanner's configured allowlist; close matches → `T6-TYPOSQUAT-DETECTED`
+- `cosai_mcp/middleware/integrity.py` — `TyposquatDetector`:
+  - `levenshtein(a, b) -> int`: pure Python, O(m*n) — safe for tool names (short strings)
+  - `check_tools(tools: list[dict], allowlist: list[str], max_distance: int = 2) -> list[TyposquatFinding]`
+  - `TyposquatFinding(frozen): tool_name, closest_match, distance, severity`
+  - Also: `ManifestBaselineChecker`: stores `tools/list` response hash at scan start; re-fetches mid-session; diffs for additions → `T6-MANIFEST-DRIFT-DETECTED`
+
+**Tests (`tests/middleware/test_t6_integrity.py` + `tests/probes/test_t06_typosquat.py`):**
+- `test_levenshtein_exact_match` — distance 0
+- `test_levenshtein_one_char` — `"anthropic-mcp-tool"` vs `"anthropic-mcp-tools"` → 1
+- `test_levenshtein_two_chars` — distance 2
+- `test_levenshtein_above_threshold_not_flagged` — distance 5 → not a finding
+- `test_typosquat_detector_flags_close_name` — tool `"anthropic_mcp_tool"` vs allowlist `["anthropic-mcp-tools"]` → finding
+- `test_typosquat_detector_passes_exact_name` — exact match in allowlist → no finding
+- `test_typosquat_detector_empty_allowlist` — no allowlist configured → no findings (opt-in)
+- `test_manifest_baseline_detects_new_tool` — re-fetch adds `"evil_tool"` → `T6-MANIFEST-DRIFT-DETECTED`
+- `test_manifest_baseline_same_manifest_passes` — identical re-fetch → no finding
+- `test_t06_002_catalog_loads` — T06-002.json passes schema + signature
+- `test_t06_002_clean_server_passes` — tools/list has no close-match names → probe passes
+- `test_t06_002_typosquat_server_fails` — server returns typosquatted tool → probe flags
+
+---
+
+### T1 Additional Probes (T01-003, T01-004)
+
+**Context:** Gap analysis found replay attack (jti validation) and DPoP binding probes missing. `auth.py` middleware is a stub.
+
+**Delivers:**
+- `catalog/official/T01-003.json` — token replay probe: send same `Authorization: Bearer <token>` twice in two separate requests to the same endpoint; assert second request is rejected (`401` or error code in [-32600, -32601])
+  - Note: most black-box targets won't have true jti tracking; this probe is a behavioral signal, not a cryptographic verification
+- `catalog/official/T01-004.json` — auth header format probe: send malformed auth headers (empty string, `Bearer `, non-Bearer scheme); assert all rejected with appropriate error
+- `cosai_mcp/middleware/auth.py` — `SessionBoundIdentity`:
+  - `generate_dpop_proof(method, url, nonce=None) -> str`: ephemeral Ed25519 keypair via `joserfc`; constructs DPoP JWT with `htu`, `htm`, `iat`, `jti` (UUID4), optional `nonce`
+  - `JtiCache(maxsize=10_000)`: thread-safe LRU set; `check_and_add(jti) -> bool` returns False on replay
+  - Protects the scanner's own outbound requests — not a probe of the target
+
+**Tests (`tests/probes/test_t01_extended.py` + `tests/middleware/test_t1_auth.py`):**
+- `test_t01_003_catalog_loads`
+- `test_t01_003_server_rejects_replay` → probe passes
+- `test_t01_003_server_accepts_replay` → probe fails
+- `test_t01_004_malformed_auth_rejected` → probe passes for each malformed case
+- `test_jti_cache_first_use_allowed`
+- `test_jti_cache_replay_rejected`
+- `test_jti_cache_different_jti_allowed`
+- `test_dpop_proof_has_required_claims` — iat, jti, htm, htu present in generated proof
+
+---
+
+### Phase 4c Summary
+
+**New catalog entries:** T05-001, T05-002, T06-002, T08-003, T10-003, T01-003, T01-004 (7 entries)  
+**New middleware logic:** `protection.py` (T5), `resources.py` (T10 budget/loop/heartbeat), `integrity.py` (T6 Levenshtein + manifest baseline), `network.py` (bind address), `auth.py` (DPoP + jti cache)  
+**New tests:** ~50 tests across 5 new/extended test files
+
+**Panel:** T2 Sonnet — new catalog entries and middleware; not a new auth handshake but `auth.py` DPoP is security-relevant.
+- Sonnet: Correctness + Security (RE2 patterns, Levenshtein correctness, jti cache thread safety, DPoP claim coverage)
+- For `auth.py` DPoP specifically: "Is this the industry-standard approach for this problem class? Name the standard. Would this pass a SOC 2 / penetration test review?"
+
+**Commit gate:**
+```
+pytest tests/middleware/test_t5_protection.py tests/middleware/test_t10_resources.py tests/middleware/test_t6_integrity.py tests/middleware/test_t1_auth.py -v
+pytest tests/probes/ -v
+pytest tests/ -v   # full regression
+```
+
+**Commit:** `feat(p4c): T5 PII scrubber, T08-003 binding probe, T10-003 DoW/heartbeat, T06-002 typosquat, T01-003/004 replay probes`
+
+---
+
 ## Phase 5 — Report Engine  ‖  4a / 4b / 6 / 7
 
 **What:** SARIF + HTML report generation. Highest XSS/injection risk surface after the harness.
@@ -521,14 +688,20 @@ cosai scan http://localhost:8000 || true  # exits with a defined code (not unhan
 | P3 | Probe Harness | P1+P2 | — | **T1 Full** | feat(harness) |
 | P4a | Probes T1/T3/T8/T10 | P3 | P4b P5 P6 P7 | T2 Sonnet | feat(probes) T1/T3/T8/T10 |
 | P4b | Probes T2/T6/T11 | P3 | P4a P5 P6 P7 | T2 Sonnet | feat(probes) T2/T6/T11 |
+| **P4c** | **Gap probes T5/T8-003/T10-003/T6-002/T1-003** | **P4a+P4b** | **P5 P6** | **T2 Sonnet** | **feat(p4c): gap closure** |
 | P5 | Report Engine | P3 | P4a P4b P6 P7 | **T1 Full** | feat(report) |
 | P6 | Stateful Harness | P3 | P4a P4b P5 P7 | **T1 Full** | feat(stateful) |
-| P7 | Middleware T4/T9/T12 | P3 | P4a P4b P5 P6 | **T1 Full** | feat(middleware) |
-| P8 | CLI + Adoption | P4a P4b P5 P6 P7 | — | T2 Sonnet | feat(cli) |
+| P7 | Middleware T4/T9/T12 | P3 | P4a P4b P5 P6 | **T1 Full** | feat(middleware) ✅ DONE |
+| P8 | CLI + Adoption | P4c P5 P6 P7 | — | T2 Sonnet | feat(cli) |
 | P9 | CI/CD + Supply Chain | P8 | — | **T1 Full** | feat(ci) |
 
 **T1 Full panels:** P1, P2, P3, P5, P6, P7, P9 (7 panels total)
-**T2 Sonnet panels:** P4a, P4b, P8 (3 panels total)
+**T2 Sonnet panels:** P4a, P4b, P4c, P8 (4 panels total)
+
+**Phase completion status (2026-04-26):**
+- ✅ P0, P1, P2, P3, P4a, P4b, P7 — complete (242 tests passing)
+- 🔜 P4c — next
+- ⏳ P5, P6, P8, P9 — planned
 
 ---
 

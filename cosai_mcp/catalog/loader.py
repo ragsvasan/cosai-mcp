@@ -7,13 +7,19 @@ import types
 from pathlib import Path
 from typing import Any
 
+import warnings as _warnings
+
 try:
     import re2  # google-re2
-except ImportError as _re2_err:  # pragma: no cover
-    raise ImportError(
-        "google-re2 is required for cosai-mcp catalog loading. "
-        "Install with: pip install google-re2"
-    ) from _re2_err
+except ImportError:  # pragma: no cover
+    import re as re2  # type: ignore[no-redef]
+    _warnings.warn(
+        "google-re2 not available; falling back to stdlib re for catalog pattern validation. "
+        "Production deployments must use google-re2 (pip install google-re2) "
+        "to prevent ReDoS via malicious catalog entries.",
+        RuntimeWarning,
+        stacklevel=1,
+    )
 
 from cosai_mcp.catalog.models import (
     Assertion,

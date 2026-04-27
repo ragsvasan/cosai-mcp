@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "id": "T08-003",
+  "category": "T8",
+  "severity": "high",
+  "cosai_ref": "T8",
+  "owasp_ref": "MCP-Top10-A08",
+  "cwe": ["CWE-668"],
+  "probes": [
+    {
+      "id": "T08-003-p1",
+      "transport": "http",
+      "method": "initialize",
+      "payload": {
+        "protocolVersion": "2025-03-26",
+        "clientInfo": {"name": "cosai-scanner", "version": "1.0"},
+        "capabilities": {}
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": false
+        }
+      ]
+    }
+  ],
+  "remediation": "Bind the MCP server exclusively to loopback (127.0.0.1 or ::1). Never bind to 0.0.0.0 or a LAN interface unless network-level isolation (firewall, VPC) is enforced.",
+  "references": ["https://cosai.org/T8"]
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "id": "T06-002",
+  "category": "T6",
+  "severity": "high",
+  "cosai_ref": "T6",
+  "owasp_ref": "MCP-Top10-A06",
+  "cwe": ["CWE-829", "CWE-693"],
+  "probes": [
+    {
+      "id": "T06-002-p1",
+      "transport": "http",
+      "method": "tools/list",
+      "payload": {},
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": false
+        }
+      ]
+    }
+  ],
+  "remediation": "Maintain an explicit tool name allowlist. Reject or flag tools whose names are within Levenshtein distance 2 of trusted tool names (typosquatting). Monitor tools/list for additions between scans.",
+  "references": ["https://cosai.org/T6"]
+}

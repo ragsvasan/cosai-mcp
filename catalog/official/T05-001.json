@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "id": "T05-001",
+  "category": "T5",
+  "severity": "high",
+  "cosai_ref": "T5",
+  "owasp_ref": "MCP-Top10-A05",
+  "cwe": ["CWE-312", "CWE-200"],
+  "probes": [
+    {
+      "id": "T05-001-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {}
+      },
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "sk-"
+        },
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "ghp_"
+        },
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "Authorization:"
+        }
+      ]
+    }
+  ],
+  "remediation": "Ensure tool responses do not include API keys, tokens, or credentials. Apply PII scrubbing middleware before responses reach callers.",
+  "references": ["https://cosai.org/T5"]
+}

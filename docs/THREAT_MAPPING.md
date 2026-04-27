@@ -8,20 +8,34 @@ Use this table for compliance evidence, vendor questionnaires, and procurement a
 
 ## Cross-Reference Table
 
-| CoSAI | Category Name | ISO 27001:2022 Annex A | NIST AI RMF (2026) | OWASP MCP Top 10 | CWE | CoSAI Risk Map |
-|-------|--------------|----------------------|-------------------|-----------------|-----|---------------|
-| **T1** | Improper Authentication | A.5.15 Access Control, A.5.17 Authentication | MANAGE 1.1 Risk Response, GOVERN 6.2 Accountability | A01: Broken Authentication | CWE-287, CWE-306, CWE-384 | Critical: Contextualized |
-| **T2** | Missing Access Control | A.5.15 Access Control, A.5.18 Access Rights | MANAGE 1.1 Risk Response, MAP 1.1 System Context | A02: Broken Access Control | CWE-285, CWE-732, CWE-269 | Critical: Contextualized |
-| **T3** | Input Validation Failures | A.8.25 Secure Development, A.8.29 Security Testing | GOVERN 1.2 Accountability, MEASURE 2.1 Assessment | A03: Injection Attacks | CWE-78, CWE-22, CWE-89, CWE-943 | High: Traditional Amplified |
-| **T4** | Data/Control Boundary | A.8.25 Secure Development, A.8.29 Security Testing | GOVERN 1.2, MAP 1.1 System Context | A04: Prompt Injection | CWE-74, CWE-77, CWE-116 | High: Novel Vector |
-| **T5** | Inadequate Data Protection | A.8.10 Information Deletion, A.8.11 Data Masking | MAP 1.1, MEASURE 2.6 Data Quality | A05: Sensitive Data Exposure | CWE-200, CWE-312, CWE-311 | High: Traditional Amplified |
-| **T6** | Integrity/Verification | A.8.25 Secure Development, A.5.21 ICT Supply Chain | MAP 4.1 Third-party Risks, MANAGE 2.2 | A06: Integrity Failures | CWE-345, CWE-494, CWE-1357 | Critical: Supply Chain |
-| **T7** | Session Security Failures | A.8.10 Information Isolation, A.5.15 Access Control | MAP 1.1 System Context, MANAGE 1.1 | A07: Session Management | CWE-384, CWE-287, CWE-295 | Medium: Protocol Gap |
-| **T8** | Network Binding Failures | A.8.1 User Endpoint Devices, A.8.22 Network Segregation | MEASURE 2.1 Security Assessment | A08: Network Exposure | CWE-668, CWE-441, CWE-918 | High: Traditional Amplified |
-| **T9** | Trust Boundary Failures | A.8.25 Secure Development, A.5.36 Compliance | GOVERN 1.2, MAP 1.1 | A09: Overreliance on AI | CWE-602, CWE-807 | High: Novel Vector |
-| **T10** | Resource Management | A.8.6 Capacity Management | MEASURE 2.1, MANAGE 2.4 | A10: Resource Exhaustion | CWE-400, CWE-770, CWE-834 | High: Traditional Amplified |
-| **T11** | Supply Chain/Lifecycle | A.5.21 ICT Supply Chain, A.8.30 Outsourced Dev | MAP 4.1 Third-party Risks | A11: Supply Chain | CWE-494, CWE-1357, CWE-693 | Critical: Supply Chain |
-| **T12** | Insufficient Logging | A.8.15 Logging, A.8.16 Monitoring | MEASURE 1.1 Performance Monitoring | A12: Insufficient Logging | CWE-778, CWE-223, CWE-532 | High: Visibility Gap |
+| CoSAI | Category Name | ISO 27001:2022 Annex A | NIST AI RMF (2026) | NIST AG-MP.1 Tool Class | OWASP MCP Top 10 | CWE | CoSAI Risk Map |
+|-------|--------------|----------------------|-------------------|------------------------|-----------------|-----|---------------|
+| **T1** | Improper Authentication | A.5.15 Access Control, A.5.17 Authentication | MANAGE 1.1 Risk Response, GOVERN 6.2 Accountability | All classes (identity gate) | A01: Broken Authentication | CWE-287, CWE-306, CWE-384 | Critical: Contextualized |
+| **T2** | Missing Access Control | A.5.15 Access Control, A.5.18 Access Rights | MANAGE 1.1 Risk Response, MAP 1.1 System Context | Execute-class (HITL required) | A02: Broken Access Control | CWE-285, CWE-732, CWE-269 | Critical: Contextualized |
+| **T3** | Input Validation Failures | A.8.25 Secure Development, A.8.29 Security Testing | GOVERN 1.2 Accountability, MEASURE 2.1 Assessment | Write + Execute classes | A03: Injection Attacks | CWE-78, CWE-22, CWE-89, CWE-943 | High: Traditional Amplified |
+| **T4** | Data/Control Boundary | A.8.25 Secure Development, A.8.29 Security Testing | GOVERN 1.2, MAP 1.1 System Context | All classes (data ingestion) | A04: Prompt Injection | CWE-74, CWE-77, CWE-116 | High: Novel Vector |
+| **T5** | Inadequate Data Protection | A.8.10 Information Deletion, A.8.11 Data Masking | MAP 1.1, MEASURE 2.6 Data Quality | Read + Write classes | A05: Sensitive Data Exposure | CWE-200, CWE-312, CWE-311 | High: Traditional Amplified |
+| **T6** | Integrity/Verification | A.8.25 Secure Development, A.5.21 ICT Supply Chain | MAP 4.1 Third-party Risks, MANAGE 2.2 | All classes (manifest trust) | A06: Integrity Failures | CWE-345, CWE-494, CWE-1357 | Critical: Supply Chain |
+| **T7** | Session Security Failures | A.8.10 Information Isolation, A.5.15 Access Control | MAP 1.1 System Context, MANAGE 1.1 | All classes (session binding) | A07: Session Management | CWE-384, CWE-287, CWE-295 | Medium: Protocol Gap |
+| **T8** | Network Binding Failures | A.8.1 User Endpoint Devices, A.8.22 Network Segregation | MEASURE 2.1 Security Assessment | Read class (network reach) | A08: Network Exposure | CWE-668, CWE-441, CWE-918 | High: Traditional Amplified |
+| **T9** | Trust Boundary Failures | A.8.25 Secure Development, A.5.36 Compliance | GOVERN 1.2, MAP 1.1 | Execute-class (HITL gate) | A09: Overreliance on AI | CWE-602, CWE-807 | High: Novel Vector |
+| **T10** | Resource Management | A.8.6 Capacity Management | MEASURE 2.1, MANAGE 2.4 | Execute-class (cost amplification) | A10: Resource Exhaustion | CWE-400, CWE-770, CWE-834 | High: Traditional Amplified |
+| **T11** | Supply Chain/Lifecycle | A.5.21 ICT Supply Chain, A.8.30 Outsourced Dev | MAP 4.1 Third-party Risks | All classes (installation time) | A11: Supply Chain | CWE-494, CWE-1357, CWE-693 | Critical: Supply Chain |
+| **T12** | Insufficient Logging | A.8.15 Logging, A.8.16 Monitoring | MEASURE 1.1 Performance Monitoring | Execute-class (accountability) | A12: Insufficient Logging | CWE-778, CWE-223, CWE-532 | High: Visibility Gap |
+
+---
+
+## NIST AG-MP.1 Tool Risk Classification Detail
+
+The **AG-MP.1** subcategory (Agent Tool Risk Classification) is the 2026 NIST AI RMF addition most directly relevant to MCP. It classifies tools into three risk levels and mandates different control requirements for each.
+
+| Tool Class | Examples | AG-MP.1 Risk | cosai-mcp control |
+|-----------|----------|-------------|------------------|
+| **Read-only** | `tools/list`, `read_file`, `search` | Low | T1 auth probes; T3 input validation |
+| **Write** | `write_file`, `update_record`, `send_draft` | Medium | T2 RBAC; T3 injection; T5 PII scrub before write |
+| **Execute** | `run_command`, `send_email`, `delete_record`, `deploy` | High | T2 RBAC + HITL gate; T9 deterministic validation (not LLM judgment); T12 audit trace |
+
+**HITL requirement for Execute-class tools:** AG-MP.1 mandates human-in-the-loop approval for high-consequence Execute-class actions. cosai-mcp's T9 middleware enforces that this gate is deterministic (schema-based), not model-delegated. The T2 stateful harness tests that a server correctly enforces the Execute-class boundary across a multi-turn session.
 
 ---
 

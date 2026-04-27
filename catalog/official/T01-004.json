@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "id": "T01-004",
+  "category": "T1",
+  "severity": "medium",
+  "cosai_ref": "T1",
+  "owasp_ref": "MCP-Top10-A01",
+  "cwe": ["CWE-287"],
+  "probes": [
+    {
+      "id": "T01-004-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {}
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true
+        }
+      ]
+    },
+    {
+      "id": "T01-004-p2",
+      "transport": "http",
+      "method": "tools/list",
+      "payload": {},
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": false
+        }
+      ]
+    }
+  ],
+  "remediation": "Validate Authorization header format strictly: require Bearer scheme, non-empty token, and valid JWT structure. Reject all other formats with 401.",
+  "references": ["https://cosai.org/T1", "https://datatracker.ietf.org/doc/html/rfc6750"]
+}
