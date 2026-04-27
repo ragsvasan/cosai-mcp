@@ -721,7 +721,7 @@ cosai scan http://localhost:8000 || true  # exits with a defined code (not unhan
 - ✅ P0–P9 — all implementation phases complete (567 tests passing)
 
 **P9 is the last implementation phase. What remains before submission:**
-1. ⏸ P8 batched T2 Sonnet panel (covers P4c + P8) → fix findings → commit
+1. ✅ P8 batched T2 Sonnet panel (covers P4c + P8) — DONE
 2. ⏸ P9 T1 Full + Opus adversary panel → fix findings → commit
 3. 🚀 Submit to cosai-oasis GitHub org as reference implementation
 
