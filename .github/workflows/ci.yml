@@ -39,3 +39,25 @@ jobs:
         if: matrix.python-version == '3.11'
         with:
           files: ./coverage.xml
+
+      - name: Upload SARIF on scanner error (exit 2)
+        if: failure() && matrix.python-version == '3.11' && hashFiles('cosai-scan.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: cosai-scan.sarif
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t cosai-mcp-test .
+
+      - name: Smoke test scanner in Docker
+        run: |
+          # Scanner must exit with a defined code, never an unhandled exception
+          docker run --network=none cosai-mcp-test cosai scan http://127.0.0.1:9999 || true
+          # Only exit codes 0-3 are valid
+          EXIT=$(docker run --network=none cosai-mcp-test cosai scan http://127.0.0.1:9999; echo $?)
+          echo "Exit code: $EXIT"

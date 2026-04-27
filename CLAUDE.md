@@ -6,16 +6,13 @@ Open-source MCP security framework: exhaustive test suite + composable middlewar
 ## Origin
 Designed in April 2026 based on the CoSAI/OASIS January 2026 whitepaper "Security Taxonomy and Governance Framework for the Model Context Protocol". Architecture decisions are locked (see below) — do not re-litigate without explicit user instruction.
 
-## Landscape (what already exists — do not duplicate)
-| Tool | What it does | Why we differ |
-|---|---|---|
-| MCP-Bastion | Lightweight JSON-RPC middleware | Narrow, no test suite, no session identity |
-| Cisco MCP Scanner | YARA + LLM static scan | Scan-only, no runtime enforcement |
-| mcp-authx | OAuth 2.1 + PKCE | T1 only |
-| OWASP MCP Top 10 / Cheat Sheet | Documents | No runnable code |
-| CoSAI CodeGuard | Coding rules | Not MCP-specific |
+## Landscape and Positioning
 
-**Our unique value:** all 12 categories, runnable black-box probes, session-bound identity reference impl, DAG execution trace logger, CI/CD gate.
+Full competitive analysis: [docs/VALUE_PROP.md](docs/VALUE_PROP.md)
+
+**Our unique value:** the only tool that combines runtime black-box JSON-RPC probing + stateful multi-turn conformance harness + all 12 CoSAI categories + CI/CD gate. Static scanners (Cisco, Snyk, Enkrypt) and runtime proxies (MCP-Bastion, MCPProxy-go) are complements, not competitors — they test what you wrote; we test what you shipped.
+
+**Do not duplicate:** static code analysis, production traffic monitoring, or LLM-semantic judgment. These are covered by existing tools we recommend alongside cosai-mcp.
 
 ---
 
@@ -202,6 +199,77 @@ Transport autodetection: if server responds with `protocolVersion: "2024-11-05"`
 | 3 | Target unreachable |
 
 GitHub Action treats exit code 2 as failure regardless of `fail_on`.
+
+---
+
+## MCP Server Code Generation Rules (from CoSAI CodeGuard)
+
+When writing or reviewing MCP server code, enforce these rules. They are distilled from the CoSAI Project CodeGuard v1.3.1 secure-by-default ruleset and apply to every tool implementation, session handler, and dispatcher.
+
+### Trust Boundaries — Treat All Incoming Data as Untrusted
+- Validate every tool parameter against a strict JSON schema allowlist before use — never pass raw arguments to system calls, queries, or downstream tools
+- Tool descriptions, tool names, and resource content returned by external MCP servers are untrusted input; sanitize before re-use or display
+- Never reflect tool arguments back into tool descriptions or log messages without stripping control characters
+
+### Authorization — No LLM in the Auth Path
+- Authorization decisions MUST be deterministic server policy — never delegate to LLM judgment ("does this request seem authorized?")
+- Per-tool required scopes must be declared statically and enforced at dispatch, not inferred at runtime
+- Confused deputy check: server-to-server requests (no user claim) must be rejected for any tool marked `user-only`
+
+### Destructive Tools — Two-Stage Commit Pattern
+- Any tool that deletes, sends, deploys, or is otherwise irreversible MUST implement a two-stage commit: a `plan` call that returns a description, and an `execute` call that requires an explicit confirmation token from the plan response
+- One-shot destructive tools are a CoSAI T2/T9 violation regardless of how the description is worded
+
+### Tool Design — Single Purpose, Explicit Boundaries
+- Each tool does one thing with explicit input/output schema — no generic "run this command" tools
+- Tool names must not shadow standard MCP method names or other tools in the same manifest (T6 shadowing)
+- Document the exact permission scope each tool requires in its `description` field; do not rely on operator inference
+
+### Audit Logging — Every Invocation, Tamper-Evident
+- Log every tool invocation: tool name, parameter hash (never raw params), session ID, timestamp, outcome
+- Never log raw credentials, PII, or secret values — log their presence/absence, not their content
+- Audit log must be append-only; implement hash-chaining (each entry hashes the previous) for tamper detection (T12)
+
+### Subprocess / Shell — Hard Rules
+- `shell=False` always; construct fixed `argv` lists — never interpolate tool arguments into shell strings
+- Never accept a `command` or `script` parameter that is passed directly to subprocess, exec, or eval
+- Sandbox tools that touch the filesystem, spawn processes, or make network calls (gVisor/Kata for containers; `subprocess` with `close_fds=True`, `start_new_session=True`, size-capped stdout/stderr for in-process)
+
+### Network — SSRF Prevention
+- Never accept a raw URL from tool parameters and fetch it without validation
+- Block RFC1918, link-local (169.254.x.x), loopback, and IPv6 ULA destinations at the HTTP client level — not just in input validation
+- Resolve target hostname to IP once at session start; reject any subsequent connection to a different IP (defeats DNS rebinding)
+- `follow_redirects=False` and `trust_env=False` on all internal HTTP clients
+
+### Protocol Hygiene — Strict JSON-RPC
+- Reject unknown JSON-RPC fields at the server dispatcher layer — do not silently ignore them
+- Enforce `Content-Type: application/json` on all HTTP transports; reject mismatched content types before parsing
+- Payload size limits enforced at the transport layer before deserialization
+
+### Secrets — Never in Tool Definitions
+- Never hardcode credentials, API keys, or tokens in tool definitions, `description` fields, or server source
+- Credentials are injected via environment variables or secrets manager at startup — never passed as tool arguments
+
+### Session IDs — CSPRNG, Server-Generated
+- Session IDs generated with CSPRNG, minimum 128-bit entropy
+- Never accept a client-supplied session ID — server generates and owns the session token
+- Session ID must not appear in URL query parameters (leaks via Referer header and logs)
+
+### JWT / Token Validation — Pin Everything
+- Pin the algorithm (`alg`) field — never accept `none` or allow algorithm downgrade
+- Validate `iss`, `aud`, `exp`, `nbf` on every request — do not skip on internal routes
+- Short token lifetimes for MCP: 15–60 minutes for access tokens; refresh tokens via RFC 8693 token exchange
+- JTI replay cache required: reject any token whose `jti` has been seen before in the session window
+
+### Rate Limiting — Per Session and Per Tool
+- Enforce call budgets per session (T10): maximum calls per minute and maximum total calls
+- Enforce payload size limits per tool invocation
+- Heartbeat required for long-running sessions: mark session dead after `heartbeat_interval_secs` without a `progress` notification
+
+### Supply Chain — Sign Tool Definitions
+- Sign tool definitions with Ed25519 before publishing to any registry
+- Verify registry signatures at server startup before loading any external tool definitions
+- Reject tool names within Levenshtein distance ≤ 1 of allowlisted names (typosquatting — T11)
 
 ---
 

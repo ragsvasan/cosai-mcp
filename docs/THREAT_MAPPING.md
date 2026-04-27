@@ -108,6 +108,44 @@ cosai-mcp probes provide runnable test coverage for each OWASP MCP Top 10 item:
 
 ---
 
+## OWASP Agentic Security Initiative (ASI) Top 10
+
+The OWASP ASI Top 10 covers risks specific to agentic AI systems — broader than MCP protocol risks. cosai-mcp's three-engine architecture maps onto it as follows:
+
+| OWASP ASI | Title | CoSAI category | cosai-mcp coverage |
+|-----------|-------|---------------|-------------------|
+| ASI01 | Prompt Injection | T4 | Middleware instrumentation |
+| ASI02 | Excessive Agency / Tool Misuse | T2 | Stateful harness (T2-SC-001, T2-SC-002) |
+| ASI03 | Unsafe Output Handling | T9 | Middleware instrumentation |
+| ASI04 | Memory Poisoning | T4/T9 | Partial — MCP-layer context injection probed; cross-agent state out of scope |
+| ASI05 | Insecure Tool Design | T3/T4 | Black-box probe suite |
+| ASI06 | Sensitive Information Disclosure | T5 | Middleware instrumentation |
+| ASI07 | Inadequate Code Execution Control | T3 | Black-box probe suite |
+| ASI08 | Broken Authentication / Authorization | T1/T2 | Black-box + stateful |
+| ASI09 | Insecure Plugin / Supply Chain | T11 | Black-box (partial) |
+| ASI10 | Insufficient Logging and Monitoring | T12 | Middleware instrumentation |
+
+Note: ASI04 (memory poisoning via multi-agent feedback loops) is partially out of scope for MCP middleware — cross-agent state poisoning requires host-level instrumentation beyond what the MCP transport layer can observe.
+
+---
+
+## MITRE ATLAS Alignment
+
+[MITRE ATLAS](https://atlas.mitre.org) (Adversarial Threat Landscape for AI Systems) catalogs real-world adversarial ML attacks. cosai-mcp's probe suite covers the MCP-specific manifestations of the highest-impact ATLAS tactics:
+
+| ATLAS Tactic | ATLAS Technique (example) | cosai-mcp coverage |
+|--------------|--------------------------|-------------------|
+| AML.TA0001 — Reconnaissance | AML.T0013 Discover ML Model Ontology | T8 black-box: method enumeration, server fingerprinting |
+| AML.TA0002 — Resource Development | AML.T0010 Create Proxy ML Model | T11: supply chain, registry integrity |
+| AML.TA0005 — Execution | AML.T0051 LLM Prompt Injection | T4 middleware: data/control boundary |
+| AML.TA0006 — Persistence | AML.T0054 LLM Jailbreak | T9 middleware: trust boundary enforcement |
+| AML.TA0009 — Impact | AML.T0048 Erode ML Model Integrity | T6: tool shadowing, manifest drift detection |
+| AML.TA0010 — Exfiltration | AML.T0024 Exfiltration via ML Inference API | T5 middleware + T8: data protection + network isolation |
+
+SARIF output includes `ruleId` tags that map to ATLAS technique IDs where applicable, enabling ingestion into ATLAS Navigator overlays.
+
+---
+
 ## EU AI Act Alignment
 
 For teams subject to the EU AI Act, cosai-mcp's execution traces (T12) directly support **Article 13 (Transparency)** and **Article 17 (Quality Management System)** requirements.

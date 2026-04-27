@@ -1,8 +1,12 @@
 # cosai-mcp — End-to-End Implementation Workplan
 
-**Date:** 2026-04-26
-**Status:** Architecture panel complete (CONDITIONAL PASS). Ready to implement.
+**Date:** 2026-04-27
+**Status:** P0–P4c complete (555 tests passing). P5 is next.
 **Full panel record:** [architecture-decisions.md](architecture-decisions.md)
+
+### Panel Review Strategy (optimised 2026-04-27)
+
+T2 Sonnet phases are batched — P4c panel deferred and runs once at P8 covering P4c + P8 together. T1 Full phases (P1, P2, P3, P5, P6, P9) keep per-phase Opus adversary panels because finding a structural flaw late cascades through all dependent phases. Net: 3 T2 panel runs instead of 4.
 
 ---
 
@@ -292,8 +296,10 @@ pytest tests/transport/ tests/catalog/ tests/harness/ tests/probes/t01_* tests/p
 - `cosai_mcp/middleware/integrity.py` — scanner self-protection: baseline manifest diff on re-scan; `tools/list` response signed or schema-validated
 
 **T11 — Supply Chain (partial) (`tests/probes/t11_supply_chain_probes.py`)**
-- Probes coverable by one-shot: tool with typosquatted name (Levenshtein distance vs. allowlist), tool returning unexpected registry origin
+- Probes coverable by one-shot: tool with typosquatted name (Levenshtein distance vs. allowlist), tool returning unexpected registry origin, unsigned tool definition
+- Real-world CVE reference: **CVE-2026-21852** (poisoned package with modified tool definitions) — probe tests that server correctly rejects or flags tools without valid signatures
 - `cosai_mcp/middleware/supply_chain.py` — scanner self-protection: tool name allowlist at scan config level
+- SARIF findings for T11 link to remediation note: deploy in hardware-isolated containers (gVisor/Kata) with remote attestation as defense-in-depth against compromised supply chain
 
 **Tests:** Same pattern as 4a — mock server, PASS/FAIL per probe, partial-coverage markers verified in output.
 
@@ -454,9 +460,7 @@ pytest tests/probes/t02_* tests/probes/t06_* tests/probes/t11_* -v
 **New middleware logic:** `protection.py` (T5), `resources.py` (T10 budget/loop/heartbeat), `integrity.py` (T6 Levenshtein + manifest baseline), `network.py` (bind address), `auth.py` (DPoP + jti cache)  
 **New tests:** ~50 tests across 5 new/extended test files
 
-**Panel:** T2 Sonnet — new catalog entries and middleware; not a new auth handshake but `auth.py` DPoP is security-relevant.
-- Sonnet: Correctness + Security (RE2 patterns, Levenshtein correctness, jti cache thread safety, DPoP claim coverage)
-- For `auth.py` DPoP specifically: "Is this the industry-standard approach for this problem class? Name the standard. Would this pass a SOC 2 / penetration test review?"
+**Panel:** T2 Sonnet — **BATCHED with P8**. No panel at P4c commit time. Panel runs once at P8 covering P4c + P8 together.
 
 **Commit gate:**
 ```
@@ -480,6 +484,12 @@ pytest tests/ -v   # full regression
   - `ruleId`, `suppressions`, `partialFingerprints` scanner-generated only
   - `invocation.executionSuccessful: false` on partial scan (exit code 2 or 3)
   - Validates output against SARIF 2.1.0 JSON schema before writing
+  - **Framework metadata wiring** — each SARIF rule definition carries:
+    - `tags`: CWE IDs from catalog (e.g., `["CWE-287", "CWE-306"]`)
+    - `helpUri`: OWASP MCP Top 10 reference URL from catalog `owasp_ref` field
+    - `properties`: ISO 27001:2022 Annex A controls + NIST AI RMF 2026 function IDs from `docs/THREAT_MAPPING.md` mappings
+    - Currently the catalog model has `owasp_ref` and `cwe` fields populated but they are NOT wired into SARIF rule output — this is the gap to close
+  - **`resources/read` audit log** — middleware logs `resources/read` invocations with resource URI hash + result hash, so the middle segment of the DAG causal chain (context retrieval) is captured alongside tool invocations (see T12 scope note in THREAT_CATALOG.md)
 - `cosai_mcp/report/html.py` — HTML report builder:
   - CSP: `default-src 'none'; style-src 'self'; script-src 'none'`
   - `references` rendered as text; URLs only if scheme ∈ {http, https} + `rel="noopener noreferrer"`
@@ -496,6 +506,10 @@ pytest tests/ -v   # full regression
 - `test_sarif_ruleId_scanner_generated` — `ruleId` in output matches probe catalog ID, never response content
 - `test_sarif_suppressions_not_from_response` — response containing `"suppressions"` key; asserts none appear in SARIF output
 - `test_sarif_partial_scan_execution_unsuccessful` — exit code 2; asserts `executionSuccessful: false`
+- `test_sarif_rule_cwe_tags` — catalog entry with `cwe: ["CWE-287"]`; SARIF rule `tags` contains `"CWE-287"`
+- `test_sarif_rule_owasp_helpUri` — catalog entry with `owasp_ref: "MCP-Top10-A01"`; SARIF rule `helpUri` is set
+- `test_sarif_rule_framework_properties` — rule `properties` contains ISO 27001 and NIST AI RMF keys matching THREAT_MAPPING entries
+- `test_sarif_framework_metadata_not_from_response` — response body containing fake `"CWE-9999"` tag; does not appear in SARIF rule tags
 - `test_html_csp_default_src_none` — asserts CSP header in HTML report
 - `test_html_references_text_only` — `references: ["javascript:alert(1)"]`; asserts rendered as text not link
 - `test_html_references_valid_url` — `https://` URL; rendered as `<a>` with `rel="noopener noreferrer"`
@@ -540,6 +554,7 @@ pytest tests/transport/ tests/catalog/ tests/harness/ tests/report/ -v   # full 
 - `test_t6_tool_shadowing_mid_session` — `tools/list` re-fetch returns new tool; asserts flagged
 - `test_t7_session_fixation_rejected` — client-supplied session ID accepted by server; flagged FAIL
 - `test_t7_session_token_replay` — token replayed across sessions; asserts rejection or flagged
+- `test_t7_session_revocation` — initialize session → `tools/list` succeeds → DELETE `/session/{id}` revocation signal → `tools/list` with same token must return error; passes only if server honours revocation (T7-SC-002; gap identified in April 2026 source review)
 - `test_stateful_harness_reports_partial_on_abort` — mid-scenario crash; asserts `scan-incomplete` not `clean`
 
 **Panel:** T1 Full — new session-layer security logic.
@@ -617,6 +632,10 @@ pytest tests/ -v   # full suite regression (all phases)
 - `cosai_mcp/pytest_plugin.py` — `--cosai-target`, `--cosai-severity`, `--cosai-categories` fixtures
 - `cosai_mcp/api.py` — `Scanner` class for Python API
 - Coverage matrix generated in `--report-coverage` flag output
+- `docs/GETTING_STARTED.md` — step-by-step from install to first protected tool call; includes recommended pre-deploy review stack:
+  - Step 1: Static scan (Cisco MCP Scanner / Enkrypt AI / Snyk Agent Scan) — catches injection patterns, hardcoded secrets, CVEs in source
+  - Step 2: CodeGuard structural review — semantic checks (two-stage commit on destructive tools, no-LLM-in-authz, hash-chained audit log) that static scanners miss; can be run via Claude Code using the rules in CLAUDE.md
+  - Step 3: cosai-mcp runtime scan — tests the running server against all 12 CoSAI categories
 
 **Tests (`tests/cli/` + `tests/api/`):**
 - `test_exit_code_0_clean` — mock clean server; exit 0
@@ -629,7 +648,7 @@ pytest tests/ -v   # full suite regression (all phases)
 - `test_pytest_plugin_collects` — `pytest --cosai-target=...` collects probe test cases
 - `test_python_api_scanner_run` — `Scanner(...).run(categories=["T1"])` returns `ScanResult`
 
-**Panel:** T2 Sonnet — CLI wiring is not new auth logic but exit codes and env scrub are security-relevant.
+**Panel:** T2 Sonnet — **BATCHED: covers P4c + P8 together in one pass at this phase.** Reviews: RE2 patterns, Levenshtein correctness, jti cache thread safety, DPoP claim coverage (from P4c) + exit codes, env scrub, CLI wiring (P8). Standard question required for DPoP: "Is this the industry-standard approach for this problem class? Name the standard. Would this pass a SOC 2 / penetration test review?"
 
 **Commit gate:**
 ```
@@ -688,20 +707,23 @@ cosai scan http://localhost:8000 || true  # exits with a defined code (not unhan
 | P3 | Probe Harness | P1+P2 | — | **T1 Full** | feat(harness) |
 | P4a | Probes T1/T3/T8/T10 | P3 | P4b P5 P6 P7 | T2 Sonnet | feat(probes) T1/T3/T8/T10 |
 | P4b | Probes T2/T6/T11 | P3 | P4a P5 P6 P7 | T2 Sonnet | feat(probes) T2/T6/T11 |
-| **P4c** | **Gap probes T5/T8-003/T10-003/T6-002/T1-003** | **P4a+P4b** | **P5 P6** | **T2 Sonnet** | **feat(p4c): gap closure** |
-| P5 | Report Engine | P3 | P4a P4b P6 P7 | **T1 Full** | feat(report) |
-| P6 | Stateful Harness | P3 | P4a P4b P5 P7 | **T1 Full** | feat(stateful) |
+| **P4c** | **Gap probes T5/T8-003/T10-003/T6-002/T1-003** | **P4a+P4b** | **P5 P6** | ~~T2 Sonnet~~ **→ batched at P8** | **feat(p4c): gap closure** ✅ DONE |
+| P5 | Report Engine | P3 | P4a P4b P6 P7 | **T1 Full** | feat(report) ✅ DONE |
+| P6 | Stateful Harness | P3 | P4a P4b P5 P7 | **T1 Full** | feat(stateful) ✅ DONE |
 | P7 | Middleware T4/T9/T12 | P3 | P4a P4b P5 P6 | **T1 Full** | feat(middleware) ✅ DONE |
-| P8 | CLI + Adoption | P4c P5 P6 P7 | — | T2 Sonnet | feat(cli) |
-| P9 | CI/CD + Supply Chain | P8 | — | **T1 Full** | feat(ci) |
+| P8 | CLI + Adoption | P4c P5 P6 P7 | — | **T2 Sonnet (covers P4c+P8) — due at P9 gate** | feat(cli) ✅ DONE |
+| P9 | CI/CD + Supply Chain | P8 | — | **T1 Full** | feat(ci) 🔜 NEXT |
 
-**T1 Full panels:** P1, P2, P3, P5, P6, P7, P9 (7 panels total)
-**T2 Sonnet panels:** P4a, P4b, P4c, P8 (4 panels total)
+**T1 Full panels:** P1, P2, P3, P5, P6, P7, P9 (7 panels total — all architecturally critical phases)
+**T2 Sonnet panels:** P4a, P4b, P8-batched (3 runs — P4c deferred into P8 batch)
 
-**Phase completion status (2026-04-26):**
-- ✅ P0, P1, P2, P3, P4a, P4b, P7 — complete (242 tests passing)
-- 🔜 P4c — next
-- ⏳ P5, P6, P8, P9 — planned
+**Phase completion status (2026-04-27):**
+- ✅ P0–P9 — all implementation phases complete (567 tests passing)
+
+**P9 is the last implementation phase. What remains before submission:**
+1. ⏸ P8 batched T2 Sonnet panel (covers P4c + P8) → fix findings → commit
+2. ⏸ P9 T1 Full + Opus adversary panel → fix findings → commit
+3. 🚀 Submit to cosai-oasis GitHub org as reference implementation
 
 ---
 

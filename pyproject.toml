@@ -70,3 +70,12 @@ ignore = ["S101"]  # allow assert in tests
 python_version = "3.11"
 strict = true
 ignore_missing_imports = true
+
+[tool.cosai.publish]
+# Sigstore / PEP 740 attestation — every PyPI release is attested to the
+# GitHub Actions workflow SHA that built it. Verifiable with pip-attestations.
+attestation = true
+sigstore_instance = "public-good"
+# Trusted publisher — no API token stored in CI secrets
+trusted_publisher = "github_actions"
+repository_url = "https://github.com/cosai-mcp/cosai-mcp"

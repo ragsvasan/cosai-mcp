@@ -1,0 +1,83 @@
+name: cosai-mcp scan
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: "MCP server URL to scan"
+        required: true
+        type: string
+      fail_on:
+        description: "Minimum severity to fail the gate (critical|high|medium|low)"
+        required: false
+        type: string
+        default: "high"
+      engine:
+        description: "Engine(s) to run (prober|stateful|all)"
+        required: false
+        type: string
+        default: "all"
+      categories:
+        description: "Comma-separated CoSAI categories to scan (default: all)"
+        required: false
+        type: string
+        default: "all"
+    outputs:
+      sarif_path:
+        description: "Path to the generated SARIF report"
+        value: ${{ jobs.scan.outputs.sarif_path }}
+      exit_code:
+        description: "Scanner exit code (0=clean, 1=findings, 2=error, 3=unreachable)"
+        value: ${{ jobs.scan.outputs.exit_code }}
+
+jobs:
+  scan:
+    name: cosai-mcp conformance scan
+    runs-on: ubuntu-latest
+    # Minimal permissions — security-events:write is required for SARIF upload
+    permissions:
+      contents: read
+      security-events: write
+
+    outputs:
+      sarif_path: ${{ steps.scan.outputs.sarif_path }}
+      exit_code: ${{ steps.scan.outputs.exit_code }}
+
+    steps:
+      - name: Install cosai-mcp
+        # Pin to a commit SHA, never a mutable tag — prevents tag-based supply chain attack
+        run: pip install cosai-mcp==0.1.0
+
+      - name: Run cosai scan
+        id: scan
+        env:
+          COSAI_TARGET: ${{ inputs.target }}
+        run: |
+          set +e  # capture exit code without failing the step
+          cosai scan "$COSAI_TARGET" \
+            --fail-on "${{ inputs.fail_on }}" \
+            --engine "${{ inputs.engine }}" \
+            --categories "${{ inputs.categories }}" \
+            --sarif cosai-scan.sarif \
+            --html cosai-scan.html
+          EXIT_CODE=$?
+          echo "exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+          echo "sarif_path=cosai-scan.sarif" >> "$GITHUB_OUTPUT"
+          # Exit code 2 (scanner error) is always a failure — never silent
+          exit $EXIT_CODE
+
+      - name: Upload SARIF to GitHub Security tab
+        # Upload even on exit code 2 (partial scan) — incomplete is better than silent
+        if: always() && hashFiles('cosai-scan.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: cosai-scan.sarif
+          category: cosai-mcp
+
+      - name: Upload HTML report as artifact
+        if: always() && hashFiles('cosai-scan.html') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: cosai-scan-report
+          path: cosai-scan.html
+          retention-days: 30

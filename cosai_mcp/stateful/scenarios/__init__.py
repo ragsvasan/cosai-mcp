@@ -6,7 +6,7 @@ against a real or mock MCP server.
 Threat category coverage:
 * T2 — Missing Access Control: privilege escalation, confused deputy
 * T6 — Integrity/Verification: tool shadowing detection
-* T7 — Session Security: session token binding
+* T7 — Session Security: session token binding, token revocation
 """
 from __future__ import annotations
 
@@ -183,6 +183,74 @@ def t7_session_token_binding() -> Scenario:
                         target="result",
                         operator="is_not_none",
                         message="tools/call must succeed within active session",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+
+def t7_session_revocation() -> Scenario:
+    """T7: Session token revocation must be honoured immediately.
+
+    This scenario establishes an active session (tools/list succeeds), then
+    sends a revocation notification (DELETE /session or equivalent encoded as
+    a JSON-RPC notification), then verifies the next call is rejected.
+
+    The scenario itself only sends the revocation *notification* step — the
+    caller (test or scanner) is responsible for verifying the final step
+    returns an error.  Because the MCP spec does not define a standard
+    revocation method, the revocation step uses a synthetic
+    ``session/terminate`` notification.  Real servers under test should map
+    this to their own revocation path via the harness ``method_overrides``
+    option (planned P8 harness extension).
+
+    Scenario *passes* when the post-revocation call is rejected.
+    Scenario *fails* when the post-revocation call succeeds (token still
+    valid after explicit revocation — T7 vulnerability).
+    """
+    return Scenario(
+        id="T7-SC-002",
+        name="Session token revocation — post-revocation calls must fail",
+        threat_categories=("T7",),
+        description=(
+            "Establish an active session, signal explicit revocation via "
+            "session/terminate notification, then call tools/list. "
+            "A server that continues to accept the session token after "
+            "revocation is vulnerable to T7 (token revocation bypass)."
+        ),
+        steps=(
+            ScenarioStep(
+                description="tools/list — confirm session is active before revocation",
+                action=StepAction(method="tools/list", params={}),
+                assertions=(
+                    StepAssertion(
+                        target="result",
+                        operator="is_not_none",
+                        message="Session must be active before revocation test",
+                    ),
+                ),
+            ),
+            ScenarioStep(
+                description="session/terminate — signal explicit revocation (notification)",
+                action=StepAction(
+                    method="session/terminate",
+                    params={"reason": "explicit_revocation_test"},
+                ),
+                assertions=(),  # notification — no response expected; transport may return empty
+            ),
+            ScenarioStep(
+                description="tools/list after revocation — must be rejected",
+                action=StepAction(method="tools/list", params={}),
+                assertions=(
+                    StepAssertion(
+                        target="error",
+                        operator="is_not_none",
+                        message=(
+                            "Session token must be rejected after explicit revocation. "
+                            "A successful tools/list here indicates the server does not "
+                            "honour revocation (T7 token revocation bypass)."
+                        ),
                     ),
                 ),
             ),

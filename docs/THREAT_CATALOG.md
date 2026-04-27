@@ -124,6 +124,7 @@ The inability to distinguish between instructions and data in the LLM's context 
 - **Tool poisoning:** attacker modifies an MCP tool's JSON schema description. When the LLM discovers tools, it reads the poisoned description and may execute the malicious tool or exfiltrate data to an attacker-controlled endpoint. Success rate ~84% with auto-approval enabled.
 - **Rug pull:** MCP server appears legitimate during initial security scanning but silently modifies tool definitions via remote update after deployment.
 - **Indirect prompt injection:** content retrieved by the agent (a document, search result, email) contains instructions that hijack the agent's next action.
+- **Dynamic tool description loading:** tool descriptions are not static strings — they are assembled at runtime by fetching content from an external URL or database record. An attacker who compromises that external source injects malicious instructions into the tool description *after* the MCP server passes any static scanner. This is T4 + T11 combined: the supply chain is the tool description's data source, not its code. (Observed in the wild: ClawHub malicious skill campaign, 2026-Q1.)
 
 ### What cosai-mcp tests (middleware instrumentation)
 T4 requires being in the call path. The middleware detects:
@@ -201,12 +202,14 @@ Weak binding of MCP sessions to user identity. Session tokens that can be fixed 
 - **Session token in URL:** `Mcp-Session-Id` exposed in server logs, access logs, or referrer headers
 - **Cross-transport session replay:** session token issued over HTTPS reused over a downgraded connection
 - **Context-bleed:** shared SSE event queue allows session N's events to appear in session M
+- **Token revocation bypass:** server does not honour explicit token revocation; a revoked credential issued before a privilege change continues to grant access after the change takes effect
 
 ### What cosai-mcp tests (stateful harness)
 - Client-supplied session ID accepted without server regeneration → FAIL
 - Session token in URL query parameter → FAIL
 - Token replayed in a new session after original session close → accepted (FAIL) or rejected (PASS)
 - Concurrent sessions sharing any context → FAIL
+- **Revocation scenario (T7-SC-002):** initialize session → call `tools/list` (assert success) → signal revocation via DELETE `/session/{id}` or equivalent → call `tools/list` again using the same session token → must return 401/error (PASS) or continues succeeding (FAIL — revocation not honoured)
 
 ### Remediation
 - Always generate session IDs server-side using a CSPRNG; reject client-supplied session IDs
@@ -214,6 +217,7 @@ Weak binding of MCP sessions to user identity. Session tokens that can be fixed 
 - Bind session tokens to the originating IP + user identity; reject tokens used from a different binding
 - Implement per-session SSE streams; never share a queue between sessions
 - Short-lived session tokens (15–60 minutes); refresh via RFC 8693 token exchange
+- Implement and test explicit token revocation; a POST to an OAuth revocation endpoint must immediately invalidate all active sessions backed by that token
 
 ---
 
@@ -305,9 +309,10 @@ Malicious or compromised MCP server packages distributed via agent marketplaces 
 
 ### Attack patterns
 - **Typosquatting:** `anthropic-mcp-tools` vs `anthropic-mcp-tool` — one character difference, one is malicious
-- **Poisoned package:** legitimate package taken over; malicious update ships with modified tool definitions
+- **Poisoned package:** legitimate package taken over; malicious update ships with modified tool definitions (real-world: **CVE-2026-21852** — MCP server package on PyPI with identical name to a widely-used internal tool; post-compromise update shipped a reverse shell as a tool definition)
 - **Unsigned skills:** marketplace skills distributed without code signing; no integrity verification at install
 - **Dependency confusion:** internal MCP server package name matches a public package; public version installed instead
+- **ClawHub malicious skill campaign (2026-Q1):** 1,184 skills identified on the ClawHub marketplace containing dormant payloads that activated on specific prompt patterns; 63K live instances reachable via Censys
 
 ### What cosai-mcp tests (partial — static analysis)
 - Tool name Levenshtein distance check against a configured allowlist; close matches flagged
@@ -320,8 +325,9 @@ Full supply chain verification (provenance, dependency graph analysis) requires 
 - Maintain an explicit allowlist of approved MCP servers by origin and version
 - Require cryptographic signatures for all installed MCP skills; verify at install time
 - Use dependency pinning with hash verification (similar to `pip install --require-hashes`)
-- Run SCA (Software Composition Analysis) on MCP server dependencies before deployment
+- Run SCA (Software Composition Analysis) on MCP server dependencies before deployment (Snyk Agent Scan or Enkrypt AI); catches CVEs like CVE-2026-21852 before deploy
 - Monitor for new versions of installed MCP packages; verify signatures before auto-update
+- **Deploy MCP servers in hardware-isolated containers** (gVisor or Kata Containers) with remote attestation — a compromised supply chain package cannot escape the container boundary; remote attestation verifies the execution environment before the server is trusted by the orchestrator
 
 ---
 
@@ -341,12 +347,12 @@ When an incident occurs (agent leaks proprietary data, executes unauthorized act
 
 ### What cosai-mcp tests (middleware instrumentation)
 The audit middleware instruments:
-- Whether tool invocations are logged with their causal chain (prompt → context retrieved → tool call)
-- Whether logs are append-only and tamper-evident (hash-chained)
-- Whether log content is sufficient to reconstruct the reasoning path
+- Whether tool invocations are logged with a DAG causal chain (parent_id linking concurrent/nested calls)
+- Whether logs are append-only and tamper-evident (SHA-256 hash chain)
+- Whether log content carries enough context to reconstruct the tool-call sequence
 
 ### The cosai-mcp audit log
-cosai-mcp's own middleware implements the 2026 standard for execution traces:
+cosai-mcp's own middleware implements an MCP-layer execution trace:
 
 ```json
 {
@@ -368,6 +374,24 @@ cosai-mcp's own middleware implements the 2026 standard for execution traces:
 ```
 
 Tool argument values are hashed, not logged in plaintext — preserving auditability without logging PII.
+
+### MCP-layer scope vs the full CoSAI "flight recorder"
+
+The CoSAI whitepaper describes a DAG that cryptographically links: **prompt → retrieved context → internal thought → tool invocation**. The MCP middleware layer can only observe the tool-invocation segment. Here is the honest boundary:
+
+| Component | In cosai-mcp audit log? | Why |
+|-----------|------------------------|-----|
+| Tool invocations (name, arg-hash, result-status) | ✅ Yes | MCP middleware sees every `tools/call` |
+| DAG causal chain (parent_id, nested/concurrent calls) | ✅ Yes | Built via parent_id field + `build_dag()` |
+| Session binding (session_id per entry) | ✅ Yes | Session token injected at middleware boundary |
+| Hash chain (tamper-evident append-only log) | ✅ Yes | SHA-256 chain, `cosai audit verify` |
+| `resources/read` context retrieval | ⚠️ Gap | MCP middleware could log this; not yet implemented |
+| Original user prompt | ❌ Out of scope | Lives in the LLM host application, not MCP layer |
+| LLM internal reasoning ("thought") | ❌ Out of scope | LLM-internal; inaccessible to any middleware |
+
+**The prompt and reasoning pathway cannot be recorded by MCP middleware** — they exist entirely within the LLM host (e.g., Claude, GPT-4). No MCP scanner or middleware can reach them. Complying with the full CoSAI "flight recorder" concept requires the LLM host to emit a trace that is then *correlated* with the MCP-layer trace using the session ID.
+
+**The `resources/read` gap is fixable.** Context retrieval via `resources/read` is an MCP-layer event that cosai-mcp middleware currently does not log. Adding it would close the middle segment of the causal chain (prompt_hash → context_refs → tool invocation) that the example JSON above already shows as populated. This is tracked as a P8 enhancement.
 
 ### Remediation
 - Implement hash-chained execution trace logging for all tool invocations
