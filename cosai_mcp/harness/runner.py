@@ -6,14 +6,27 @@ Architecture (non-negotiable from locked decisions):
 - OS-enforced timeout via Process.join(timeout=)
 - Results passed back via multiprocessing.Queue as plain dicts
 - The subprocess creates its own transport + session (no inherited connections)
+
+Adaptive probe synthesis (P10):
+- If a probe returns INCONCLUSIVE (schema mismatch) and a DiscoveredTool is
+  available, the parent synthesizes a new payload and retries ONCE.
+- Synthesis is pure (no I/O) and runs in the parent before the second fork.
+- A second INCONCLUSIVE marks synthesis_attempted=True — distinguishes
+  "we tried" from "we didn't try".
+- --no-adaptive (passed as adaptive=False) disables all synthesis; results
+  are identical to pre-P10 behavior.
 """
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import multiprocessing
 import time
 import types
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from cosai_mcp.discovery import DiscoveredTool
 
 from cosai_mcp.catalog.models import (
     Assertion,
@@ -241,6 +254,48 @@ def _probe_subprocess_entry(
 # ProbeRunner
 # ---------------------------------------------------------------------------
 
+def _synthesize_probe(
+    probe: Probe,
+    threat: ThreatDefinition,
+    discovered_tool: DiscoveredTool,
+) -> Probe | None:
+    """Synthesize a new Probe with a schema-aware payload.
+
+    Returns a new Probe with a synthesized payload, or None if synthesis
+    is not applicable or fails.  Synthesis is pure — no I/O, no subprocess.
+
+    Returns None when:
+    - probe.method is not "tools/call" (synthesis only valid for tools/call)
+    - synthesize_probe_payload raises ValueError (template-escape guard)
+    - any unexpected exception (logged as None → caller returns synthesis_attempted)
+    """
+    # Guard: synthesis only produces tools/call-shaped payloads.  Applying
+    # synthesis to tools/list, initialize, or other method probes would corrupt
+    # the payload and produce misleading results (Sonnet P1).
+    if probe.method != "tools/call":
+        return None
+
+    from cosai_mcp.synthesis import synthesize_probe_payload, threat_pattern_from_category
+
+    try:
+        pattern = threat_pattern_from_category(threat.category)
+        catalog_payload_dict = _to_json_safe(probe.payload)
+        synth_payload = synthesize_probe_payload(discovered_tool, pattern, catalog_payload_dict)
+        return Probe(
+            id=probe.id,
+            transport=probe.transport,
+            method=probe.method,
+            payload=synth_payload,
+            assertions=probe.assertions,
+        )
+    except ValueError:
+        # Expected from template-escape guard or missing adversarial value (P2 fix)
+        return None
+    except Exception:
+        # Unexpected exception — treat as synthesis failure, not scanner crash
+        return None
+
+
 class ProbeRunner:
     """Runs probes against a target MCP server with multiprocessing isolation.
 
@@ -266,11 +321,18 @@ class ProbeRunner:
         variables: dict[str, str] | None = None,
         timeout_seconds: float | None = None,
         pass_on_auth_reject: bool = False,
+        discovered_tool: DiscoveredTool | None = None,
     ) -> ProbeResult:
         """Execute a probe in an isolated subprocess and return the result.
 
         If the subprocess times out, it is killed and a timeout ProbeResult
         is returned (passed=False, error describes the timeout).
+
+        If the result is INCONCLUSIVE (schema mismatch) and ``discovered_tool``
+        is provided, the parent synthesizes an adapted payload and retries once.
+        Synthesis is pure (no I/O) and runs before the second fork.  If the
+        retry is also INCONCLUSIVE, returns that result with
+        ``synthesis_attempted=True``.
 
         Parameters
         ----------
@@ -278,6 +340,10 @@ class ProbeRunner:
             Passed through to the subprocess.  Set *True* for T1 auth-
             enforcement probes so that a server-side auth rejection at
             initialize time is treated as a PASS rather than a scanner error.
+        discovered_tool:
+            Optional tool schema snapshot from pre-scan discovery.  When
+            provided and the first attempt is INCONCLUSIVE, enables one
+            adaptive retry with a synthesized payload.
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._config.probe_timeout_seconds
 
@@ -340,17 +406,55 @@ class ProbeRunner:
                 error=f"Invalid subprocess result: {exc}",
                 duration_seconds=elapsed,
             )
-        return _result_from_dict(validated)
+        first_result = _result_from_dict(validated)
+
+        # --- Adaptive retry (P10) ---
+        # If first attempt was INCONCLUSIVE (schema mismatch) and a discovered
+        # tool is available, synthesize a schema-aware payload and retry once.
+        # Synthesis is pure (no I/O) — runs here in the parent before the fork.
+        if (
+            first_result.inconclusive_reason is not None
+            and discovered_tool is not None
+        ):
+            adapted_probe = _synthesize_probe(probe, threat, discovered_tool)
+            if adapted_probe is not None:
+                # One retry — recursive call WITHOUT discovered_tool to prevent
+                # infinite retry loops.
+                retry_result = self.run_probe(
+                    adapted_probe,
+                    threat,
+                    variables,
+                    timeout_seconds,
+                    pass_on_auth_reject,
+                    discovered_tool=None,  # no further retries
+                )
+                # Always set synthesis_attempted=True on the retry result so that
+                # PASS and FAIL outcomes are distinguishable from natural first-run
+                # results in reports and audit trails (Sonnet P1 fix).
+                return dataclasses.replace(retry_result, synthesis_attempted=True)
+            # Synthesis failed (ValueError / unexpected error) — fall through
+            # and return original result with synthesis_attempted=True to signal
+            # that we tried but could not synthesize a valid payload.
+            return dataclasses.replace(first_result, synthesis_attempted=True)
+
+        return first_result
 
     def run_threat(
         self,
         threat: ThreatDefinition,
         variables: dict[str, str] | None = None,
         pass_on_auth_reject: bool = False,
+        discovered_tool: DiscoveredTool | None = None,
     ) -> list[ProbeResult]:
         """Run all probes for a threat definition and return results."""
         return [
-            self.run_probe(probe, threat, variables, pass_on_auth_reject=pass_on_auth_reject)
+            self.run_probe(
+                probe,
+                threat,
+                variables,
+                pass_on_auth_reject=pass_on_auth_reject,
+                discovered_tool=discovered_tool,
+            )
             for probe in threat.probes
         ]
 
@@ -384,4 +488,5 @@ def _result_from_dict(d: dict[str, Any]) -> ProbeResult:
         assertions=assertions,
         duration_seconds=d.get("duration_seconds", 0.0),
         inconclusive_reason=inconclusive,
+        synthesis_attempted=bool(d.get("synthesis_attempted", False)),
     )

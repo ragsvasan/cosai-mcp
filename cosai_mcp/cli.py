@@ -81,6 +81,9 @@ def main() -> None:
               help="Bearer token for servers that require auth on the MCP handshake.")
 @click.option("--mcp-path", default="/mcp", show_default=True,
               help="URL path of the MCP endpoint (override if server uses a custom path).")
+@click.option("--no-adaptive", is_flag=True, default=False,
+              help="Disable adaptive probe synthesis. Forces static catalog payloads — "
+                   "use for hermetic tests or when server schema is adversarially crafted.")
 @click.option("--skip-reachability", is_flag=True, default=False, hidden=True,
               help="Skip the initial TCP reachability check (testing only).")
 def scan(
@@ -99,6 +102,7 @@ def scan(
     catalog_root: str | None,
     auth_token: str | None,
     mcp_path: str,
+    no_adaptive: bool,
     skip_reachability: bool,
 ) -> None:
     """Scan a target MCP server for CoSAI threat categories T1–T12.
@@ -147,6 +151,7 @@ def scan(
             allow_private_targets=allow_private_targets,
             auth_token=auth_token,
             mcp_path=mcp_path,
+            adaptive=not no_adaptive,
         )
     except TargetUnreachableError as exc:
         click.echo(f"[ERROR] Target unreachable during scan: {exc}", err=True)

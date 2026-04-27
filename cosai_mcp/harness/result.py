@@ -58,6 +58,7 @@ class ProbeResult:
     assertions: tuple[AssertionResult, ...]
     duration_seconds: float
     inconclusive_reason: str | None = None  # HTML-escaped
+    synthesis_attempted: bool = False  # True when adaptive retry was attempted
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -70,6 +71,7 @@ class ProbeResult:
             "assertions": [a.to_dict() for a in self.assertions],
             "duration_seconds": self.duration_seconds,
             "inconclusive_reason": self.inconclusive_reason,
+            "synthesis_attempted": self.synthesis_attempted,
         }
 
 
@@ -102,6 +104,7 @@ def make_probe_result(
     error: str | None = None,
     duration_seconds: float = 0.0,
     inconclusive_reason: str | None = None,
+    synthesis_attempted: bool = False,
 ) -> ProbeResult:
     """Construct a ProbeResult, HTML-escaping all captured response content.
 
@@ -126,4 +129,5 @@ def make_probe_result(
         assertions=assertions,
         duration_seconds=duration_seconds,
         inconclusive_reason=_html_escape(inconclusive_reason) if inconclusive_reason else None,
+        synthesis_attempted=synthesis_attempted,
     )

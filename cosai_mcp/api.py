@@ -110,41 +110,31 @@ def _apply_env_scrub() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Pre-scan tool discovery
+# Pre-scan tool discovery (P10 — replaces _get_first_tool_name)
 # ---------------------------------------------------------------------------
 
-async def _discover_first_tool(target_url: str, config: ScanConfig) -> str:
-    """Open one ephemeral session to get the real tools/list from the server.
+def _run_discovery(
+    target_url: str,
+    config: ScanConfig,
+) -> tuple[str, object]:
+    """Run tool discovery and return (first_tool_name, discovered_tools_tuple).
 
-    Returns the first discovered tool name, or "ping" as a fallback if
-    the server does not expose any tools or the session cannot start.
+    Uses discover_tools() from cosai_mcp.discovery to get the full schema
+    snapshot.  Falls back to ("ping", ()) on any failure so the scan proceeds
+    with static catalog payloads (identical to pre-P10 behavior).
+
+    Returns
+    -------
+    first_tool_name:
+        The name of the first discovered tool, or "ping" when none found.
+    discovered_tools:
+        Tuple of DiscoveredTool objects (may be empty on failure).
     """
-    from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
-    from cosai_mcp.session import MCPSession
+    from cosai_mcp.discovery import discover_tools, DiscoveredTool
 
-    transport = StreamableHTTPTransport(target_url, config)
-    try:
-        await transport.connect()
-        session = MCPSession(transport, config)
-        info = await session.start()
-        tools = info.tool_manifest or []
-        return tools[0]["name"] if tools else "ping"
-    except Exception:
-        return "ping"
-    finally:
-        try:
-            await transport.close()
-        except Exception:
-            pass
-
-
-def _get_first_tool_name(target_url: str, config: ScanConfig) -> str:
-    """Synchronous wrapper around ``_discover_first_tool``."""
-    import asyncio
-    try:
-        return asyncio.run(_discover_first_tool(target_url, config))
-    except Exception:
-        return "ping"
+    discovered: tuple[DiscoveredTool, ...] = discover_tools(target_url, config)
+    first_name = discovered[0].name if discovered else "ping"
+    return first_name, discovered
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +301,7 @@ def _run_scan(
     allow_private_targets: bool = True,
     auth_token: str | None = None,
     mcp_path: str = "/mcp",
+    adaptive: bool = True,
 ) -> ScanResult:
     """Orchestrate a complete scan and return a ``ScanResult``.
 
@@ -358,9 +349,11 @@ def _run_scan(
     # --- Prober engine ---
     probe_results: list[ProbeResult] = []
     if engine in ("prober", "all"):
-        # Discover real tool name once; probes substitute {{tool_name}} with it.
-        # Fall back to "ping" if the server is unreachable or has no tools.
-        real_tool_name = _get_first_tool_name(target_url, config)
+        # P10: discover tool schemas once; use for adaptive payload synthesis.
+        # discover_tools() is a superset of the old _get_first_tool_name() —
+        # returns (first_tool_name, all_discovered_tools).  Falls back to
+        # ("ping", ()) on failure so the scan proceeds identically to pre-P10.
+        real_tool_name, discovered_tools = _run_discovery(target_url, config)
 
         # For auth-testing categories (T1), probes must run without the auth
         # token — the test IS "does the server reject unauthenticated requests?"
@@ -382,10 +375,23 @@ def _run_scan(
             is_auth_category = threat.category.upper() in AUTH_PROBE_CATEGORIES
             probe_config = no_auth_config if is_auth_category else config
             probe_runner = ProbeRunner(config=probe_config, target_url=target_url)
+
+            # Find the DiscoveredTool matching the tool under test.
+            # adaptive=False (--no-adaptive) disables synthesis entirely.
+            active_discovered_tool = None
+            if adaptive and discovered_tools:
+                # Match by tool name; fall back to first tool when no exact match
+                # (covers probes that substitute {{tool_name}} at runtime).
+                active_discovered_tool = next(
+                    (t for t in discovered_tools if t.name == real_tool_name),
+                    discovered_tools[0] if discovered_tools else None,
+                )
+
             probe_results.extend(probe_runner.run_threat(
                 threat,
                 variables=variables,
                 pass_on_auth_reject=is_auth_category,
+                discovered_tool=active_discovered_tool,
             ))
 
     # --- Stateful engine ---
@@ -457,6 +463,7 @@ class Scanner:
         allow_private_targets: bool = True,
         auth_token: str | None = None,
         mcp_path: str = "/mcp",
+        adaptive: bool = True,
     ) -> None:
         self.target = target
         self.categories = categories
@@ -467,6 +474,7 @@ class Scanner:
         self.allow_private_targets = allow_private_targets
         self.auth_token = auth_token
         self.mcp_path = mcp_path
+        self.adaptive = adaptive
 
     def run(self, categories: list[str] | None = None) -> ScanResult:
         """Run a complete scan and return a :class:`ScanResult`.
@@ -491,6 +499,7 @@ class Scanner:
                 allow_private_targets=self.allow_private_targets,
                 auth_token=self.auth_token,
                 mcp_path=self.mcp_path,
+                adaptive=self.adaptive,
             )
         except (ValueError, TargetUnreachableError):
             raise  # let typed exceptions propagate as-is

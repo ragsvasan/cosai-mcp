@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import time
 import types
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from cosai_mcp.catalog.models import Probe, ThreatDefinition
 from cosai_mcp.catalog.template import substitute_probe_payload
@@ -12,6 +12,9 @@ from cosai_mcp.config import ScanConfig
 from cosai_mcp.harness.assertions import evaluate_assertion
 from cosai_mcp.harness.result import AssertionResult, ProbeResult, make_probe_result
 from cosai_mcp.session import MCPSession
+
+if TYPE_CHECKING:
+    from cosai_mcp.discovery import DiscoveredTool
 
 
 # Keywords in MCP content-layer error text that indicate the server rejected
@@ -124,12 +127,16 @@ class ProbeContext:
         probe: Probe,
         threat: ThreatDefinition,
         variables: dict[str, str] | None = None,
+        discovered_tool: DiscoveredTool | None = None,
     ) -> ProbeResult:
         """Execute a single probe and return an immutable ProbeResult.
 
         Template variables are substituted from ``variables``, with
         ``target_url`` defaulting to the context's target URL.
         All exceptions are caught and surfaced via ProbeResult.error.
+
+        ``discovered_tool`` is passed for context (e.g. logging) but retry
+        logic lives in the parent ProbeRunner — synthesis happens before fork.
         """
         vars_: dict[str, str] = dict(variables or {})
         vars_.setdefault("target_url", self._target_url)
