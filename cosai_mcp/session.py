@@ -175,6 +175,22 @@ class MCPSession:
         self._require_ready()
         return self._tool_manifest
 
+    async def send_raw(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Send an arbitrary JSON-RPC request to the server.
+
+        Used by ProbeContext for non-standard methods not covered by
+        typed helpers (e.g. tools_call). Accessing the transport directly
+        from outside the session is a layering violation — this method is
+        the correct public API.
+
+        Raises
+        ------
+        SessionIncompleteError
+            If called before a successful start().
+        """
+        self._require_ready()
+        return await self._transport.send(method, payload)
+
     async def close(self) -> None:
         self._status = SessionStatus.CLOSED
         await self._transport.close()

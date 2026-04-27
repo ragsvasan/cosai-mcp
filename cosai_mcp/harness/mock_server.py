@@ -1,4 +1,234 @@
-"""In-process MCP mock server for testing — full handshake support. Not yet implemented."""
+"""In-process mock MCP server for harness integration tests.
+
+Uses a background thread with http.server.HTTPServer to serve JSON-RPC
+over HTTP.  The server handles the full MCP handshake (initialize →
+initialized → tools/list → tools/call) and supports configurable
+response overrides.
+
+Usage::
+
+    with MockMCPServer() as server:
+        server.wait_ready()   # barrier: blocks until TCP socket is accepting
+        target_url = f"http://127.0.0.1:{server.port}"
+        # run probes against target_url ...
+"""
 from __future__ import annotations
 
-raise NotImplementedError("Phase 3: MockMCPServer")
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Any
+
+
+_DEFAULT_TOOLS = [
+    {"name": "echo", "description": "Echoes input", "inputSchema": {"type": "object"}},
+]
+
+
+class _MCPHandler(BaseHTTPRequestHandler):
+    """Minimal HTTP handler implementing the MCP Streamable HTTP transport."""
+
+    # Injected by MockMCPServer
+    server: "_MockHTTPServer"
+
+    def log_message(self, fmt: str, *args: Any) -> None:
+        pass  # suppress noisy output in tests
+
+    def do_POST(self) -> None:
+        # Finding 14: validate Content-Type before parsing body
+        content_type = self.headers.get("Content-Type", "")
+        if not content_type.startswith("application/json"):
+            self._send_json(
+                415,
+                {"error": "Unsupported Media Type — expected application/json"},
+            )
+            return
+
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length)
+        try:
+            request = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "Invalid JSON"})
+            return
+
+        response = self.server.mock_server.handle_rpc(request)
+
+        # Finding 10: notifications (no 'id') → 204 No Content, not 200 + body
+        if not response:
+            self.send_response(204)
+            self.end_headers()
+        else:
+            self._send_json(200, response)
+
+    def _send_json(self, status: int, data: dict[str, Any]) -> None:
+        payload = json.dumps(data).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+class _MockHTTPServer(HTTPServer):
+    """HTTPServer subclass that holds a reference to MockMCPServer."""
+
+    def __init__(self, server_address: tuple[str, int], mock_server: "MockMCPServer") -> None:
+        self.mock_server = mock_server
+        super().__init__(server_address, _MCPHandler)
+
+
+class MockMCPServer:
+    """Configurable in-process MCP mock server for integration testing.
+
+    Parameters
+    ----------
+    tools:
+        Tool list returned by tools/list.  Defaults to a single 'echo' tool.
+    tools_call_response:
+        Optional override for the tools/call response.  When set, all
+        tools/call requests return this dict instead of the default.
+    initialize_error:
+        If set, initialize returns an error response with this message.
+    port:
+        Port to listen on (0 = OS-assigned ephemeral port).
+    """
+
+    def __init__(
+        self,
+        tools: list[dict[str, Any]] | None = None,
+        tools_call_response: dict[str, Any] | None = None,
+        initialize_error: str | None = None,
+        port: int = 0,
+    ) -> None:
+        self._tools = tools if tools is not None else list(_DEFAULT_TOOLS)
+        self._tools_call_response = tools_call_response
+        self._initialize_error = initialize_error
+        self._server: _MockHTTPServer | None = None
+        self._thread: threading.Thread | None = None
+        self._port: int = port
+        self._request_log: list[dict[str, Any]] = []
+        self._log_lock = threading.Lock()       # Finding 8: thread-safe log access
+        self._ready = threading.Event()          # Finding 9: readiness barrier
+
+    @property
+    def port(self) -> int:
+        if self._server is None:
+            raise RuntimeError("MockMCPServer not started — use as context manager")
+        return self._server.server_address[1]
+
+    @property
+    def request_log(self) -> list[dict[str, Any]]:
+        """Returns a snapshot of all JSON-RPC requests received (thread-safe)."""
+        with self._log_lock:
+            return list(self._request_log)
+
+    def wait_ready(self, timeout: float = 5.0) -> None:
+        """Block until the server is ready to accept connections.
+
+        The HTTPServer binds its socket in __init__, so by the time start()
+        returns the port is already listening.  This event is set immediately
+        after the background thread starts, providing a memory barrier so
+        callers see the fully initialised server state.
+
+        Raises
+        ------
+        RuntimeError
+            If the server does not become ready within ``timeout`` seconds.
+        """
+        if not self._ready.wait(timeout):
+            raise RuntimeError(
+                f"MockMCPServer did not become ready within {timeout}s"
+            )
+
+    def handle_rpc(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Process one JSON-RPC request and return a response dict."""
+        with self._log_lock:
+            self._request_log.append(request)
+
+        method = request.get("method", "")
+        req_id = request.get("id")
+
+        # Notifications have no 'id' — no response needed, return empty
+        if req_id is None:
+            return {}
+
+        if method == "initialize":
+            if self._initialize_error:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32600, "message": self._initialize_error},
+                }
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "protocolVersion": "2025-03-26",
+                    "serverInfo": {"name": "mock-mcp-server", "version": "0.1.0"},
+                    "capabilities": {},
+                },
+            }
+
+        if method == "tools/list":
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"tools": self._tools},
+            }
+
+        if method == "tools/call":
+            if self._tools_call_response is not None:
+                response = dict(self._tools_call_response)
+                response["id"] = req_id
+                response.setdefault("jsonrpc", "2.0")
+                return response
+            params = request.get("params", {})
+            name = params.get("name", "unknown")
+            arguments = params.get("arguments", {})
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "content": [
+                        {"type": "text", "text": f"echo: {json.dumps(arguments)}"}
+                    ],
+                    "isError": False,
+                },
+            }
+
+        # Unknown method
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "error": {"code": -32601, "message": f"Method not found: {method!r}"},
+        }
+
+    def start(self) -> None:
+        self._server = _MockHTTPServer(("127.0.0.1", self._port), self)
+        self._thread = threading.Thread(
+            target=self._server.serve_forever,
+            daemon=True,
+            name="MockMCPServer",
+        )
+        self._thread.start()
+        # HTTPServer binds in __init__, so socket is ready before thread starts.
+        # Set the event after thread.start() to provide the memory barrier.
+        self._ready.set()
+
+    def stop(self) -> None:
+        self._ready.clear()
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+            self._server = None
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+            self._thread = None
+
+    def __enter__(self) -> "MockMCPServer":
+        self.start()
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        self.stop()
