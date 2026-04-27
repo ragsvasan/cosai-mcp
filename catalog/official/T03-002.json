@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "id": "T03-002",
+  "category": "T3",
+  "severity": "high",
+  "cosai_ref": "T3",
+  "owasp_ref": "MCP-Top10-A03",
+  "cwe": [
+    "CWE-22"
+  ],
+  "probes": [
+    {
+      "id": "T03-002-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "path": "../../etc/passwd",
+          "filename": "../../../etc/hosts"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "root:"
+        },
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "127.0.0.1"
+        }
+      ]
+    },
+    {
+      "id": "T03-002-p2",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "path": "%2e%2e%2f%2e%2e%2fetc%2fpasswd"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "root:"
+        }
+      ]
+    }
+  ],
+  "remediation": "Canonicalise paths before use and verify the resolved path is within the allowed directory using Path.is_relative_to().",
+  "references": [
+    "https://cosai.org/T3",
+    "https://cwe.mitre.org/data/definitions/22.html"
+  ]
+}

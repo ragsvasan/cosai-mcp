@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "id": "T08-002",
+  "category": "T8",
+  "severity": "medium",
+  "cosai_ref": "T8",
+  "owasp_ref": "MCP-Top10-A08",
+  "cwe": [
+    "CWE-319"
+  ],
+  "probes": [
+    {
+      "id": "T08-002-p1",
+      "transport": "http",
+      "method": "initialize",
+      "payload": {
+        "protocolVersion": "2025-03-26",
+        "clientInfo": {
+          "name": "cosai-probe",
+          "version": "0.1.0"
+        },
+        "capabilities": {}
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": false
+        }
+      ]
+    }
+  ],
+  "remediation": "Serve MCP over TLS (HTTPS/WSS) in all non-localhost environments. Enforce HSTS and reject plaintext connections.",
+  "references": [
+    "https://cosai.org/T8",
+    "https://cwe.mitre.org/data/definitions/319.html"
+  ]
+}

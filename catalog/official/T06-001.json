@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "id": "T06-001",
+  "category": "T6",
+  "severity": "high",
+  "cosai_ref": "T6",
+  "owasp_ref": "MCP-Top10-A06",
+  "cwe": [
+    "CWE-345"
+  ],
+  "probes": [
+    {
+      "id": "T06-001-p1",
+      "transport": "http",
+      "method": "tools/list",
+      "payload": {},
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": false
+        }
+      ]
+    }
+  ],
+  "remediation": "Verify tool definitions against a signed manifest on each tools/list response. Detect and reject duplicate tool names across all registered MCP servers.",
+  "references": [
+    "https://cosai.org/T6",
+    "https://cwe.mitre.org/data/definitions/345.html"
+  ]
+}

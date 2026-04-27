@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "id": "T01-001",
+  "category": "T1",
+  "severity": "critical",
+  "cosai_ref": "T1",
+  "owasp_ref": "MCP-Top10-A01",
+  "cwe": ["CWE-287"],
+  "probes": [
+    {
+      "id": "T01-001-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {}
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true
+        }
+      ]
+    }
+  ],
+  "remediation": "Enforce authentication on all MCP endpoints.",
+  "references": ["https://cosai.org/T1"]
+}

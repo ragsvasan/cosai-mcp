@@ -1,0 +1,91 @@
+{
+  "schema_version": "1.0",
+  "id": "T03-001",
+  "category": "T3",
+  "severity": "critical",
+  "cosai_ref": "T3",
+  "owasp_ref": "MCP-Top10-A03",
+  "cwe": [
+    "CWE-77",
+    "CWE-78"
+  ],
+  "probes": [
+    {
+      "id": "T03-001-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "cmd": "; cat /etc/passwd",
+          "input": "; cat /etc/passwd"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "root:"
+        },
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "/bin/bash"
+        }
+      ]
+    },
+    {
+      "id": "T03-001-p2",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "cmd": "$(id)",
+          "input": "`id`"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "uid="
+        },
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "gid="
+        }
+      ]
+    },
+    {
+      "id": "T03-001-p3",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "path": "/etc/passwd",
+          "file": "/etc/shadow"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "root:"
+        },
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "daemon:"
+        }
+      ]
+    }
+  ],
+  "remediation": "Validate and sanitise all tool arguments against a strict JSON Schema. Never pass user-controlled values to shell commands or file paths without allow-listing.",
+  "references": [
+    "https://cosai.org/T3",
+    "https://cwe.mitre.org/data/definitions/78.html"
+  ]
+}

@@ -21,3 +21,4 @@ htmlcov/
 *.html
 !docs/**/*.html
 scan-reports/
+catalog/.signing-key

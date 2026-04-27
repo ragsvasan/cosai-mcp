@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "id": "T11-001",
+  "category": "T11",
+  "severity": "high",
+  "cosai_ref": "T11",
+  "owasp_ref": "MCP-Top10-A11",
+  "cwe": [
+    "CWE-494"
+  ],
+  "probes": [
+    {
+      "id": "T11-001-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "__cosai_probe_unlisted_tool__",
+        "arguments": {}
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true
+        },
+        {
+          "target": "response.error_code",
+          "operator": "error_code_in",
+          "value": [
+            -32601,
+            -32602,
+            -32603
+          ]
+        }
+      ]
+    },
+    {
+      "id": "T11-001-p2",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "../../etc/passwd",
+        "arguments": {}
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true
+        }
+      ]
+    }
+  ],
+  "remediation": "Maintain a signed allowlist of permitted tool names. Reject invocations of tools not present in the allowlist with JSON-RPC error -32601 (Method Not Found).",
+  "references": [
+    "https://cosai.org/T11",
+    "https://cwe.mitre.org/data/definitions/494.html"
+  ]
+}

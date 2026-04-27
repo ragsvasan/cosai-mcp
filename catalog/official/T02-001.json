@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "id": "T02-001",
+  "category": "T2",
+  "severity": "critical",
+  "cosai_ref": "T2",
+  "owasp_ref": "MCP-Top10-A02",
+  "cwe": [
+    "CWE-862",
+    "CWE-639"
+  ],
+  "probes": [
+    {
+      "id": "T02-001-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "session_id": "other-user-session-id",
+          "user_id": "victim@example.com"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true
+        }
+      ]
+    },
+    {
+      "id": "T02-001-p2",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "role": "admin",
+          "privilege_level": "99"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true
+        }
+      ]
+    }
+  ],
+  "remediation": "Bind all tool permissions to the authenticated session identity. Reject any tool argument that attempts to reference a different session, user, or elevated role.",
+  "references": [
+    "https://cosai.org/T2",
+    "https://cwe.mitre.org/data/definitions/862.html"
+  ]
+}

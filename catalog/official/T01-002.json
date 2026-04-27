@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0",
+  "id": "T01-002",
+  "category": "T1",
+  "severity": "critical",
+  "cosai_ref": "T1",
+  "owasp_ref": "MCP-Top10-A01",
+  "cwe": [
+    "CWE-306"
+  ],
+  "probes": [
+    {
+      "id": "T01-002-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "action": "list_users"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true
+        },
+        {
+          "target": "response.error_code",
+          "operator": "error_code_in",
+          "value": [
+            -32600,
+            -32603,
+            -32001
+          ]
+        }
+      ]
+    },
+    {
+      "id": "T01-002-p2",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "action": "admin_reset"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true
+        }
+      ]
+    }
+  ],
+  "remediation": "All tool invocations must require a valid session token bound to an authenticated identity. Return JSON-RPC error -32001 (or HTTP 401) for unauthenticated requests.",
+  "references": [
+    "https://cosai.org/T1",
+    "https://owasp.org/www-project-top-ten/"
+  ]
+}

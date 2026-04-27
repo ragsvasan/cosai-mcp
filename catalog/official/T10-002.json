@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "id": "T10-002",
+  "category": "T10",
+  "severity": "medium",
+  "cosai_ref": "T10",
+  "owasp_ref": "MCP-Top10-A10",
+  "cwe": [
+    "CWE-770"
+  ],
+  "probes": [
+    {
+      "id": "T10-002-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "tick": "1"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": false
+        }
+      ]
+    }
+  ],
+  "remediation": "Implement per-session and per-IP rate limits on tool invocations. Return JSON-RPC error -32029 (rate limit exceeded) with Retry-After.",
+  "references": [
+    "https://cosai.org/T10",
+    "https://cwe.mitre.org/data/definitions/770.html"
+  ]
+}

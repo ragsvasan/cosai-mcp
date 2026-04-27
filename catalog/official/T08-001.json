@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "id": "T08-001",
+  "category": "T8",
+  "severity": "high",
+  "cosai_ref": "T8",
+  "owasp_ref": "MCP-Top10-A08",
+  "cwe": [
+    "CWE-918"
+  ],
+  "probes": [
+    {
+      "id": "T08-001-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "url": "http://169.254.169.254/latest/meta-data/"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true
+        }
+      ]
+    },
+    {
+      "id": "T08-001-p2",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "url": "http://127.0.0.1:22/",
+          "target": "http://10.0.0.1/admin"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true
+        },
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "SSH-"
+        }
+      ]
+    }
+  ],
+  "remediation": "Validate all URL arguments against an allowlist of permitted schemes and hosts. Block RFC1918, link-local, and loopback addresses.",
+  "references": [
+    "https://cosai.org/T8",
+    "https://cwe.mitre.org/data/definitions/918.html"
+  ]
+}

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import time
+import types
 from typing import Any
 
 from cosai_mcp.catalog.models import Probe, ThreatDefinition
@@ -11,6 +12,22 @@ from cosai_mcp.config import ScanConfig
 from cosai_mcp.harness.assertions import evaluate_assertion
 from cosai_mcp.harness.result import AssertionResult, ProbeResult, make_probe_result
 from cosai_mcp.session import MCPSession
+
+
+def _to_json_safe(obj: Any) -> Any:
+    """Recursively convert MappingProxyType/tuple to dict/list for JSON serialisation.
+
+    Catalog payloads are frozen (MappingProxyType + tuple) for immutability.
+    The transport layer calls json.dumps, which rejects both types.
+    This converts them to plain Python containers before the network hop.
+    """
+    if isinstance(obj, types.MappingProxyType):
+        return {k: _to_json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, dict):
+        return {k: _to_json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (tuple, list)):
+        return [_to_json_safe(item) for item in obj]
+    return obj
 
 
 class ProbeContext:
@@ -56,9 +73,11 @@ class ProbeContext:
         vars_.setdefault("session_id", "")
         vars_.setdefault("tool_name", "")
 
-        # Substitute template variables before sending
+        # Substitute template variables before sending.
+        # _to_json_safe converts MappingProxyType/tuple → dict/list so that
+        # template substitution and json.dumps both work on plain containers.
         try:
-            payload_dict: dict[str, Any] = dict(probe.payload)
+            payload_dict: dict[str, Any] = _to_json_safe(probe.payload)
             resolved_payload = substitute_probe_payload(payload_dict, vars_)
         except Exception as exc:
             return make_probe_result(
