@@ -712,7 +712,7 @@ cosai scan http://localhost:8000 || true  # exits with a defined code (not unhan
 | P6 | Stateful Harness | P3 | P4a P4b P5 P7 | **T1 Full** | feat(stateful) ✅ DONE |
 | P7 | Middleware T4/T9/T12 | P3 | P4a P4b P5 P6 | **T1 Full** | feat(middleware) ✅ DONE |
 | P8 | CLI + Adoption | P4c P5 P6 P7 | — | **T2 Sonnet (covers P4c+P8) — due at P9 gate** | feat(cli) ✅ DONE |
-| P9 | CI/CD + Supply Chain | P8 | — | **T1 Full** | feat(ci) 🔜 NEXT |
+| P9 | CI/CD + Supply Chain | P8 | — | **T1 Full** | feat(ci) ✅ DONE |
 
 **T1 Full panels:** P1, P2, P3, P5, P6, P7, P9 (7 panels total — all architecturally critical phases)
 **T2 Sonnet panels:** P4a, P4b, P8-batched (3 runs — P4c deferred into P8 batch)
@@ -781,3 +781,64 @@ Both panel types always include: "Is this the industry-standard approach for thi
 - [ ] Commit message format: feat(<scope>): <description>
 - [ ] No --no-verify, no --amend on published commits
 ```
+
+---
+
+## First Real-World Target: Mnemo MCP Server
+
+**Decision (2026-04-27):** Run cosai-mcp against Mnemo locally, never against production GCP.
+Production scanning is inappropriate — probes send adversarial payloads (token replays, oversized
+inputs, malformed auth) that pollute audit logs, trigger rate limits, and risk state corruption
+against live user data. Use MCPProxy-go/MCP-Bastion for passive production monitoring instead.
+
+### How Mnemo runs locally
+
+Mnemo MCP runs in HTTP mode (`mnemo_mcp.http_app`) which is the right target for cosai-mcp
+(Streamable HTTP transport). It needs the Mnemo backend API running first.
+
+**Prerequisites:**
+- PostgreSQL running locally (`postgresql://localhost/mnemo`)
+- `/Users/rags/mnemo/.env.local` — already filled with working dev values
+
+**Start the stack (three terminals or `scripts/dev.sh`):**
+```bash
+# Terminal 1 — Mnemo backend API (includes /mcp HTTP endpoint)
+cd ~/mnemo
+env $(cat .env.local | grep -v '^#' | xargs) uvicorn backend.main:app --port 8000 --reload
+
+# Terminal 2 — MCP HTTP wrapper (what cosai-mcp scans)
+env $(cat .env.local | grep -v '^#' | xargs) \
+  MNEMO_API_URL=http://localhost:8000 \
+  uvicorn mnemo_mcp.http_app:app --port 8080
+```
+
+**Run the scan:**
+```bash
+cd ~/CoSAI
+# Full scan — all 12 CoSAI categories
+cosai scan http://localhost:8080 \
+  --engine all \
+  --categories all \
+  --fail-on high \
+  --sarif mnemo-scan.sarif \
+  --html mnemo-scan.html
+
+# Auth token required for T2/T5/T12 probes (Mnemo validates Bearer tokens)
+cosai scan http://localhost:8080 \
+  --auth-header "Authorization: Bearer $(cat ~/.mnemo/mcp_token)" \
+  --engine all
+```
+
+### Known gaps to expect (from CodeGuard audit 2026-04-27)
+
+| Finding | Severity | cosai-mcp probe | Notes |
+|---------|----------|-----------------|-------|
+| No two-stage commit on `purge_records`, `cancel_draft_decision`, `import_data` | CRITICAL | T2 (stateful harness) | One-shot DELETE — cosai-mcp flags as T2/T9 violation |
+| No mandatory per-call audit ledger | HIGH | T12 (middleware) | Attestation only when ATTEST_HMAC_KEY set |
+| Loop detection in-memory (non-durable) | MEDIUM | T10 (prober) | Resets on restart — cosai-mcp flags as partial |
+| Starlette no `max_body_size` | MEDIUM | T3/T10 (prober) | Unbounded body before JSON parsing |
+
+### After the scan
+- Upload `mnemo-scan.sarif` to GitHub Security tab (`gh api` or push to mnemo repo)
+- File findings as issues in mnemo repo with CodeGuard fix specs
+- Priority: CRITICAL (two-stage commit) → HIGH (audit ledger) → MEDIUM
