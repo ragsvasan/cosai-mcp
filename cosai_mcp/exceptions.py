@@ -58,3 +58,15 @@ class TemplateInjectionError(CosaiMCPError):
 
 class UnknownVariableError(CosaiMCPError):
     """Raised when a template variable is not in the allowed variable allowlist."""
+
+
+# ---------------------------------------------------------------------------
+# CLI / scan orchestration exceptions (Phase 8)
+# ---------------------------------------------------------------------------
+
+class TargetUnreachableError(CosaiMCPError):
+    """Raised when the target MCP server cannot be reached (TCP connect fails)."""
+
+
+class ScannerInternalError(CosaiMCPError):
+    """Raised when the scanner itself errors (not a target finding)."""

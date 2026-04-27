@@ -1,16 +1,416 @@
-"""Python API — Scanner class. Implemented in Phase 8."""
+"""Python API — Scanner class, ScanResult, scrub_env, COVERAGE_MATRIX."""
 from __future__ import annotations
 
+import datetime
+import hashlib
+import os
+import re
+import socket
+from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import urlparse
+
+from cosai_mcp.catalog.loader import CatalogLoader
+from cosai_mcp.catalog.models import Severity, ThreatDefinition
+from cosai_mcp.config import ScanConfig
+from cosai_mcp.exceptions import ScannerInternalError, TargetUnreachableError
+from cosai_mcp.harness.result import ProbeResult
+from cosai_mcp.harness.runner import ProbeRunner
+from cosai_mcp.stateful.harness import ScenarioResult, StatefulHarness
+from cosai_mcp.stateful.scenarios import (
+    t2_confused_deputy,
+    t2_privilege_escalation_chain,
+    t6_tool_shadowing_mid_session,
+    t7_session_token_binding,
+)
+
+# ---------------------------------------------------------------------------
+# Coverage matrix — locked by three-engine architecture decision
+# ---------------------------------------------------------------------------
+
+COVERAGE_MATRIX: dict[str, str] = {
+    "T1":  "black-box-prober",
+    "T2":  "black-box-partial+stateful",
+    "T3":  "black-box-prober",
+    "T4":  "middleware-only",
+    "T5":  "black-box-partial",
+    "T6":  "black-box-partial+stateful",
+    "T7":  "stateful",
+    "T8":  "black-box-prober",
+    "T9":  "middleware-only",
+    "T10": "black-box-prober",
+    "T11": "black-box-partial",
+    "T12": "middleware-only",
+}
+
+# Categories only detectable via middleware instrumentation — cannot be probed
+MIDDLEWARE_ONLY_CATEGORIES: frozenset[str] = frozenset({"T4", "T9", "T12"})
+
+# ---------------------------------------------------------------------------
+# Env scrubbing — strip secrets before subprocess spawn
+#
+# Design: scrub_env() returns a copy and never mutates the source dict.
+# _apply_env_scrub() mutates os.environ in-place and is ONLY called from the
+# CLI entry point (a short-lived process).  Library callers (Scanner.run())
+# must NOT call _apply_env_scrub(); they receive the scrubbed env via
+# ScanConfig.subprocess_env — passed explicitly to subprocesses, never by
+# mutating the host process environment.
+# ---------------------------------------------------------------------------
+
+_SCRUB_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p, re.IGNORECASE)
+    for p in [
+        r".*_TOKEN$",
+        r".*_KEY$",
+        r".*_SECRET$",
+        r".*_PASSWORD$",
+        r".*_CREDENTIAL.*",
+        r"AWS_.*",
+        r"GOOGLE_APPLICATION_CREDENTIALS",
+        r"GCP_.*",
+        r"AZURE_.*",
+        r"GH_.*",
+        r"GITHUB_.*",
+        # Connection-string variables that embed credentials (FIX [3])
+        r"DATABASE_URL$",
+        r"MONGODB_URI$",
+        r"MONGO_URI$",
+        r"REDIS_URL$",
+        r"CELERY_BROKER_URL$",
+        r"SMTP_.*",
+        r"MAIL_PASSWORD$",
+    ]
+)
+
+
+def scrub_env(env: dict[str, str] | None = None) -> dict[str, str]:
+    """Return a copy of ``env`` with sensitive vars removed.
+
+    If ``env`` is None, reads ``os.environ`` at call time into a fresh dict.
+    Never mutates the source mapping.
+    """
+    source = env if env is not None else dict(os.environ)
+    return {k: v for k, v in source.items() if not any(p.match(k) for p in _SCRUB_PATTERNS)}
+
+
+def _apply_env_scrub() -> None:
+    """Mutate ``os.environ`` in-place — CLI-only, called once at process start.
+
+    Must NOT be called from library code (Scanner.run(), _run_scan()).
+    Library paths should pass scrub_env() output to subprocess constructors.
+    """
+    for key in list(os.environ.keys()):
+        if any(p.match(key) for p in _SCRUB_PATTERNS):
+            del os.environ[key]
+
+
+# ---------------------------------------------------------------------------
+# URL / connectivity helpers
+# ---------------------------------------------------------------------------
+
+def _parse_target(target: str) -> tuple[str, int, str]:
+    """Parse ``target`` URL and return ``(host, port, normalised_url)``.
+
+    Raises ``ValueError`` if the URL is missing scheme or hostname.
+    """
+    parsed = urlparse(target)
+    if not parsed.scheme or not parsed.hostname:
+        raise ValueError(f"Invalid target URL — must include scheme and host: {target!r}")
+    host = parsed.hostname
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return host, port, target
+
+
+def check_reachable(host: str, port: int, timeout: float = 5.0) -> None:
+    """Attempt a TCP connection to ``host:port``.
+
+    Raises ``TargetUnreachableError`` on failure.  This is the only network
+    access the CLI makes before starting the full scan; it gives exit-code 3
+    a clean, early signal path.
+    """
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            pass
+    except (OSError, socket.timeout) as exc:
+        raise TargetUnreachableError(
+            f"Cannot reach {host}:{port} — {exc}"
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Catalog helper
+# ---------------------------------------------------------------------------
+
+CATALOG_ROOT: Path = Path(__file__).parent.parent / "catalog"
+
+
+def _catalog_hash(threats: list[ThreatDefinition]) -> str:
+    """SHA-256 fingerprint of the loaded threat IDs (sorted for determinism)."""
+    ids = sorted(t.id for t in threats)
+    return hashlib.sha256("|".join(ids).encode()).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# ScanResult
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ScanResult:
+    """Immutable result of a complete cosai-mcp scan.
+
+    ``exit_code`` follows the locked semantics:
+        0  clean — no findings at or above threshold
+        1  findings at or above ``fail_on`` threshold
+        2  scanner internal error (scan-incomplete counts as 2)
+        3  target unreachable (set by caller, not by this dataclass)
+    """
+    target_url: str
+    threats: tuple[ThreatDefinition, ...]
+    probe_results: tuple[ProbeResult, ...]
+    scenario_results: tuple[ScenarioResult, ...]
+    scan_timestamp: str
+    catalog_hash: str
+    exit_code: int
+
+    @property
+    def has_findings(self) -> bool:
+        failed_probes = any(not r.passed for r in self.probe_results if r.error is None)
+        failed_scenarios = any(
+            not r.passed and r.status == "complete" for r in self.scenario_results
+        )
+        return failed_probes or failed_scenarios
+
+    @property
+    def is_incomplete(self) -> bool:
+        return any(r.status == "scan-incomplete" for r in self.scenario_results)
+
+
+# ---------------------------------------------------------------------------
+# Exit-code determination — implements fail_on severity threshold (FIX [5])
+# ---------------------------------------------------------------------------
+
+# Higher value = higher severity (threshold comparison: finding_rank >= threshold)
+_SEVERITY_RANK: dict[str, int] = {
+    "info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4,
+}
+
+
+def _determine_exit_code(
+    probe_results: list[ProbeResult],
+    scenario_results: list[ScenarioResult],
+    fail_on: str,
+    threat_severity: dict[str, Severity] | None = None,
+) -> int:
+    """Return 0, 1, or 2 based on scan results, respecting the fail_on threshold.
+
+    ``threat_severity`` maps threat_id → Severity for threshold filtering.
+    When not provided, all failed probes count as findings (conservative).
+
+    Exit code 3 (unreachable) is set by the caller before ``_run_scan`` is invoked.
+    """
+    # scan-incomplete is always exit 2 — scanner could not verify the target
+    if any(r.status == "scan-incomplete" for r in scenario_results):
+        return 2
+
+    # Probe errors (scanner crash in subprocess) → exit 2
+    if any(r.error is not None for r in probe_results):
+        return 2
+
+    threshold = _SEVERITY_RANK.get(fail_on.lower(), _SEVERITY_RANK["critical"])
+
+    if threat_severity is not None:
+        def _above_threshold(r: ProbeResult) -> bool:
+            sev = threat_severity.get(r.threat_id)
+            if sev is None:
+                return True  # unknown severity: conservative, count it
+            return _SEVERITY_RANK.get(sev.value, 0) >= threshold
+
+        failed_probes = any(
+            not r.passed and r.error is None and _above_threshold(r)
+            for r in probe_results
+        )
+    else:
+        failed_probes = any(not r.passed and r.error is None for r in probe_results)
+
+    failed_scenarios = any(not r.passed for r in scenario_results)
+
+    if failed_probes or failed_scenarios:
+        return 1
+
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Core scan orchestration
+# ---------------------------------------------------------------------------
+
+def _run_scan(
+    *,
+    target: str,
+    categories: list[str] | None,
+    engine: str,
+    allow_custom_catalog: bool,
+    probe_timeout_seconds: float,
+    catalog_root: Path,
+    fail_on: str = "critical",
+    allow_private_targets: bool = True,
+) -> ScanResult:
+    """Orchestrate a complete scan and return a ``ScanResult``.
+
+    Caller is responsible for:
+    - Catching ``TargetUnreachableError`` before this call (check_reachable)
+    - Mapping ``ScanResult.exit_code`` to the process exit code
+    - Env scrubbing: CLI callers should call ``_apply_env_scrub()`` once at
+      process start BEFORE calling this function.  Library callers must NOT
+      call ``_apply_env_scrub()`` — the scrubbed env is passed to subprocesses
+      via ScanConfig.
+
+    Any unhandled exception from this function should be mapped to exit code 2.
+    """
+    host, port, target_url = _parse_target(target)
+    scan_timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    # NOTE: _apply_env_scrub() is intentionally NOT called here (FIX [2]).
+    # CLI callers call it once at process start; library callers must not mutate os.environ.
+
+    config = ScanConfig(
+        target_host=host,
+        target_port=port,
+        allow_private_targets=allow_private_targets,
+        probe_timeout_seconds=probe_timeout_seconds,
+    )
+
+    # Load + filter catalog
+    loader = CatalogLoader(
+        catalog_root=catalog_root,
+        allow_custom=allow_custom_catalog,
+    )
+    all_threats = loader.load_all()
+
+    effective_categories = _normalise_categories(categories)
+    if effective_categories is not None:
+        threats = [t for t in all_threats if t.category.upper() in effective_categories]
+    else:
+        threats = all_threats
+
+    catalog_hash_ = _catalog_hash(threats)
+    threat_severity = {t.id: t.severity for t in threats}
+
+    # --- Prober engine ---
+    probe_results: list[ProbeResult] = []
+    if engine in ("prober", "all"):
+        runner = ProbeRunner(config=config, target_url=target_url)
+        for threat in threats:
+            if threat.category.upper() in MIDDLEWARE_ONLY_CATEGORIES:
+                continue  # middleware-only — not probeable from outside
+            variables = {
+                "target_url": target_url,
+                "session_id": "cosai-scan",
+                "tool_name": "ping",
+            }
+            probe_results.extend(runner.run_threat(threat, variables=variables))
+
+    # --- Stateful engine ---
+    scenario_results: list[ScenarioResult] = []
+    if engine in ("stateful", "all"):
+        run_all = effective_categories is None
+        _stateful_scenarios = [
+            (frozenset({"T2"}), t2_privilege_escalation_chain),
+            (frozenset({"T2"}), t2_confused_deputy),
+            (frozenset({"T6"}), t6_tool_shadowing_mid_session),
+            (frozenset({"T7"}), t7_session_token_binding),
+        ]
+        harness = StatefulHarness(config=config)
+        for cats, factory in _stateful_scenarios:
+            if run_all or cats & (effective_categories or set()):
+                scenario = factory()
+                result = harness.run_scenario(scenario, target_url)
+                scenario_results.append(result)
+
+    return ScanResult(
+        target_url=target_url,
+        threats=tuple(threats),
+        probe_results=tuple(probe_results),
+        scenario_results=tuple(scenario_results),
+        scan_timestamp=scan_timestamp,
+        catalog_hash=catalog_hash_,
+        exit_code=_determine_exit_code(
+            probe_results, scenario_results, fail_on, threat_severity
+        ),
+    )
+
+
+def _normalise_categories(categories: list[str] | None) -> frozenset[str] | None:
+    """Return normalised category set, or None if all categories are requested."""
+    if not categories:
+        return None
+    upper = frozenset(c.upper() for c in categories)
+    if upper == {"ALL"}:
+        return None
+    return upper
+
+
+# ---------------------------------------------------------------------------
+# Public Scanner class
+# ---------------------------------------------------------------------------
 
 class Scanner:
-    """Python API for programmatic cosai-mcp usage."""
+    """Python API for programmatic cosai-mcp usage.
 
-    def __init__(self, target: str) -> None:
+    Example::
+
+        from cosai_mcp import Scanner
+        results = Scanner("http://localhost:8000").run(categories=["T1", "T4"])
+
+    Raises:
+        ValueError: invalid target URL (missing scheme or hostname)
+        TargetUnreachableError: TCP connect to target failed
+        ScannerInternalError: unexpected error in the scan engine
+    """
+
+    def __init__(
+        self,
+        target: str,
+        categories: list[str] | None = None,
+        engine: str = "all",
+        allow_custom_catalog: bool = False,
+        probe_timeout_seconds: float = 30.0,
+        catalog_root: Path | None = None,
+        allow_private_targets: bool = True,
+    ) -> None:
         self.target = target
+        self.categories = categories
+        self.engine = engine
+        self.allow_custom_catalog = allow_custom_catalog
+        self.probe_timeout_seconds = probe_timeout_seconds
+        self.catalog_root = catalog_root or CATALOG_ROOT
+        self.allow_private_targets = allow_private_targets
 
-    def run(self, categories: list[str] | None = None) -> "ScanResult":
-        raise NotImplementedError("Phase 8: Scanner.run()")
+    def run(self, categories: list[str] | None = None) -> ScanResult:
+        """Run a complete scan and return a :class:`ScanResult`.
 
+        ``categories`` overrides the instance-level setting for this call.
 
-class ScanResult:
-    """Result of a complete scan. Implemented in Phase 8."""
+        Raises:
+            ValueError: target URL is malformed
+            TargetUnreachableError: TCP connect failed
+            ScannerInternalError: unexpected internal error
+        """
+        effective_categories = categories if categories is not None else self.categories
+        try:
+            return _run_scan(
+                target=self.target,
+                categories=effective_categories,
+                engine=self.engine,
+                allow_custom_catalog=self.allow_custom_catalog,
+                probe_timeout_seconds=self.probe_timeout_seconds,
+                catalog_root=self.catalog_root,
+                fail_on="critical",
+                allow_private_targets=self.allow_private_targets,
+            )
+        except (ValueError, TargetUnreachableError):
+            raise  # let typed exceptions propagate as-is
+        except Exception as exc:
+            raise ScannerInternalError(
+                f"Unexpected scan engine error: {exc}"
+            ) from exc
