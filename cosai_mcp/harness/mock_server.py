@@ -52,7 +52,8 @@ class _MCPHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "Invalid JSON"})
             return
 
-        response = self.server.mock_server.handle_rpc(request)
+        headers = dict(self.headers)
+        response = self.server.mock_server.handle_rpc(request, headers)
 
         # Finding 10: notifications (no 'id') → 204 No Content, not 200 + body
         if not response:
@@ -92,6 +93,14 @@ class MockMCPServer:
         If set, initialize returns an error response with this message.
     port:
         Port to listen on (0 = OS-assigned ephemeral port).
+    tools_list_sequence:
+        If set, successive tools/list calls return items from this list in
+        order.  After the sequence is exhausted the last entry repeats.
+        Used to simulate tool shadowing mid-session (T6).
+    privileged_tools:
+        Set of tool names that require the ``X-Privileged: true`` request
+        header.  Calls without the header receive a JSON-RPC error response.
+        Used to test access-control enforcement (T2).
     """
 
     def __init__(
@@ -100,6 +109,8 @@ class MockMCPServer:
         tools_call_response: dict[str, Any] | None = None,
         initialize_error: str | None = None,
         port: int = 0,
+        tools_list_sequence: list[list[dict[str, Any]]] | None = None,
+        privileged_tools: set[str] | None = None,
     ) -> None:
         self._tools = tools if tools is not None else list(_DEFAULT_TOOLS)
         self._tools_call_response = tools_call_response
@@ -110,6 +121,10 @@ class MockMCPServer:
         self._request_log: list[dict[str, Any]] = []
         self._log_lock = threading.Lock()       # Finding 8: thread-safe log access
         self._ready = threading.Event()          # Finding 9: readiness barrier
+        self._tools_list_sequence = tools_list_sequence
+        self._tools_list_call_count: int = 0
+        self._privileged_tools: set[str] = privileged_tools or set()
+        self._last_request_headers: dict[str, str] = {}
 
     @property
     def port(self) -> int:
@@ -141,10 +156,16 @@ class MockMCPServer:
                 f"MockMCPServer did not become ready within {timeout}s"
             )
 
-    def handle_rpc(self, request: dict[str, Any]) -> dict[str, Any]:
+    def handle_rpc(
+        self,
+        request: dict[str, Any],
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         """Process one JSON-RPC request and return a response dict."""
         with self._log_lock:
             self._request_log.append(request)
+            if headers is not None:
+                self._last_request_headers = dict(headers)
 
         method = request.get("method", "")
         req_id = request.get("id")
@@ -171,20 +192,36 @@ class MockMCPServer:
             }
 
         if method == "tools/list":
+            tools = self._get_tools_for_call()
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
-                "result": {"tools": self._tools},
+                "result": {"tools": tools},
             }
 
         if method == "tools/call":
+            params = request.get("params", {})
+            name = params.get("name", "unknown")
+
+            # Check privileged tool access
+            if name in self._privileged_tools:
+                request_headers = headers or {}
+                is_privileged = request_headers.get("X-Privileged", "").lower() == "true"
+                if not is_privileged:
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "error": {
+                            "code": -32000,
+                            "message": f"Unauthorized: {name!r} requires X-Privileged: true",
+                        },
+                    }
+
             if self._tools_call_response is not None:
                 response = dict(self._tools_call_response)
                 response["id"] = req_id
                 response.setdefault("jsonrpc", "2.0")
                 return response
-            params = request.get("params", {})
-            name = params.get("name", "unknown")
             arguments = params.get("arguments", {})
             return {
                 "jsonrpc": "2.0",
@@ -203,6 +240,16 @@ class MockMCPServer:
             "id": req_id,
             "error": {"code": -32601, "message": f"Method not found: {method!r}"},
         }
+
+    def _get_tools_for_call(self) -> list[dict[str, Any]]:
+        """Return the appropriate tools list for this tools/list call."""
+        with self._log_lock:
+            if self._tools_list_sequence is not None:
+                idx = min(self._tools_list_call_count, len(self._tools_list_sequence) - 1)
+                tools = self._tools_list_sequence[idx]
+                self._tools_list_call_count += 1
+                return tools
+            return self._tools
 
     def start(self) -> None:
         self._server = _MockHTTPServer(("127.0.0.1", self._port), self)
