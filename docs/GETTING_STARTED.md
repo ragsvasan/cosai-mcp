@@ -228,6 +228,51 @@ If the scanner could not connect, crashed, or was interrupted, the report is mar
 
 ---
 
+## Scanning Auth-Protected Servers
+
+Most development servers run without authentication — the default scan requires no credentials.
+
+For servers that require a Bearer token even for the MCP handshake (production servers, servers with OAuth2/OIDC), pass a token with `--auth-token`:
+
+```bash
+cosai scan http://localhost:8080 --auth-token "your-token-here"
+```
+
+Or via environment variable (recommended for CI — avoids token in shell history):
+
+```bash
+export COSAI_AUTH_TOKEN="your-token-here"
+cosai scan http://localhost:8080
+```
+
+**What the token is used for:**
+- Session setup (`initialize` + `initialized` + `tools/list`)
+- All non-T1 probes (T2–T12)
+
+**What it is NOT used for:**
+- T1 (authentication) probes always run without the token — the T1 test IS "does the server reject unauthenticated requests?" A server that requires auth for `initialize` will correctly PASS T1.
+
+**How to generate a scan token for your server:**
+
+The scanner needs a valid token for session setup. Most auth systems have a service-account or API-key concept:
+
+| Auth system | How to create a scan token |
+|-------------|---------------------------|
+| OAuth2 / OpenID Connect | Create a service account; issue a long-lived client credential |
+| API keys | Generate a read-scope API key in your admin panel |
+| JWT (symmetric) | Mint a token with your signing key (add a `scanner` audience claim) |
+| Custom | Ask the server for a `/api-keys` or `/tokens` endpoint |
+
+**Custom MCP endpoint path:**
+
+If your server mounts MCP at a non-standard path (default is `/mcp`):
+
+```bash
+cosai scan http://localhost:8080 --mcp-path /v1/mcp
+```
+
+---
+
 ## Using the Middleware (T4, T9, T12)
 
 For T4 (indirect prompt injection), T9 (LLM trust boundaries), and T12 (execution traces), deploy the middleware in your MCP server. The middleware IS the detection mechanism for these categories.
