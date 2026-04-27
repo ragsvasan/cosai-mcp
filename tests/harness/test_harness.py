@@ -874,3 +874,67 @@ class TestP3PanelRegressions:
         response: dict[str, Any] = {"jsonrpc": "2.0", "id": "1", "result": {}}
         body = _extract_target(response, "response.body")
         assert body == ""
+
+
+# ===========================================================================
+# Regression: MappingProxyType pickling bug (found during Mnemo scan 2026-04-27)
+# ===========================================================================
+
+class TestMappingProxyPicklingRegression:
+    """Bug: nested MappingProxyType in probe.payload caused pickling failure
+    when the multiprocessing.spawn context tried to serialise the subprocess
+    entry-point arguments.  _probe_to_dict must use _to_json_safe() to
+    recursively convert all MappingProxyType objects to plain dicts."""
+
+    def test_regression_probe_to_dict_converts_nested_mappingproxy(self):
+        """_probe_to_dict must recursively convert nested MappingProxyType to
+        plain dicts so the result can be pickled for subprocess IPC."""
+        import pickle
+
+        nested_payload = types.MappingProxyType({
+            "name": "{{tool_name}}",
+            "arguments": types.MappingProxyType({
+                "nested": types.MappingProxyType({"key": "value"}),
+                "list_field": ("a", "b"),
+            }),
+        })
+        probe = Probe(
+            id="test-p1",
+            transport="http",
+            method="tools/call",
+            payload=nested_payload,
+            assertions=(),
+        )
+        d = _probe_to_dict(probe)
+
+        # Must be pickle-able (no MappingProxyType or tuple anywhere)
+        data = pickle.dumps(d)
+        loaded = pickle.loads(data)
+        assert loaded["payload"]["name"] == "{{tool_name}}"
+        assert loaded["payload"]["arguments"]["nested"]["key"] == "value"
+
+    def test_regression_probe_to_dict_no_mappingproxy_in_output(self):
+        """_probe_to_dict output must contain no MappingProxyType objects."""
+        nested_payload = types.MappingProxyType({
+            "x": types.MappingProxyType({"y": "z"}),
+        })
+        probe = Probe(
+            id="test-p2",
+            transport="http",
+            method="tools/call",
+            payload=nested_payload,
+            assertions=(),
+        )
+        d = _probe_to_dict(probe)
+
+        def _has_proxy(obj: Any) -> bool:
+            if isinstance(obj, types.MappingProxyType):
+                return True
+            if isinstance(obj, dict):
+                return any(_has_proxy(v) for v in obj.values())
+            if isinstance(obj, (list, tuple)):
+                return any(_has_proxy(item) for item in obj)
+            return False
+
+        assert not _has_proxy(d), "Output must not contain MappingProxyType objects"
+

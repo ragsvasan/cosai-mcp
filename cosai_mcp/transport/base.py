@@ -70,7 +70,9 @@ def resolve_and_pin(hostname: str, config: ScanConfig) -> str:
     if not results:
         raise PrivateAddressError(f"Cannot resolve hostname: {hostname!r}")
 
-    # Use the first result's IP
+    # Prefer IPv4 (AF_INET) over IPv6 — on macOS, localhost resolves to ::1
+    # first, but many development servers only bind on 127.0.0.1 (IPv4).
+    results.sort(key=lambda r: 0 if r[0] == socket.AF_INET else 1)
     raw_ip = results[0][4][0]
 
     if is_always_blocked(raw_ip):

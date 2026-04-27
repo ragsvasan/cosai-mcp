@@ -813,3 +813,157 @@ class TestRegressionFindings:
         HOME allows spawned processes to read ~/.profile and exfiltrate config."""
         env = _safe_env()
         assert "HOME" not in env, "HOME must never be passed to child processes"
+
+
+# ===========================================================================
+# Regressions found during live Mnemo scan (2026-04-27)
+# ===========================================================================
+
+class TestMnemoScanRegressions:
+    """Bugs found and fixed while scanning the Mnemo MCP server."""
+
+    # -----------------------------------------------------------------------
+    # Bug 1: IPv6-first resolution caused connection refused on IPv4-only servers
+    # -----------------------------------------------------------------------
+
+    def test_regression_resolve_prefers_ipv4_over_ipv6(self):
+        """resolve_and_pin must return an IPv4 address when both AF_INET and
+        AF_INET6 results are available.  On macOS, getaddrinfo('localhost', ...)
+        returns ::1 (AF_INET6) first; servers that only bind on 127.0.0.1
+        (AF_INET) would fail to connect with the IPv6 address."""
+        with patch("cosai_mcp.transport.base.socket.getaddrinfo") as mock_gai:
+            mock_gai.return_value = [
+                (socket.AF_INET6, socket.SOCK_STREAM, 0, "", ("::1", 0, 0, 0)),
+                (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", 0)),
+            ]
+            config = ScanConfig(
+                target_host="localhost",
+                target_port=8080,
+                allow_private_targets=True,
+            )
+            ip = resolve_and_pin("localhost", config)
+        assert ip == "127.0.0.1", f"Expected IPv4 127.0.0.1, got {ip!r}"
+
+    def test_regression_resolve_accepts_ipv6_when_no_ipv4(self):
+        """resolve_and_pin must still work when only IPv6 is available."""
+        with patch("cosai_mcp.transport.base.socket.getaddrinfo") as mock_gai:
+            mock_gai.return_value = [
+                (socket.AF_INET6, socket.SOCK_STREAM, 0, "", ("::1", 0, 0, 0)),
+            ]
+            config = ScanConfig(
+                target_host="::1",
+                target_port=8080,
+                allow_private_targets=True,
+            )
+            ip = resolve_and_pin("::1", config)
+        assert ip == "::1"
+
+    # -----------------------------------------------------------------------
+    # Bug 2: DNS rebinding check in _PinnedAsyncTransport also needed IPv4-sort
+    # -----------------------------------------------------------------------
+
+    def test_regression_pinned_transport_no_false_rebind_on_dual_stack(self):
+        """_PinnedAsyncTransport must not raise DNSRebindingError when the
+        pinned IP is 127.0.0.1 but getaddrinfo returns ::1 first (dual-stack).
+        Before the fix, the check compared the pinned IPv4 address against the
+        first getaddrinfo result (::1) and flagged it as DNS rebinding."""
+        from cosai_mcp.transport.streamable_http import _PinnedAsyncTransport
+        import asyncio
+
+        config = ScanConfig(
+            target_host="localhost",
+            target_port=8080,
+            allow_private_targets=True,
+        )
+        pinned_transport = _PinnedAsyncTransport("127.0.0.1", config)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+
+        inner = create_autospec(httpx.AsyncBaseTransport, instance=True)
+        inner.handle_async_request = AsyncMock(return_value=mock_response)
+        pinned_transport._inner = inner
+
+        with patch("cosai_mcp.transport.streamable_http.socket.getaddrinfo") as mock_gai:
+            mock_gai.return_value = [
+                (socket.AF_INET6, socket.SOCK_STREAM, 0, "", ("::1", 0, 0, 0)),
+                (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", 0)),
+            ]
+            request = httpx.Request("POST", "http://localhost:8080/mcp/")
+            asyncio.run(pinned_transport.handle_async_request(request))
+        # No DNSRebindingError raised — test passes
+
+    # -----------------------------------------------------------------------
+    # Bug 3: Bearer auth header injected for auth_token config
+    # -----------------------------------------------------------------------
+
+    def test_regression_auth_token_in_request_headers(self):
+        """When ScanConfig.auth_token is set, the Authorization: Bearer header
+        must appear in every outbound request from StreamableHTTPTransport."""
+        from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
+
+        config = ScanConfig(
+            target_host="localhost",
+            target_port=8080,
+            allow_private_targets=True,
+            auth_token="test-token-abc",
+        )
+        transport = StreamableHTTPTransport("http://localhost:8080", config)
+        headers = transport._build_headers()
+        assert "Authorization" in headers
+        assert headers["Authorization"] == "Bearer test-token-abc"
+
+    def test_regression_no_auth_header_when_token_absent(self):
+        """When ScanConfig.auth_token is None, no Authorization header is sent."""
+        from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
+
+        config = ScanConfig(
+            target_host="localhost",
+            target_port=8080,
+            allow_private_targets=True,
+            auth_token=None,
+        )
+        transport = StreamableHTTPTransport("http://localhost:8080", config)
+        headers = transport._build_headers()
+        assert "Authorization" not in headers
+
+    # -----------------------------------------------------------------------
+    # Bug 4: Transport URL used /mcp without trailing slash, causing 307 from
+    # Starlette-mounted ASGI endpoints
+    # -----------------------------------------------------------------------
+
+    def test_regression_mcp_path_has_trailing_slash(self):
+        """The effective MCP endpoint URL must have a trailing slash to avoid
+        307 redirects from Starlette-mounted endpoints (Mount('/mcp') redirects
+        requests to '/mcp' → '/mcp/').  follow_redirects=False means a 307 is
+        surfaced as SuspiciousRedirectError instead of being silently followed."""
+        from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
+
+        config = ScanConfig(
+            target_host="localhost",
+            target_port=8080,
+            allow_private_targets=True,
+        )
+        transport = StreamableHTTPTransport("http://localhost:8080", config)
+        # The URL built for requests must end with "/"
+        mcp_path = config.mcp_path.rstrip("/") + "/"
+        expected_url = f"http://localhost:8080{mcp_path}"
+        assert expected_url.endswith("/"), f"URL must end with /: {expected_url!r}"
+        assert "/mcp/" in expected_url
+
+    def test_regression_custom_mcp_path_respected(self):
+        """mcp_path override must be honoured — some servers mount MCP at /v1/mcp."""
+        from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
+
+        config = ScanConfig(
+            target_host="localhost",
+            target_port=8080,
+            allow_private_targets=True,
+            mcp_path="/v1/mcp",
+        )
+        transport = StreamableHTTPTransport("http://localhost:8080", config)
+        mcp_path = config.mcp_path.rstrip("/") + "/"
+        url = f"http://localhost:8080{mcp_path}"
+        assert url == "http://localhost:8080/v1/mcp/"
+
+

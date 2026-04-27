@@ -24,6 +24,7 @@ from cosai_mcp.catalog.models import (
     ThreatDefinition,
 )
 from cosai_mcp.config import ScanConfig
+from cosai_mcp.harness.context import _to_json_safe
 from cosai_mcp.harness.result import ProbeResult, _html_escape, make_probe_result
 
 # ---------------------------------------------------------------------------
@@ -67,7 +68,7 @@ def _probe_to_dict(probe: Probe) -> dict[str, Any]:
         "id": probe.id,
         "transport": probe.transport,
         "method": probe.method,
-        "payload": dict(probe.payload),
+        "payload": _to_json_safe(probe.payload),
         "assertions": [
             {
                 "target": a.target,
@@ -126,6 +127,24 @@ def _threat_from_dict(d: dict[str, Any]) -> ThreatDefinition:
 # Subprocess entry point (module-level for pickle compatibility)
 # ---------------------------------------------------------------------------
 
+# Keywords in SessionIncompleteError messages that indicate the server
+# correctly rejected an unauthenticated request.  When running auth-test
+# probes (T1) without a token, seeing one of these means auth IS enforced —
+# the probe assertion "response.error == True" holds at the transport level.
+_AUTH_REJECT_KEYWORDS: tuple[str, ...] = (
+    "invalid_token",
+    "authentication required",
+    "401",
+    "403",
+    "unauthorized",
+)
+
+
+def _is_auth_rejection(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(kw in msg for kw in _AUTH_REJECT_KEYWORDS)
+
+
 def _probe_subprocess_entry(
     result_queue: "multiprocessing.Queue[dict[str, Any]]",
     probe_dict: dict[str, Any],
@@ -133,14 +152,23 @@ def _probe_subprocess_entry(
     config: ScanConfig,
     target_url: str,
     variables: dict[str, str],
+    pass_on_auth_reject: bool = False,
 ) -> None:
     """Entry point for the isolated probe subprocess.
 
     Creates a fresh transport + session, executes the probe, and puts
     the result dict into result_queue.  All exceptions are caught and
     surfaced as error-result dicts — this function must never raise.
+
+    Parameters
+    ----------
+    pass_on_auth_reject:
+        When *True* (used for T1 / auth-enforcement probes), a session
+        rejection due to missing/invalid credentials is treated as a PASS
+        rather than a scanner error.  The server correctly enforces auth.
     """
     async def _run() -> dict[str, Any]:
+        from cosai_mcp.exceptions import SessionIncompleteError
         from cosai_mcp.harness.context import ProbeContext
         from cosai_mcp.session import MCPSession
 
@@ -162,7 +190,31 @@ def _probe_subprocess_entry(
         await transport.connect()
         try:
             session = MCPSession(transport, config)
-            await session.start()
+            try:
+                await session.start()
+            except SessionIncompleteError as exc:
+                if pass_on_auth_reject and _is_auth_rejection(exc):
+                    # Auth correctly enforced at the MCP handshake level.
+                    # Synthesise a PASS result — the probe's goal is to confirm
+                    # that unauthenticated access is rejected, and it was.
+                    from cosai_mcp.harness.result import AssertionResult
+                    assertion = AssertionResult(
+                        target="response.error",
+                        operator="eq",
+                        expected="True",
+                        actual="True",
+                        passed=True,
+                        message="Server correctly rejected unauthenticated initialize",
+                    )
+                    return make_probe_result(
+                        probe_id=probe.id,
+                        threat_id=threat.id,
+                        passed=True,
+                        assertions=(assertion,),
+                        error=None,
+                        duration_seconds=0.0,
+                    ).to_dict()
+                raise
             ctx = ProbeContext(session, config, target_url)
             result = await ctx.execute_probe(probe, threat, variables)
             return result.to_dict()
@@ -213,11 +265,19 @@ class ProbeRunner:
         threat: ThreatDefinition,
         variables: dict[str, str] | None = None,
         timeout_seconds: float | None = None,
+        pass_on_auth_reject: bool = False,
     ) -> ProbeResult:
         """Execute a probe in an isolated subprocess and return the result.
 
         If the subprocess times out, it is killed and a timeout ProbeResult
         is returned (passed=False, error describes the timeout).
+
+        Parameters
+        ----------
+        pass_on_auth_reject:
+            Passed through to the subprocess.  Set *True* for T1 auth-
+            enforcement probes so that a server-side auth rejection at
+            initialize time is treated as a PASS rather than a scanner error.
         """
         timeout = timeout_seconds if timeout_seconds is not None else self._config.probe_timeout_seconds
 
@@ -236,6 +296,7 @@ class ProbeRunner:
                 self._config,
                 self._target_url,
                 variables or {},
+                pass_on_auth_reject,
             ),
             daemon=True,
         )
@@ -285,10 +346,11 @@ class ProbeRunner:
         self,
         threat: ThreatDefinition,
         variables: dict[str, str] | None = None,
+        pass_on_auth_reject: bool = False,
     ) -> list[ProbeResult]:
         """Run all probes for a threat definition and return results."""
         return [
-            self.run_probe(probe, threat, variables)
+            self.run_probe(probe, threat, variables, pass_on_auth_reject=pass_on_auth_reject)
             for probe in threat.probes
         ]
 

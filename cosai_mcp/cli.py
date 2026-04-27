@@ -71,6 +71,10 @@ def main() -> None:
               help="Allow scanning RFC1918/loopback/link-local targets (dev servers).")
 @click.option("--catalog-root", type=click.Path(exists=True, file_okay=False), default=None,
               help="Override catalog root directory (default: ./catalog).")
+@click.option("--auth-token", default=None, envvar="COSAI_AUTH_TOKEN",
+              help="Bearer token for servers that require auth on the MCP handshake.")
+@click.option("--mcp-path", default="/mcp", show_default=True,
+              help="URL path of the MCP endpoint (override if server uses a custom path).")
 @click.option("--skip-reachability", is_flag=True, default=False, hidden=True,
               help="Skip the initial TCP reachability check (testing only).")
 def scan(
@@ -85,6 +89,8 @@ def scan(
     probe_timeout: float,
     allow_private_targets: bool,
     catalog_root: str | None,
+    auth_token: str | None,
+    mcp_path: str,
     skip_reachability: bool,
 ) -> None:
     """Scan a target MCP server for CoSAI threat categories T1–T12.
@@ -131,6 +137,8 @@ def scan(
             catalog_root=effective_catalog_root,
             fail_on=fail_on,
             allow_private_targets=allow_private_targets,
+            auth_token=auth_token,
+            mcp_path=mcp_path,
         )
     except TargetUnreachableError as exc:
         click.echo(f"[ERROR] Target unreachable during scan: {exc}", err=True)

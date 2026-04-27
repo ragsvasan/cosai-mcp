@@ -20,9 +20,18 @@ class ScanConfig:
         servers.  Defaults to *False*.
     probe_timeout_seconds:
         Per-probe wall-clock timeout.  Defaults to 30 s.
+    auth_token:
+        Optional Bearer token sent in every request's Authorization header.
+        Use to scan servers that require authentication for the MCP handshake
+        itself (e.g. Mnemo).  Leave *None* for unauthenticated scans.
+    mcp_path:
+        URL path of the MCP endpoint, including leading slash.  Defaults to
+        ``"/mcp"`` — override when the server mounts MCP at a custom path.
     """
 
     target_host: str
     target_port: int
     allow_private_targets: bool = False
     probe_timeout_seconds: float = 30.0
+    auth_token: str | None = None
+    mcp_path: str = "/mcp"

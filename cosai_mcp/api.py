@@ -46,6 +46,11 @@ COVERAGE_MATRIX: dict[str, str] = {
 # Categories only detectable via middleware instrumentation — cannot be probed
 MIDDLEWARE_ONLY_CATEGORIES: frozenset[str] = frozenset({"T4", "T9", "T12"})
 
+# Categories that test authentication enforcement — probes must run WITHOUT
+# the configured auth token so they exercise the unauthenticated code path.
+# The session setup (initialize/tools/list) still uses auth when provided.
+AUTH_PROBE_CATEGORIES: frozenset[str] = frozenset({"T1"})
+
 # ---------------------------------------------------------------------------
 # Env scrubbing — strip secrets before subprocess spawn
 #
@@ -102,6 +107,44 @@ def _apply_env_scrub() -> None:
     for key in list(os.environ.keys()):
         if any(p.match(key) for p in _SCRUB_PATTERNS):
             del os.environ[key]
+
+
+# ---------------------------------------------------------------------------
+# Pre-scan tool discovery
+# ---------------------------------------------------------------------------
+
+async def _discover_first_tool(target_url: str, config: ScanConfig) -> str:
+    """Open one ephemeral session to get the real tools/list from the server.
+
+    Returns the first discovered tool name, or "ping" as a fallback if
+    the server does not expose any tools or the session cannot start.
+    """
+    from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
+    from cosai_mcp.session import MCPSession
+
+    transport = StreamableHTTPTransport(target_url, config)
+    try:
+        await transport.connect()
+        session = MCPSession(transport, config)
+        info = await session.start()
+        tools = info.tool_manifest or []
+        return tools[0]["name"] if tools else "ping"
+    except Exception:
+        return "ping"
+    finally:
+        try:
+            await transport.close()
+        except Exception:
+            pass
+
+
+def _get_first_tool_name(target_url: str, config: ScanConfig) -> str:
+    """Synchronous wrapper around ``_discover_first_tool``."""
+    import asyncio
+    try:
+        return asyncio.run(_discover_first_tool(target_url, config))
+    except Exception:
+        return "ping"
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +297,8 @@ def _run_scan(
     catalog_root: Path,
     fail_on: str = "critical",
     allow_private_targets: bool = True,
+    auth_token: str | None = None,
+    mcp_path: str = "/mcp",
 ) -> ScanResult:
     """Orchestrate a complete scan and return a ``ScanResult``.
 
@@ -278,6 +323,8 @@ def _run_scan(
         target_port=port,
         allow_private_targets=allow_private_targets,
         probe_timeout_seconds=probe_timeout_seconds,
+        auth_token=auth_token,
+        mcp_path=mcp_path,
     )
 
     # Load + filter catalog
@@ -299,6 +346,15 @@ def _run_scan(
     # --- Prober engine ---
     probe_results: list[ProbeResult] = []
     if engine in ("prober", "all"):
+        # Discover real tool name once; probes substitute {{tool_name}} with it.
+        # Fall back to "ping" if the server is unreachable or has no tools.
+        real_tool_name = _get_first_tool_name(target_url, config)
+
+        # For auth-testing categories (T1), probes must run without the auth
+        # token — the test IS "does the server reject unauthenticated requests?"
+        import dataclasses
+        no_auth_config = dataclasses.replace(config, auth_token=None)
+
         runner = ProbeRunner(config=config, target_url=target_url)
         for threat in threats:
             if threat.category.upper() in MIDDLEWARE_ONLY_CATEGORIES:
@@ -306,9 +362,19 @@ def _run_scan(
             variables = {
                 "target_url": target_url,
                 "session_id": "cosai-scan",
-                "tool_name": "ping",
+                "tool_name": real_tool_name,
             }
-            probe_results.extend(runner.run_threat(threat, variables=variables))
+            # T1 probes test auth enforcement — send them without the auth token.
+            # pass_on_auth_reject=True: if the server rejects the unauthenticated
+            # initialize, that IS correct behavior (auth enforced) → probe PASSES.
+            is_auth_category = threat.category.upper() in AUTH_PROBE_CATEGORIES
+            probe_config = no_auth_config if is_auth_category else config
+            probe_runner = ProbeRunner(config=probe_config, target_url=target_url)
+            probe_results.extend(probe_runner.run_threat(
+                threat,
+                variables=variables,
+                pass_on_auth_reject=is_auth_category,
+            ))
 
     # --- Stateful engine ---
     scenario_results: list[ScenarioResult] = []
@@ -377,6 +443,8 @@ class Scanner:
         probe_timeout_seconds: float = 30.0,
         catalog_root: Path | None = None,
         allow_private_targets: bool = True,
+        auth_token: str | None = None,
+        mcp_path: str = "/mcp",
     ) -> None:
         self.target = target
         self.categories = categories
@@ -385,6 +453,8 @@ class Scanner:
         self.probe_timeout_seconds = probe_timeout_seconds
         self.catalog_root = catalog_root or CATALOG_ROOT
         self.allow_private_targets = allow_private_targets
+        self.auth_token = auth_token
+        self.mcp_path = mcp_path
 
     def run(self, categories: list[str] | None = None) -> ScanResult:
         """Run a complete scan and return a :class:`ScanResult`.
@@ -407,6 +477,8 @@ class Scanner:
                 catalog_root=self.catalog_root,
                 fail_on="critical",
                 allow_private_targets=self.allow_private_targets,
+                auth_token=self.auth_token,
+                mcp_path=self.mcp_path,
             )
         except (ValueError, TargetUnreachableError):
             raise  # let typed exceptions propagate as-is

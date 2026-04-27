@@ -51,6 +51,8 @@ class _PinnedAsyncTransport(httpx.AsyncBaseTransport):
             raise DNSRebindingError(f"Failed to resolve {host!r}: {exc}") from exc
 
         if results:
+            # Prefer IPv4 to match the address family used by resolve_and_pin.
+            results.sort(key=lambda r: 0 if r[0] == socket.AF_INET else 1)
             actual_ip = results[0][4][0]
             check_dns_rebinding(self._pinned_ip, actual_ip)
 
@@ -109,6 +111,8 @@ class StreamableHTTPTransport(Transport):
         }
         if self._session_id:
             headers["Mcp-Session-Id"] = self._session_id
+        if self._config.auth_token:
+            headers["Authorization"] = f"Bearer {self._config.auth_token}"
         return headers
 
     def _make_rpc(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -152,7 +156,9 @@ class StreamableHTTPTransport(Transport):
             raise RuntimeError("Transport not connected — call connect() first")
 
         payload = self._make_rpc(method, params)
-        url = f"{self._base_url}/mcp"
+        # Append trailing slash to avoid 307 from ASGI framework path-redirect.
+        mcp_path = self._config.mcp_path.rstrip("/") + "/"
+        url = f"{self._base_url}{mcp_path}"
 
         response = await self._client.post(
             url,
@@ -176,7 +182,8 @@ class StreamableHTTPTransport(Transport):
         """POST a pre-built JSON-RPC notification (no id, fire-and-forget)."""
         if self._client is None:
             return
-        url = f"{self._base_url}/mcp"
+        mcp_path = self._config.mcp_path.rstrip("/") + "/"
+        url = f"{self._base_url}{mcp_path}"
         try:
             response = await self._client.post(
                 url,
