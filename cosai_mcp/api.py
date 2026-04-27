@@ -269,13 +269,25 @@ def _determine_exit_code(
             return _SEVERITY_RANK.get(sev.value, 0) >= threshold
 
         failed_probes = any(
-            not r.passed and r.error is None and _above_threshold(r)
+            not r.passed
+            and r.error is None
+            and r.inconclusive_reason is None  # inconclusive ≠ finding
+            and _above_threshold(r)
             for r in probe_results
         )
     else:
-        failed_probes = any(not r.passed and r.error is None for r in probe_results)
+        failed_probes = any(
+            not r.passed
+            and r.error is None
+            and r.inconclusive_reason is None  # inconclusive ≠ finding
+            for r in probe_results
+        )
 
-    failed_scenarios = any(not r.passed for r in scenario_results)
+    # inconclusive scenarios don't trigger exit 1 — they weren't tested
+    failed_scenarios = any(
+        not r.passed and r.status not in ("inconclusive",)
+        for r in scenario_results
+    )
 
     if failed_probes or failed_scenarios:
         return 1

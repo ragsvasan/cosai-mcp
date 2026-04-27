@@ -103,7 +103,7 @@ h3 { font-size: 0.875rem; font-weight: 600; color: var(--mn-text-2); margin: 10p
                   text-transform: uppercase; letter-spacing: 0.05em; display: block; }
 .meta-item .val { color: var(--mn-text); font-weight: 500; }
 .summary-grid {
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   gap: 12px; margin: 0 0 28px 0;
 }
 .stat-box {
@@ -154,9 +154,10 @@ tbody td { padding: 10px 14px; color: var(--mn-text-2); vertical-align: top; }
 .sev-medium   { background: var(--mn-teal-08);   color: #67E8F9; }
 .sev-low      { background: var(--mn-ok-bg);     color: #6EE7B7; }
 .sev-info     { background: rgba(122,133,153,.15); color: var(--mn-text-3); }
-.st-finding   { background: var(--mn-error-bg);  color: #FCA5A5; }
-.st-pass      { background: var(--mn-ok-bg);     color: #6EE7B7; }
-.st-incomplete { background: var(--mn-warn-bg);  color: #FCD34D; }
+.st-finding      { background: var(--mn-error-bg);  color: #FCA5A5; }
+.st-pass         { background: var(--mn-ok-bg);     color: #6EE7B7; }
+.st-incomplete   { background: var(--mn-warn-bg);   color: #FCD34D; }
+.st-inconclusive { background: var(--mn-warn-bg);   color: #FCD34D; }
 
 /* ---- detail sections ---- */
 .section-group { margin: 0 0 12px 0; }
@@ -229,6 +230,11 @@ pre {
   white-space: pre-wrap; word-break: break-all; color: var(--mn-text-3);
   font-family: 'JetBrains Mono','Fira Code',ui-monospace,Menlo,monospace;
 }
+.inconclusive-note {
+  background: var(--mn-warn-bg); border-left: 3px solid var(--mn-warn);
+  padding: 8px 12px; margin: 8px 0; font-size: 0.8rem;
+  border-radius: 0 var(--mn-r-md) var(--mn-r-md) 0; color: #FCD34D;
+}
 hr { border: none; border-top: 1px solid var(--mn-border); margin: 32px 0; }
 .footer {
   font-size: 0.75rem; color: var(--mn-text-3); text-align: center;
@@ -288,6 +294,7 @@ class HtmlScenarioSection:
     category: str
     passed: bool
     steps: list[ScenarioStep]
+    inconclusive_reason: str | None = None
 
 
 class HtmlReportBuilder:
@@ -312,21 +319,35 @@ class HtmlReportBuilder:
         self._scenarios.append(scenario)
 
     def build(self) -> str:
+        # Probes marked inconclusive don't count as findings or passes
+        def _section_is_finding(s: HtmlReportSection) -> bool:
+            return not s.passed and not all(
+                r.inconclusive_reason for r in s.probe_results
+            )
+
         total_threats = len(self._sections)
         passed_threats = sum(1 for s in self._sections if s.passed)
-        failed_threats = total_threats - passed_threats
+        finding_threats = sum(1 for s in self._sections if _section_is_finding(s))
+        inconclusive_count = (
+            sum(1 for r in (
+                pr for s in self._sections for pr in s.probe_results
+            ) if r.inconclusive_reason)
+            + sum(1 for sc in self._scenarios if sc.inconclusive_reason)
+        )
 
         total_scenarios = len(self._scenarios)
-        failed_scenarios = sum(1 for s in self._scenarios if not s.passed)
-        total_findings = failed_threats + failed_scenarios
+        failed_scenarios = sum(
+            1 for s in self._scenarios if not s.passed and not s.inconclusive_reason
+        )
+        total_findings = finding_threats + failed_scenarios
 
         critical_count = sum(
             1 for s in self._sections
-            if not s.passed and s.severity.value == "critical"
+            if _section_is_finding(s) and s.severity.value == "critical"
         )
         high_count = sum(
             1 for s in self._sections
-            if not s.passed and s.severity.value == "high"
+            if _section_is_finding(s) and s.severity.value == "high"
         )
 
         status_color = "var(--mn-error)" if total_findings > 0 else "var(--mn-ok)"
@@ -367,10 +388,12 @@ class HtmlReportBuilder:
             f"<div class='lbl'>Critical</div></div>\n"
             f"<div class='stat-box'><div class='num num-high'>{high_count}</div>"
             f"<div class='lbl'>High</div></div>\n"
-            f"<div class='stat-box'><div class='num num-neutral'>{failed_threats + failed_scenarios}</div>"
+            f"<div class='stat-box'><div class='num num-neutral'>{total_findings}</div>"
             f"<div class='lbl'>Total findings</div></div>\n"
             f"<div class='stat-box'><div class='num num-pass'>{passed_threats}</div>"
             f"<div class='lbl'>Categories passed</div></div>\n"
+            f"<div class='stat-box'><div class='num' style='color:var(--mn-warn)'>{inconclusive_count}</div>"
+            f"<div class='lbl'>Inconclusive</div></div>\n"
             "</div>\n"
             f"{findings_table}\n"
             f"{sections_html}\n"
@@ -392,8 +415,12 @@ class HtmlReportBuilder:
 
         for s in self._sections:
             for r in s.probe_results:
-                status = "PASS" if r.passed else "FINDING"
-                st_cls = "st-pass" if r.passed else "st-finding"
+                if r.inconclusive_reason:
+                    status, st_cls = "INCONCLUSIVE", "st-inconclusive"
+                elif r.passed:
+                    status, st_cls = "PASS", "st-pass"
+                else:
+                    status, st_cls = "FINDING", "st-finding"
                 sev_cls = f"sev-{s.severity.value}"
                 assertion_summary = ""
                 if not r.passed and r.assertions:
@@ -514,9 +541,19 @@ class HtmlReportBuilder:
         )
 
     def _render_probe(self, result: ProbeResult, ctx: ProbeContext | None) -> str:
-        probe_cls = "probe probe-pass" if result.passed else "probe probe-fail"
-        st_cls = "st-pass" if result.passed else "st-finding"
-        status_text = "PASS" if result.passed else "FAIL"
+        inconclusive = bool(result.inconclusive_reason)
+        if inconclusive:
+            probe_cls = "probe"
+            st_cls = "st-inconclusive"
+            status_text = "INCONCLUSIVE"
+        elif result.passed:
+            probe_cls = "probe probe-pass"
+            st_cls = "st-pass"
+            status_text = "PASS"
+        else:
+            probe_cls = "probe probe-fail"
+            st_cls = "st-finding"
+            status_text = "FAIL"
 
         what_tested = ""
         if ctx:
@@ -550,11 +587,20 @@ class HtmlReportBuilder:
                 f"<p class='error-msg'>⚠ {_h(_unescape(result.error))}</p>\n"
             )
 
+        inconclusive_html = ""
+        if result.inconclusive_reason:
+            inconclusive_html = (
+                f"<div class='inconclusive-note'>"
+                f"⚠ <strong>Inconclusive:</strong> {_h(_unescape(result.inconclusive_reason))}"
+                f"</div>\n"
+            )
+
         return (
             f"<div class='{probe_cls}'>\n"
             f"<h3>Probe {_h(result.probe_id)}: "
             f"<span class='badge {st_cls}'>{_h(status_text)}</span></h3>\n"
             f"{what_tested}"
+            f"{inconclusive_html}"
             f"{error_html}"
             f"{body_html}"
             f"</div>\n"
@@ -572,11 +618,29 @@ class HtmlReportBuilder:
         return "".join(parts)
 
     def _render_scenario(self, scenario: HtmlScenarioSection) -> str:
-        section_cls = "section section-pass" if scenario.passed else "section section-finding"
-        st_cls = "st-pass" if scenario.passed else "st-finding"
-        status_text = "PASS" if scenario.passed else "FINDING"
+        if scenario.inconclusive_reason:
+            section_cls = "section section-incomplete"
+            st_cls = "st-inconclusive"
+            status_text = "INCONCLUSIVE"
+        elif scenario.passed:
+            section_cls = "section section-pass"
+            st_cls = "st-pass"
+            status_text = "PASS"
+        else:
+            section_cls = "section section-finding"
+            st_cls = "st-finding"
+            status_text = "FINDING"
+
         cat_name = _CATEGORY_NAMES.get(scenario.category, scenario.category)
         steps_html = "".join(self._render_step(s) for s in scenario.steps)
+
+        inconclusive_html = ""
+        if scenario.inconclusive_reason:
+            inconclusive_html = (
+                f"<div class='inconclusive-note'>"
+                f"⚠ <strong>Inconclusive:</strong> {_h(scenario.inconclusive_reason)}"
+                f"</div>\n"
+            )
 
         return (
             f"<div class='{section_cls}'>\n"
@@ -585,6 +649,7 @@ class HtmlReportBuilder:
             f"<span class='badge {st_cls}'>{_h(status_text)}</span>\n"
             f"<span class='cat-name'>{_h(cat_name)} — {_h(scenario.scenario_name)}</span>\n"
             f"</div>\n"
+            f"{inconclusive_html}"
             f"<div style='margin-top:8px'>{steps_html}</div>\n"
             f"</div>\n"
         )

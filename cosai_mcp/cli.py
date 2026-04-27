@@ -62,15 +62,19 @@ def main() -> None:
 @click.option("--report-sarif", type=click.Path(), default=None,
               help="Write SARIF 2.1.0 report to this file path.")
 @click.option("--report-html", type=click.Path(), default=None,
-              help="Write HTML report to this file path.")
+              help="Write HTML report to this file path. "
+                   "Defaults to cosai-report.html in the current directory.")
+@click.option("--no-report", is_flag=True, default=False,
+              help="Suppress the default cosai-report.html output.")
 @click.option("--report-csv", type=click.Path(), default=None,
               help="Write CSV findings report to this file path (Excel-compatible).")
 @click.option("--report-coverage", is_flag=True, default=False,
               help="Print coverage matrix showing which engine covers each category.")
 @click.option("--probe-timeout", type=float, default=30.0, show_default=True,
               help="Per-probe timeout in seconds.")
-@click.option("--allow-private-targets", is_flag=True, default=False,
-              help="Allow scanning RFC1918/loopback/link-local targets (dev servers).")
+@click.option("--allow-private-targets/--block-private-targets", default=True,
+              help="Allow scanning RFC1918/loopback targets (default: allowed for dev use). "
+                   "Use --block-private-targets in CI to enforce public-target-only policy.")
 @click.option("--catalog-root", type=click.Path(exists=True, file_okay=False), default=None,
               help="Override catalog root directory (default: ./catalog).")
 @click.option("--auth-token", default=None, envvar="COSAI_AUTH_TOKEN",
@@ -87,6 +91,7 @@ def scan(
     allow_custom_catalog: bool,
     report_sarif: str | None,
     report_html: str | None,
+    no_report: bool,
     report_csv: str | None,
     report_coverage: bool,
     probe_timeout: float,
@@ -151,7 +156,7 @@ def scan(
         sys.exit(2)
 
     # -- Emit summary --
-    _print_scan_summary(result)
+    _print_scan_summary(result, fail_on=fail_on)
 
     # -- Write reports — exit 2 on failure when path is explicitly provided (FIX [7]) --
     if report_sarif:
@@ -162,15 +167,18 @@ def scan(
             click.echo(f"[ERROR] Failed to write SARIF report: {exc}", err=True)
             sys.exit(2)
 
-    if report_html:
+    # Default: write cosai-report.html unless --no-report or explicit --report-html given
+    effective_html_path = report_html or (None if no_report else "cosai-report.html")
+    if effective_html_path:
         try:
-            _write_html_report(result, Path(report_html))
-            click.echo(f"HTML report written to {report_html}")
+            _write_html_report(result, Path(effective_html_path))
+            click.echo(f"HTML report written to {effective_html_path}")
         except Exception as exc:  # noqa: BLE001
             click.echo(f"[ERROR] Failed to write HTML report: {exc}", err=True)
             sys.exit(2)
 
     if report_csv:
+
         try:
             _write_csv_report(result, Path(report_csv))
             click.echo(f"CSV report written to {report_csv}")
@@ -238,7 +246,7 @@ def _print_coverage_matrix() -> None:
     click.echo()
 
 
-def _print_scan_summary(result: ScanResult) -> None:
+def _print_scan_summary(result: ScanResult, fail_on: str = "critical") -> None:
     total_probes = len(result.probe_results)
     failed_probes = sum(1 for r in result.probe_results if not r.passed)
     total_scenarios = len(result.scenario_results)
@@ -252,10 +260,26 @@ def _print_scan_summary(result: ScanResult) -> None:
         f"Scenarios: {failed_scenarios}/{total_scenarios} failed"
     )
 
+    total_non_inconclusive_findings = (
+        sum(1 for r in result.probe_results if not r.passed and r.error is None and not r.inconclusive_reason)
+        + sum(1 for r in result.scenario_results if not r.passed and r.status not in ("scan-incomplete", "inconclusive"))
+    )
+    inconclusive_count = (
+        sum(1 for r in result.probe_results if r.inconclusive_reason)
+        + sum(1 for r in result.scenario_results if r.status == "inconclusive")
+    )
     if result.exit_code == 0:
-        click.echo("[CLEAN] No findings.")
+        if total_non_inconclusive_findings > 0:
+            click.echo(
+                f"[CLEAN] No findings at or above {fail_on!r} severity. "
+                f"({total_non_inconclusive_findings} finding(s) below threshold; "
+                f"{inconclusive_count} inconclusive.)"
+            )
+        else:
+            inconc_note = f" ({inconclusive_count} inconclusive.)" if inconclusive_count else ""
+            click.echo(f"[CLEAN] No findings.{inconc_note}")
     elif result.exit_code == 1:
-        click.echo(f"[FINDINGS] {failed_probes + failed_scenarios} issue(s) detected.")
+        click.echo(f"[FINDINGS] {failed_probes + failed_scenarios} issue(s) at or above {fail_on!r} severity.")
     else:
         click.echo("[ERROR] Scan completed with internal errors — treat as failure.", err=True)
 
@@ -426,6 +450,7 @@ def _write_html_report(result: ScanResult, path: Path) -> None:
             category=category,
             passed=sr.passed,
             steps=steps,
+            inconclusive_reason=sr.inconclusive_reason,
         ))
 
     path.write_text(builder.build(), encoding="utf-8")

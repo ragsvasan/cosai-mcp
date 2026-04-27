@@ -369,9 +369,11 @@ def _result_from_dict(d: dict[str, Any]) -> ProbeResult:
         )
         for a in d.get("assertions", [])
     )
-    # Finding 11: HTML-escape the error field — it originates from an untrusted subprocess
+    # HTML-escape fields that originate from an untrusted subprocess (Finding 11)
     raw_error = d.get("error")
     error = _html_escape(raw_error) if raw_error else None
+    raw_inconclusive = d.get("inconclusive_reason")
+    inconclusive = _html_escape(raw_inconclusive) if raw_inconclusive else None
     return ProbeResult(
         probe_id=d["probe_id"],
         threat_id=d["threat_id"],
@@ -381,4 +383,5 @@ def _result_from_dict(d: dict[str, Any]) -> ProbeResult:
         error=error,
         assertions=assertions,
         duration_seconds=d.get("duration_seconds", 0.0),
+        inconclusive_reason=inconclusive,
     )

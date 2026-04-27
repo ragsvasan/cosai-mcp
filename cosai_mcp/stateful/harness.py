@@ -136,9 +136,10 @@ class ScenarioResult:
     scenario_id: str
     scenario_name: str
     threat_categories: tuple[str, ...]
-    status: Literal["complete", "scan-incomplete"]
+    status: Literal["complete", "scan-incomplete", "inconclusive"]
     passed: bool
     step_results: tuple[StepResult, ...]
+    inconclusive_reason: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +147,22 @@ class ScenarioResult:
 # ---------------------------------------------------------------------------
 
 def _resolve_path(response: dict[str, Any], path: str) -> Any:
-    """Extract a value from a nested dict using a dotted path."""
+    """Extract a value from a nested dict using a dotted path.
+
+    Special case: ``"error"`` normalizes across both JSON-RPC protocol errors
+    (``{"error": {...}}``) and MCP content-layer errors
+    (``{"result": {"isError": true, ...}}``).  Both formats indicate rejection.
+    """
+    if path == "error":
+        # JSON-RPC protocol error
+        if response.get("error") is not None:
+            return response.get("error")
+        # MCP content-layer error
+        result = response.get("result", {})
+        if isinstance(result, dict) and result.get("isError"):
+            return {"isError": True}  # synthetic truthy value — normalises both formats
+        return None
+
     parts = path.split(".")
     current: Any = response
     for part in parts:
@@ -288,6 +304,44 @@ class StatefulHarness:
                     passed=False,
                     step_results=(),
                 )
+
+            # Check whether all tools the scenario calls actually exist.
+            # Scenarios use generic/fictional tool names (admin_delete, read_file)
+            # that may not exist on the target server.  Running them produces
+            # "unknown tool" responses that look like findings but are not —
+            # the scenario simply can't be evaluated on this server.
+            # Check whether all tools the scenario calls actually exist on the
+            # target server.  Scenarios use generic placeholder tool names
+            # (admin_delete, read_file) that may not exist.  Running them
+            # produces "unknown tool" responses that look like findings but
+            # are not — mark the scenario INCONCLUSIVE instead.
+            available_tools: set[str] = {
+                t.get("name", "") for t in session.tool_manifest
+            }
+            if available_tools:  # non-empty manifest — we can check coverage
+                required_tools = {
+                    step.action.params.get("name", "")
+                    for step in scenario.steps
+                    if step.action.method == "tools/call"
+                    and step.action.params.get("name")
+                }
+                missing = required_tools - available_tools
+                if missing:
+                    return ScenarioResult(
+                        scenario_id=scenario.id,
+                        scenario_name=scenario.name,
+                        threat_categories=scenario.threat_categories,
+                        status="inconclusive",
+                        passed=False,
+                        step_results=(),
+                        inconclusive_reason=(
+                            f"Scenario requires tool(s) not present on this server: "
+                            f"{', '.join(sorted(missing))}. "
+                            f"The scenario tests a generic vulnerability pattern using "
+                            f"placeholder tool names. To test this scenario, configure "
+                            f"method_overrides to map them to equivalent tools on this server."
+                        ),
+                    )
 
             step_results: list[StepResult] = []
             for i, step in enumerate(scenario.steps):

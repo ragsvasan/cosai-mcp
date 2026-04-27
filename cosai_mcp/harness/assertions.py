@@ -18,10 +18,16 @@ def _extract_target(response: dict[str, Any], target_path: str) -> Any:
     - Any dotted sub-path, e.g. ``response.result.content``
     """
     if target_path == "response.error":
-        # Check key presence AND non-null: some buggy servers send "error": null
-        # alongside "result", which is not a real error per JSON-RPC 2.0.
+        # JSON-RPC protocol error ({"error": {...}})
         error_val = response.get("error")
-        return error_val is not None and error_val is not False
+        if error_val is not None and error_val is not False:
+            return True
+        # MCP content-layer error ({"result": {"isError": true, ...}})
+        # Both error formats mean the server rejected the request.
+        result_val = response.get("result", {})
+        if isinstance(result_val, dict) and result_val.get("isError"):
+            return True
+        return False
 
     if target_path == "response.error_code":
         error = response.get("error")

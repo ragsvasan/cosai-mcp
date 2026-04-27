@@ -42,6 +42,12 @@ class ProbeResult:
 
     All captured response content is HTML-escaped at construction time.
     This object is immutable — no fields can be changed after creation.
+
+    ``inconclusive_reason``: set when the probe could not test the security
+    property because the server rejected the payload for an unrelated reason
+    (e.g. schema validation, unknown argument).  An inconclusive result is
+    neither a PASS nor a FINDING — it means the test could not run.
+    Inconclusive results do NOT trigger exit code 1.
     """
     probe_id: str
     threat_id: str
@@ -51,6 +57,7 @@ class ProbeResult:
     error: str | None         # HTML-escaped; set if the probe itself errored
     assertions: tuple[AssertionResult, ...]
     duration_seconds: float
+    inconclusive_reason: str | None = None  # HTML-escaped
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -62,6 +69,7 @@ class ProbeResult:
             "error": self.error,
             "assertions": [a.to_dict() for a in self.assertions],
             "duration_seconds": self.duration_seconds,
+            "inconclusive_reason": self.inconclusive_reason,
         }
 
 
@@ -93,6 +101,7 @@ def make_probe_result(
     response: dict[str, Any] | None = None,
     error: str | None = None,
     duration_seconds: float = 0.0,
+    inconclusive_reason: str | None = None,
 ) -> ProbeResult:
     """Construct a ProbeResult, HTML-escaping all captured response content.
 
@@ -116,4 +125,5 @@ def make_probe_result(
         error=_html_escape(error) if error else None,
         assertions=assertions,
         duration_seconds=duration_seconds,
+        inconclusive_reason=_html_escape(inconclusive_reason) if inconclusive_reason else None,
     )

@@ -14,6 +14,69 @@ from cosai_mcp.harness.result import AssertionResult, ProbeResult, make_probe_re
 from cosai_mcp.session import MCPSession
 
 
+# Keywords in MCP content-layer error text that indicate the server rejected
+# the probe payload because of argument/schema validation — NOT because of the
+# security property being tested.  When found, the probe is INCONCLUSIVE.
+_SCHEMA_MISMATCH_KEYWORDS: tuple[str, ...] = (
+    "unknown argument",
+    "unexpected argument",
+    "extra argument",
+    "invalid argument",
+    "unrecognized argument",
+    "required field",
+    "required argument",
+    "missing field",
+    "missing required",
+    "field required",
+    "does not accept",
+    "not accepted",
+    "not allowed",
+    "not a valid",
+    "type error",
+    "validation error",
+    "schema",
+    "unknown tool",
+    "tool not found",
+    "no such tool",
+)
+
+
+def _detect_schema_mismatch(response: dict[str, Any]) -> str | None:
+    """Return an inconclusive reason string if the response indicates the server
+    rejected the probe due to argument/schema validation rather than the
+    security property being tested.  Returns None when the response looks like
+    a genuine security-relevant outcome.
+    """
+    # Only relevant when the server returned a content-layer error
+    result = response.get("result", {})
+    if not isinstance(result, dict):
+        return None
+    if not result.get("isError"):
+        return None
+
+    # Extract text from MCP content array
+    content = result.get("content", [])
+    text_parts: list[str] = []
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                text_parts.append(item["text"])
+    elif isinstance(content, str):
+        text_parts.append(content)
+    error_text = " ".join(text_parts).lower()
+
+    for kw in _SCHEMA_MISMATCH_KEYWORDS:
+        if kw in error_text:
+            snippet = " ".join(text_parts)[:200]
+            return (
+                f"Probe payload did not match the server's tool schema — "
+                f"server rejected for: {snippet!r}. "
+                f"This test is INCONCLUSIVE: the security property could not be "
+                f"verified because the probe arguments were not accepted by the tool."
+            )
+    return None
+
+
 def _to_json_safe(obj: Any) -> Any:
     """Recursively convert MappingProxyType/tuple to dict/list for JSON serialisation.
 
@@ -118,6 +181,12 @@ class ProbeContext:
         )
         passed = all(ar.passed for ar in assertion_results)
 
+        # Detect inconclusive: server rejected the probe payload for schema/
+        # argument-validation reasons unrelated to the security property being
+        # tested.  This prevents false positives when probe arguments don't
+        # match a server's tool schema.
+        inconclusive_reason = _detect_schema_mismatch(response)
+
         return make_probe_result(
             probe_id=probe.id,
             threat_id=threat.id,
@@ -125,6 +194,7 @@ class ProbeContext:
             assertions=assertion_results,
             response=response,
             duration_seconds=duration,
+            inconclusive_reason=inconclusive_reason,
         )
 
     async def _dispatch(
