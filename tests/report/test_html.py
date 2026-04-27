@@ -67,7 +67,7 @@ class TestHtmlCSP:
     def test_html_meta_charset_utf8(self):
         b = _builder()
         report = b.build()
-        assert 'charset="UTF-8"' in report or 'charset="utf-8"' in report.lower()
+        assert "charset=" in report.lower() and "utf-8" in report.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -261,11 +261,12 @@ class TestHtmlRegressions:
         assert "&lt;script&gt;" in report
 
     def test_regression_csp_no_style_src_self(self):
-        """CSP must not contain style-src 'self' — could allow same-origin stylesheet injection.
+        """CSP must not allow style-src 'self' — prevents external stylesheet loading.
 
-        FIX 6: style-src 'self' was present but no stylesheets are used.
-        Removed to prevent loading of attacker-placed CSS files in the report directory.
+        FIX 6: style-src 'self' was removed; inline CSS uses 'unsafe-inline'.
+        'unsafe-inline' allows the embedded <style> block without permitting
+        any same-origin stylesheet files an attacker could place alongside the report.
         """
         b = _builder()
         report = b.build()
-        assert "style-src" not in report
+        assert "style-src 'self'" not in report

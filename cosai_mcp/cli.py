@@ -63,6 +63,8 @@ def main() -> None:
               help="Write SARIF 2.1.0 report to this file path.")
 @click.option("--report-html", type=click.Path(), default=None,
               help="Write HTML report to this file path.")
+@click.option("--report-csv", type=click.Path(), default=None,
+              help="Write CSV findings report to this file path (Excel-compatible).")
 @click.option("--report-coverage", is_flag=True, default=False,
               help="Print coverage matrix showing which engine covers each category.")
 @click.option("--probe-timeout", type=float, default=30.0, show_default=True,
@@ -85,6 +87,7 @@ def scan(
     allow_custom_catalog: bool,
     report_sarif: str | None,
     report_html: str | None,
+    report_csv: str | None,
     report_coverage: bool,
     probe_timeout: float,
     allow_private_targets: bool,
@@ -165,6 +168,14 @@ def scan(
             click.echo(f"HTML report written to {report_html}")
         except Exception as exc:  # noqa: BLE001
             click.echo(f"[ERROR] Failed to write HTML report: {exc}", err=True)
+            sys.exit(2)
+
+    if report_csv:
+        try:
+            _write_csv_report(result, Path(report_csv))
+            click.echo(f"CSV report written to {report_csv}")
+        except Exception as exc:  # noqa: BLE001
+            click.echo(f"[ERROR] Failed to write CSV report: {exc}", err=True)
             sys.exit(2)
 
     sys.exit(result.exit_code)
@@ -294,16 +305,62 @@ def _write_sarif_report(result: ScanResult, path: Path) -> None:
         pass  # signing unavailable (no keyring / no key) — continue without signature
 
 
+def _write_csv_report(result: ScanResult, path: Path) -> None:
+    from cosai_mcp.report.csv_report import write_csv_report
+    write_csv_report(result, path)
+
+
 def _write_html_report(result: ScanResult, path: Path) -> None:
-    from cosai_mcp.report.html import HtmlReportBuilder, HtmlReportSection
+    import json as _json
+    from collections import defaultdict
+
+    from cosai_mcp.report.html import (
+        HtmlReportBuilder,
+        HtmlReportSection,
+        HtmlScenarioSection,
+        ProbeContext,
+        ScenarioStep,
+    )
 
     builder = HtmlReportBuilder(
         target_url=result.target_url,
         scan_timestamp=result.scan_timestamp,
     )
 
-    # Group probe results by threat_id
-    from collections import defaultdict
+    # Build probe_context lookup: probe_id → ProbeContext
+    # Uses the threat catalog to describe what each probe actually sends.
+    from cosai_mcp.harness.context import _to_json_safe
+
+    probe_context_by_id: dict[str, ProbeContext] = {}
+    for threat in result.threats:
+        for probe in threat.probes:
+            # Recursively convert MappingProxyType so json.dumps works
+            payload = _to_json_safe(probe.payload)
+            try:
+                payload_str = _json.dumps(payload, indent=None, separators=(", ", ": "))
+                if len(payload_str) > 120:
+                    payload_str = payload_str[:117] + "…"
+            except Exception:
+                payload_str = str(payload)[:120]
+
+            assertion_descs = []
+            for a in probe.assertions:
+                val_str = (
+                    ", ".join(str(v) for v in a.value)
+                    if isinstance(a.value, tuple)
+                    else str(a.value)
+                )
+                assertion_descs.append(
+                    f"{a.target} must {a.operator} {val_str}"
+                )
+
+            probe_context_by_id[probe.id] = ProbeContext(
+                method=probe.method,
+                payload_summary=f"{probe.method} → {payload_str}",
+                assertion_descriptions=assertion_descs,
+            )
+
+    # Group probe results by threat_id (preserving catalog order)
     results_by_threat: dict[str, list] = defaultdict(list)
     for r in result.probe_results:
         results_by_threat[r.threat_id].append(r)
@@ -315,6 +372,10 @@ def _write_html_report(result: ScanResult, path: Path) -> None:
         if threat is None:
             continue
         passed = all(r.passed for r in probe_results)
+
+        # Attach ProbeContext per result (parallel list, same order)
+        contexts = [probe_context_by_id.get(r.probe_id) for r in probe_results]
+
         section = HtmlReportSection(
             threat_id=threat.id,
             category=threat.category,
@@ -323,8 +384,49 @@ def _write_html_report(result: ScanResult, path: Path) -> None:
             probe_results=probe_results,
             remediation=getattr(threat, "remediation", ""),
             references=getattr(threat, "references", ()),
+            probe_contexts=contexts,
         )
         builder.add_section(section)
+
+    # Wire scenario results
+    for sr in result.scenario_results:
+        steps: list[ScenarioStep] = []
+        for step_r in sr.step_results:
+            # Build a response summary from the raw response dict or failures
+            if step_r.failures:
+                resp_parts = []
+                for f in step_r.failures:
+                    resp_parts.append(
+                        f"{f.target}: expected {f.operator} {f.expected!r}, got {f.actual!r}"
+                    )
+                resp_summary = "; ".join(resp_parts)
+            elif step_r.error:
+                resp_summary = step_r.error
+            elif step_r.response:
+                try:
+                    raw = _json.dumps(step_r.response, separators=(", ", ": "))
+                    resp_summary = raw[:200] + ("…" if len(raw) > 200 else "")
+                except Exception:
+                    resp_summary = str(step_r.response)[:200]
+            else:
+                resp_summary = ""
+
+            steps.append(ScenarioStep(
+                index=step_r.step_index,
+                description=step_r.description,
+                passed=step_r.passed,
+                response_summary=resp_summary,
+            ))
+
+        # Use first threat category for display
+        category = sr.threat_categories[0] if sr.threat_categories else ""
+        builder.add_scenario(HtmlScenarioSection(
+            scenario_id=sr.scenario_id,
+            scenario_name=sr.scenario_name,
+            category=category,
+            passed=sr.passed,
+            steps=steps,
+        ))
 
     path.write_text(builder.build(), encoding="utf-8")
 
