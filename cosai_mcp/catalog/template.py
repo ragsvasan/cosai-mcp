@@ -13,9 +13,10 @@ from typing import Any
 
 from cosai_mcp.exceptions import TemplateInjectionError, UnknownVariableError
 
-# Closed allowlist — no other variables accepted
+# Closed allowlist — no other variables accepted.
+# {{canary}} is scanner-generated (CSPRNG, never user input) — safe to allow.
 _ALLOWED_VARS: frozenset[str] = frozenset(
-    {"{{target_url}}", "{{session_id}}", "{{tool_name}}"}
+    {"{{target_url}}", "{{session_id}}", "{{tool_name}}", "{{canary}}"}
 )
 
 

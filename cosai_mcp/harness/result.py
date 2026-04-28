@@ -59,6 +59,7 @@ class ProbeResult:
     duration_seconds: float
     inconclusive_reason: str | None = None  # HTML-escaped
     synthesis_attempted: bool = False  # True when adaptive retry was attempted
+    canary_detected: bool = False  # True when canary string was found in response (adversarial mode)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -72,6 +73,7 @@ class ProbeResult:
             "duration_seconds": self.duration_seconds,
             "inconclusive_reason": self.inconclusive_reason,
             "synthesis_attempted": self.synthesis_attempted,
+            "canary_detected": self.canary_detected,
         }
 
 

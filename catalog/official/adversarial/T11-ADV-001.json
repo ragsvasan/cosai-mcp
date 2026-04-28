@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "id": "T11-ADV-001",
+  "category": "T11",
+  "severity": "high",
+  "cosai_ref": "T11",
+  "owasp_ref": "MCP-Top10-A11",
+  "cwe": ["CWE-1357", "CWE-345"],
+  "adversarial": true,
+  "mode": "read-only",
+  "description": "Unknown tool name probe: calls a non-existent tool name to verify the server rejects it cleanly rather than routing to an unexpected handler. A canary is embedded in the argument to confirm the call was not processed by a real tool.",
+  "canary_placement": "arguments.input",
+  "probes": [
+    {
+      "id": "T11-ADV-001-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "description": "Call an unknown tool name — server must return error, not silently succeed",
+      "payload": {
+        "name": "cosai_probe_unknown_tool",
+        "arguments": {
+          "input": "{{canary}}"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true,
+          "description": "Unknown tool name must produce an error"
+        },
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "{{canary}}",
+          "description": "Canary must not appear in response (confirms call was not routed to a real tool)"
+        }
+      ],
+      "canary_detection": true
+    }
+  ],
+  "remediation": "Server tool dispatchers must use exact-match routing only — never fuzzy or wildcard matching. Reject any tool name not in the static allowlist at dispatch time. Return a proper JSON-RPC error for unknown tool names rather than silently handling or ignoring them.",
+  "references": [
+    "https://cosai.org/T11",
+    "https://owasp.org/www-project-mcp-top-10/A11"
+  ]
+}

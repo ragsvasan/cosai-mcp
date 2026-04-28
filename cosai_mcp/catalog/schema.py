@@ -14,7 +14,9 @@ THREAT_META_SCHEMA: dict = {
     "additionalProperties": False,
     "properties": {
         "schema_version": {"type": "string", "enum": ["1.0"]},
-        "id": {"type": "string", "pattern": "^T[0-9]{2}-[0-9]{3}$"},
+        # Standard threats: T##-###  (e.g. T01-001)
+        # Adversarial threats: T##-ADV-### (e.g. T03-ADV-001)
+        "id": {"type": "string", "pattern": "^T[0-9]{2}(-[A-Z]{2,5})?-[0-9]{3}$"},
         "category": {"type": "string", "pattern": "^T[0-9]+$"},
         "severity": {
             "type": "string",
@@ -26,10 +28,15 @@ THREAT_META_SCHEMA: dict = {
         "probes": {
             "type": "array",
             "items": {"$ref": "#/$defs/probe"},
-            "minItems": 1,
+            "minItems": 0,
         },
         "remediation": {"type": "string"},
         "references": {"type": "array", "items": {"type": "string"}},
+        # Adversarial-only optional fields
+        "adversarial": {"type": "boolean"},
+        "mode": {"type": "string", "enum": ["read-only", "stateful"]},
+        "description": {"type": "string"},
+        "canary_placement": {"type": "string"},
     },
     "$defs": {
         "probe": {
@@ -44,8 +51,16 @@ THREAT_META_SCHEMA: dict = {
                 "assertions": {
                     "type": "array",
                     "items": {"$ref": "#/$defs/assertion"},
-                    "minItems": 1,
+                    "minItems": 0,
                 },
+                # Adversarial probe optional fields
+                "description": {"type": "string"},
+                "canary_detection": {"type": "boolean"},
+                "session": {"type": "string"},
+                "capture": {"type": "string"},
+                "replay_token_from": {"type": "string"},
+                "inconclusive_if_no_llm": {"type": "boolean"},
+                "requires_discovered_tools": {"type": "boolean"},
             },
         },
         "assertion": {
@@ -62,6 +77,7 @@ THREAT_META_SCHEMA: dict = {
                     ],
                 },
                 "value": {},
+                "description": {"type": "string"},
             },
         },
     },

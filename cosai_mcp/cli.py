@@ -7,6 +7,7 @@ from pathlib import Path
 
 import click
 
+from cosai_mcp.adversarial import AdversarialMode
 from cosai_mcp.api import (
     CATALOG_ROOT,
     COVERAGE_MATRIX,
@@ -105,6 +106,20 @@ def main() -> None:
 @click.option("--allow-custom-profiles", is_flag=True, default=False,
               help="Load profile from .cosai/profiles/<name>.py or ~/.cosai/profiles/<name>.py "
                    "in addition to built-in profiles.")
+@click.option("--adversarial", is_flag=True, default=False,
+              help="Enable adversarial probe mode (canary-only payloads). "
+                   "Requires --i-own-this-target. "
+                   "ONLY use against targets you own and have authorization to test.")
+@click.option("--i-own-this-target", "i_own_this_target", default=None,
+              help="Ownership declaration for adversarial mode. "
+                   "Must contain the target hostname verbatim. "
+                   "Example: --i-own-this-target=myserver.example.com")
+@click.option("--allow-stateful-adversarial", is_flag=True, default=False,
+              help="Allow stateful adversarial probes that modify server state. "
+                   "Only effective with --adversarial.")
+@click.option("--report-adversarial-html", type=click.Path(), default=None,
+              help="Write the adversarial probe report to this path "
+                   "(default: cosai-adversarial-report.html when --adversarial is set).")
 @click.option("--skip-reachability", is_flag=True, default=False, hidden=True,
               help="Skip the initial TCP reachability check (testing only).")
 def scan(
@@ -127,6 +142,10 @@ def scan(
     no_adaptive: bool,
     profile: str | None,
     allow_custom_profiles: bool,
+    adversarial: bool,
+    i_own_this_target: str | None,
+    allow_stateful_adversarial: bool,
+    report_adversarial_html: str | None,
     skip_reachability: bool,
 ) -> None:
     """Scan a target MCP server for CoSAI threat categories T1–T12.
@@ -163,6 +182,16 @@ def scan(
             click.echo(f"[ERROR] Profile error: {exc}", err=True)
             sys.exit(2)
 
+    # -- Build adversarial mode config (validation deferred to _run_scan) --
+    adv_mode: AdversarialMode | None = None
+    if adversarial:
+        adv_mode = AdversarialMode(
+            enabled=True,
+            ownership_declaration=i_own_this_target,
+            allow_stateful=allow_stateful_adversarial,
+            scan_id="",  # populated by _run_scan via scan_id uuid
+        )
+
     # -- Reachability check (exit 3 path) --
     if not skip_reachability:
         try:
@@ -190,7 +219,12 @@ def scan(
             mcp_path=mcp_path,
             adaptive=not no_adaptive,
             profile=resolved_profile,
+            adversarial_mode=adv_mode,
         )
+    except ValueError as exc:
+        # Includes adversarial dual opt-in failures
+        click.echo(f"[ERROR] {exc}", err=True)
+        sys.exit(2)
     except TargetUnreachableError as exc:
         click.echo(f"[ERROR] Target unreachable during scan: {exc}", err=True)
         sys.exit(3)
@@ -232,6 +266,24 @@ def scan(
             click.echo(f"CSV report written to {report_csv}")
         except Exception as exc:  # noqa: BLE001
             click.echo(f"[ERROR] Failed to write CSV report: {exc}", err=True)
+            sys.exit(2)
+
+    # -- Adversarial HTML report (only if --adversarial was used) --
+    if adversarial and not no_report and report_mode.lower() != "ci":
+        adv_html_path = report_adversarial_html or "cosai-adversarial-report.html"
+        try:
+            _write_adversarial_html_report(
+                result,
+                Path(adv_html_path),
+                target_url=target,
+                ownership_declaration=i_own_this_target or "",
+            )
+            click.echo(
+                f"Adversarial report written to {adv_html_path} "
+                "(RESTRICTED — contains probe payloads)"
+            )
+        except Exception as exc:  # noqa: BLE001
+            click.echo(f"[ERROR] Failed to write adversarial HTML report: {exc}", err=True)
             sys.exit(2)
 
     sys.exit(result.exit_code)
@@ -576,6 +628,53 @@ def _write_html_report(result: ScanResult, path: Path, report_mode: str = "full"
         ))
 
     path.write_text(builder.build(), encoding="utf-8")
+
+
+def _write_adversarial_html_report(
+    result: ScanResult,
+    path: Path,
+    target_url: str,
+    ownership_declaration: str,
+) -> None:
+    import html as _html
+    from cosai_mcp.catalog.models import Severity
+    from cosai_mcp.report.adversarial_html import AdversarialHtmlReport, AdversarialFinding
+
+    report = AdversarialHtmlReport(
+        target_url=target_url,
+        scan_timestamp=result.scan_timestamp,
+        scan_id=getattr(result, "scan_id", ""),
+        ownership_declaration=ownership_declaration,
+    )
+
+    # Surface adversarial probe results — those with "-ADV-" in the probe ID
+    for probe_result in result.probe_results:
+        if "-ADV-" not in probe_result.probe_id.upper():
+            continue
+
+        # Find the matching threat for severity and category info
+        threat = next(
+            (t for t in result.threats if any(p.id == probe_result.probe_id for p in t.probes)),
+            None,
+        )
+        severity = threat.severity if threat else Severity.HIGH
+        category = threat.category if threat else "?"
+
+        # response_body is pre-escaped by make_probe_result (ingestion-time HTML escape).
+        # Pass through directly; adversarial_html.py's _render_finding adds defense-in-depth.
+        report.add_finding(AdversarialFinding(
+            probe_id=probe_result.probe_id,
+            threat_id=probe_result.threat_id,
+            category=category,
+            severity=severity,
+            passed=probe_result.passed,
+            canary_detected=probe_result.canary_detected,
+            payload_sent="(see probe catalog)",
+            response_body=probe_result.response_body or "",
+            error=probe_result.error,
+        ))
+
+    path.write_text(report.build(), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

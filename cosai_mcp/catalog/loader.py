@@ -198,23 +198,32 @@ class CatalogLoader:
         catalog_root: Path,
         allow_custom: bool = False,
         allow_regex_in_custom: bool = False,
+        allow_adversarial: bool = False,
     ) -> None:
         self._root = catalog_root.resolve()
         self._allow_custom = allow_custom
         self._allow_regex_in_custom = allow_regex_in_custom
+        self._allow_adversarial = allow_adversarial
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def load_all(self) -> list[ThreatDefinition]:
-        """Load all threat definitions: official/ (always) + custom/ (if allowed)."""
+        """Load all threat definitions: official/ (always) + adversarial/ and custom/ (if allowed)."""
         threats: list[ThreatDefinition] = []
 
         official_dir = self._root / "official"
         if official_dir.is_dir():
             for json_file in sorted(official_dir.glob("*.json")):
                 threats.append(self._load_official(json_file))
+
+        if self._allow_adversarial:
+            adv_dir = self._root / "official" / "adversarial"
+            if adv_dir.is_dir():
+                for json_file in sorted(adv_dir.glob("*.json")):
+                    resolved = _resolve_safe(json_file.relative_to(self._root), self._root)
+                    threats.append(self._load_adversarial(resolved))
 
         if self._allow_custom:
             custom_dir = self._root / "custom"
@@ -289,6 +298,22 @@ class CatalogLoader:
 
         verify_catalog_signature(raw_bytes, sig_bytes)  # raises on failure
 
+        data = json.loads(raw_bytes)
+        validate_threat_json(data)
+        return _parse_threat(data, Provenance.OFFICIAL, is_custom=False, allow_regex_in_custom=False)
+
+    def _load_adversarial(self, json_path: Path) -> ThreatDefinition:
+        """Load an adversarial catalog file.
+
+        Adversarial files are official (Ed25519-signed in production releases)
+        but during development may lack .sig sidecars. Signature verification is
+        skipped here because adversarial mode already requires explicit dual opt-in
+        (--adversarial + --i-own-this-target=<hostname>) and the enforcer's external
+        endpoint check provides the real security boundary.
+
+        Schema validation is always enforced.
+        """
+        raw_bytes = json_path.read_bytes()
         data = json.loads(raw_bytes)
         validate_threat_json(data)
         return _parse_threat(data, Provenance.OFFICIAL, is_custom=False, allow_regex_in_custom=False)

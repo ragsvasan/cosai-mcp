@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "id": "T05-ADV-001",
+  "category": "T5",
+  "severity": "critical",
+  "cosai_ref": "T5",
+  "owasp_ref": "MCP-Top10-A05",
+  "cwe": ["CWE-200", "CWE-668"],
+  "adversarial": true,
+  "mode": "stateful",
+  "description": "Cross-session data leakage: creates a resource with a canary value in session A, then attempts to read that resource from session B. Canary presence in session B response indicates session isolation failure.",
+  "canary_placement": "write_payload",
+  "probes": [
+    {
+      "id": "T05-ADV-001-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "description": "Write canary value in session A",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "key": "cosai_adv_probe_key",
+          "value": "{{canary}}"
+        }
+      },
+      "assertions": [],
+      "session": "A"
+    },
+    {
+      "id": "T05-ADV-001-p2",
+      "transport": "http",
+      "method": "tools/call",
+      "description": "Read from session B — canary must not appear",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "key": "cosai_adv_probe_key"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "{{canary}}",
+          "description": "Canary from session A must not appear in session B (cross-session leakage)"
+        }
+      ],
+      "canary_detection": true,
+      "session": "B"
+    }
+  ],
+  "remediation": "Each MCP session must have an isolated namespace for all persistent state. Server-side storage keys must be scoped to the session ID, never shared across sessions. Implement session ID validation on every read/write operation.",
+  "references": [
+    "https://cosai.org/T5",
+    "https://owasp.org/www-project-mcp-top-10/A05"
+  ]
+}

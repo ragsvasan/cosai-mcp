@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "id": "T07-ADV-001",
+  "category": "T7",
+  "severity": "critical",
+  "cosai_ref": "T7",
+  "owasp_ref": "MCP-Top10-A07",
+  "cwe": ["CWE-384", "CWE-294"],
+  "adversarial": true,
+  "mode": "stateful",
+  "description": "Session token replay: captures the session token from session A, terminates session A, then replays the token in a new connection. A properly bound server must reject the replayed token.",
+  "canary_placement": "none",
+  "probes": [
+    {
+      "id": "T07-ADV-001-p1",
+      "transport": "http",
+      "method": "initialize",
+      "description": "Establish session A and capture session token",
+      "payload": {
+        "protocolVersion": "2025-03-26",
+        "clientInfo": {"name": "cosai-adversarial-prober", "version": "1.0"},
+        "capabilities": {}
+      },
+      "assertions": [],
+      "session": "A",
+      "capture": "session_token"
+    },
+    {
+      "id": "T07-ADV-001-p2",
+      "transport": "http",
+      "method": "tools/list",
+      "description": "Replay captured token in new connection — must be rejected",
+      "payload": {},
+      "replay_token_from": "A",
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true,
+          "description": "Replayed session token must be rejected"
+        }
+      ],
+      "session": "B"
+    }
+  ],
+  "remediation": "Session tokens must be cryptographically bound to the transport connection. Implement DPoP (RFC 9449) or TLS channel binding. Revoke session tokens immediately on session termination. Reject any token presented on a new connection that was issued for a different connection.",
+  "references": [
+    "https://cosai.org/T7",
+    "https://owasp.org/www-project-mcp-top-10/A07",
+    "https://www.rfc-editor.org/rfc/rfc9449"
+  ]
+}

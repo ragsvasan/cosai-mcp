@@ -1,15 +1,18 @@
 """Python API — Scanner class, ScanResult, scrub_env, COVERAGE_MATRIX."""
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import hashlib
 import os
 import re
 import socket
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
+from cosai_mcp.adversarial import AdversarialMode
 from cosai_mcp.catalog.loader import CatalogLoader
 from cosai_mcp.catalog.models import Severity, ThreatDefinition
 from cosai_mcp.config import ScanConfig
@@ -304,6 +307,7 @@ def _run_scan(
     mcp_path: str = "/mcp",
     adaptive: bool = True,
     profile: ServerProfile | None = None,
+    adversarial_mode: AdversarialMode | None = None,
 ) -> ScanResult:
     """Orchestrate a complete scan and return a ``ScanResult``.
 
@@ -340,10 +344,20 @@ def _run_scan(
         auth_header=effective_auth_header,
     )
 
+    # Generate a unique scan ID for this run (used for canary traceability)
+    scan_id = str(uuid.uuid4())
+
+    # Validate adversarial dual opt-in before loading catalog; stamp scan_id
+    adv_base = adversarial_mode or AdversarialMode()
+    adv = dataclasses.replace(adv_base, scan_id=scan_id) if adv_base.enabled else adv_base
+    if adv.enabled:
+        adv.validate(target_url)
+
     # Load + filter catalog
     loader = CatalogLoader(
         catalog_root=catalog_root,
         allow_custom=allow_custom_catalog,
+        allow_adversarial=adv.enabled,
     )
     all_threats = loader.load_all()
 
@@ -415,12 +429,33 @@ def _run_scan(
                     discovered_tools[0] if discovered_tools else None,
                 )
 
-            probe_results.extend(probe_runner.run_threat(
+            # For adversarial threats, generate a per-threat canary and inject it.
+            # After the probe runs, detect whether the canary appeared in the response.
+            is_adversarial_threat = adv.enabled and "-ADV-" in threat.id.upper()
+            if is_adversarial_threat:
+                canary = adv.make_canary(threat.id)
+                variables["canary"] = canary.value
+            else:
+                canary = None
+
+            raw_results = probe_runner.run_threat(
                 threat,
                 variables=variables,
                 pass_on_auth_reject=is_auth_category,
                 discovered_tool=active_discovered_tool,
-            ))
+            )
+
+            if is_adversarial_threat and canary is not None:
+                import html as _html_mod
+                from cosai_mcp.adversarial.canary import detect_canary as _detect
+                annotated: list[ProbeResult] = []
+                for r in raw_results:
+                    raw_body = _html_mod.unescape(r.response_body)
+                    hit = _detect(raw_body, canary)
+                    annotated.append(dataclasses.replace(r, canary_detected=hit) if hit else r)
+                probe_results.extend(annotated)
+            else:
+                probe_results.extend(raw_results)
 
     # --- Stateful engine ---
     scenario_results: list[ScenarioResult] = []
@@ -496,6 +531,7 @@ class Scanner:
         mcp_path: str = "/mcp",
         adaptive: bool = True,
         profile: ServerProfile | None = None,
+        adversarial_mode: AdversarialMode | None = None,
     ) -> None:
         self.target = target
         self.categories = categories
@@ -508,6 +544,7 @@ class Scanner:
         self.mcp_path = mcp_path
         self.adaptive = adaptive
         self.profile = profile
+        self.adversarial_mode = adversarial_mode
 
     def run(self, categories: list[str] | None = None) -> ScanResult:
         """Run a complete scan and return a :class:`ScanResult`.
@@ -534,6 +571,7 @@ class Scanner:
                 mcp_path=self.mcp_path,
                 adaptive=self.adaptive,
                 profile=self.profile,
+                adversarial_mode=self.adversarial_mode,
             )
         except (ValueError, TargetUnreachableError):
             raise  # let typed exceptions propagate as-is

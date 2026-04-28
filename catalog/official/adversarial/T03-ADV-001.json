@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "id": "T03-ADV-001",
+  "category": "T3",
+  "severity": "critical",
+  "cosai_ref": "T3",
+  "owasp_ref": "MCP-Top10-A03",
+  "cwe": ["CWE-74", "CWE-77"],
+  "adversarial": true,
+  "mode": "read-only",
+  "description": "Injection canary probe: sends a scanner-generated canary string as a tool argument to verify whether the server reflects it unescaped in the response (indicating potential injection vulnerability).",
+  "canary_placement": "arguments.input",
+  "probes": [
+    {
+      "id": "T03-ADV-001-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "input": "{{canary}}"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "{{canary}}",
+          "description": "Canary must not be reflected verbatim in response (injection vector)"
+        }
+      ],
+      "canary_detection": true
+    }
+  ],
+  "remediation": "Tool argument handlers must not reflect raw input back in responses. Validate and sanitize all inputs against a strict JSON schema allowlist. Never pass tool arguments directly to system calls, shell commands, or template renderers.",
+  "references": [
+    "https://cosai.org/T3",
+    "https://owasp.org/www-project-mcp-top-10/A03"
+  ]
+}
