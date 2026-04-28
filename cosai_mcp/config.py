@@ -35,3 +35,8 @@ class ScanConfig:
     probe_timeout_seconds: float = 30.0
     auth_token: str | None = None
     mcp_path: str = "/mcp"
+    auth_header: str | None = None
+    """Pre-formatted Authorization header value (e.g. ``"Bearer tok123"``).
+    When set, overrides the default ``"Bearer {auth_token}"`` construction in
+    the transport.  Set by profile's ``auth_header_format`` + ``--auth-token``.
+    """

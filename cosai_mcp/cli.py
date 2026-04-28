@@ -19,6 +19,8 @@ from cosai_mcp.api import (
     _parse_target,
 )
 from cosai_mcp.exceptions import ScannerInternalError, TargetUnreachableError
+from cosai_mcp.profiles import BUILTIN_PROFILES, resolve_profile
+from cosai_mcp.profiles.models import ServerProfile
 from cosai_mcp.report.verify import VerifyStatus, verify_audit_log
 
 
@@ -84,6 +86,12 @@ def main() -> None:
 @click.option("--no-adaptive", is_flag=True, default=False,
               help="Disable adaptive probe synthesis. Forces static catalog payloads — "
                    "use for hermetic tests or when server schema is adversarially crafted.")
+@click.option("--profile", default=None,
+              help="Server profile name (e.g. mnemo, fastmcp). Sets mcp_path, auth header "
+                   "format, tool name map, and skip_categories automatically.")
+@click.option("--allow-custom-profiles", is_flag=True, default=False,
+              help="Load profile from .cosai/profiles/<name>.py or ~/.cosai/profiles/<name>.py "
+                   "in addition to built-in profiles.")
 @click.option("--skip-reachability", is_flag=True, default=False, hidden=True,
               help="Skip the initial TCP reachability check (testing only).")
 def scan(
@@ -103,6 +111,8 @@ def scan(
     auth_token: str | None,
     mcp_path: str,
     no_adaptive: bool,
+    profile: str | None,
+    allow_custom_profiles: bool,
     skip_reachability: bool,
 ) -> None:
     """Scan a target MCP server for CoSAI threat categories T1–T12.
@@ -125,6 +135,19 @@ def scan(
 
     cat_list = [c.strip() for c in categories.split(",") if c.strip()] if categories != "all" else None
     effective_catalog_root = Path(catalog_root) if catalog_root else CATALOG_ROOT
+
+    # -- Resolve server profile (exit 2 on unknown name or bad custom file) --
+    resolved_profile: ServerProfile | None = None
+    if profile:
+        try:
+            resolved_profile = resolve_profile(
+                profile,
+                allow_custom=allow_custom_profiles,
+                project_root=Path.cwd(),
+            )
+        except ValueError as exc:
+            click.echo(f"[ERROR] Profile error: {exc}", err=True)
+            sys.exit(2)
 
     # -- Reachability check (exit 3 path) --
     if not skip_reachability:
@@ -152,6 +175,7 @@ def scan(
             auth_token=auth_token,
             mcp_path=mcp_path,
             adaptive=not no_adaptive,
+            profile=resolved_profile,
         )
     except TargetUnreachableError as exc:
         click.echo(f"[ERROR] Target unreachable during scan: {exc}", err=True)
@@ -233,6 +257,79 @@ def audit_verify(report: str) -> None:
     else:  # EMPTY
         click.echo(f"[WARN] Audit log is empty: {report}", err=True)
         sys.exit(2)
+
+
+# ---------------------------------------------------------------------------
+# cosai profile
+# ---------------------------------------------------------------------------
+
+@main.group()
+def profile() -> None:
+    """Manage server profiles for zero-config scanning."""
+
+
+@profile.command("list")
+def profile_list() -> None:
+    """List all available built-in server profiles."""
+    click.echo("\nBuilt-in server profiles:\n")
+    click.echo(f"  {'NAME':<20} {'SKIP':<14} DESCRIPTION")
+    click.echo("  " + "-" * 70)
+    for name, p in sorted(BUILTIN_PROFILES.items()):
+        skip = ",".join(sorted(p.skip_categories)) or "—"
+        click.echo(f"  {p.name:<20} {skip:<14} {p.description}")
+    click.echo()
+    click.echo("Use 'cosai profile info <name>' for full details.")
+
+
+@profile.command("info")
+@click.argument("name")
+@click.option("--allow-custom-profiles", is_flag=True, default=False,
+              help="Search .cosai/profiles/ and ~/.cosai/profiles/ in addition to built-ins.")
+def profile_info(name: str, allow_custom_profiles: bool) -> None:
+    """Show full detail for a server profile."""
+    try:
+        p = resolve_profile(name, allow_custom=allow_custom_profiles, project_root=Path.cwd())
+    except ValueError as exc:
+        click.echo(f"[ERROR] {exc}", err=True)
+        sys.exit(2)
+
+    click.echo(f"\nProfile: {p.name}")
+    click.echo(f"  Description  : {p.description}")
+    click.echo(f"  MCP path     : {p.mcp_path}")
+    click.echo(f"  Auth format  : {p.auth_header_format or '(none)'}")
+    skip = ", ".join(sorted(p.skip_categories)) or "(none)"
+    click.echo(f"  Skip cats    : {skip}")
+    if p.tool_name_map:
+        click.echo("  Tool name map:")
+        for placeholder, real in sorted(p.tool_name_map.items()):
+            click.echo(f"    {placeholder} → {real}")
+    else:
+        click.echo("  Tool name map: (empty — uses adaptive discovery)")
+    click.echo(f"  Notes        : {p.notes}")
+    click.echo()
+
+
+@profile.command("validate")
+@click.argument("path", type=click.Path(exists=True))
+def profile_validate(path: str) -> None:
+    """Validate a user-written profile file.
+
+    PATH is the .py file to validate.  The file must contain exactly one
+    assignment: ``profile = {...}`` where the value is a plain Python dict.
+
+    Exit codes:
+        0  Valid.
+        1  Invalid — error message describes the problem.
+    """
+    from cosai_mcp.profiles.loader import _parse_user_profile
+
+    try:
+        p = _parse_user_profile(Path(path))
+        click.echo(f"[OK] Profile {p.name!r} is valid.")
+        sys.exit(0)
+    except (ValueError, OSError) as exc:
+        click.echo(f"[INVALID] {exc}", err=True)
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------

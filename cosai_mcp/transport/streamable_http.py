@@ -111,7 +111,9 @@ class StreamableHTTPTransport(Transport):
         }
         if self._session_id:
             headers["Mcp-Session-Id"] = self._session_id
-        if self._config.auth_token:
+        if self._config.auth_header:
+            headers["Authorization"] = self._config.auth_header
+        elif self._config.auth_token:
             headers["Authorization"] = f"Bearer {self._config.auth_token}"
         return headers
 

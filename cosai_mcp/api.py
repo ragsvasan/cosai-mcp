@@ -16,6 +16,7 @@ from cosai_mcp.config import ScanConfig
 from cosai_mcp.exceptions import ScannerInternalError, TargetUnreachableError
 from cosai_mcp.harness.result import ProbeResult
 from cosai_mcp.harness.runner import ProbeRunner
+from cosai_mcp.profiles.models import ServerProfile
 from cosai_mcp.stateful.harness import ScenarioResult, StatefulHarness
 from cosai_mcp.stateful.scenarios import (
     t2_confused_deputy,
@@ -302,6 +303,7 @@ def _run_scan(
     auth_token: str | None = None,
     mcp_path: str = "/mcp",
     adaptive: bool = True,
+    profile: ServerProfile | None = None,
 ) -> ScanResult:
     """Orchestrate a complete scan and return a ``ScanResult``.
 
@@ -321,13 +323,21 @@ def _run_scan(
     # NOTE: _apply_env_scrub() is intentionally NOT called here (FIX [2]).
     # CLI callers call it once at process start; library callers must not mutate os.environ.
 
+    # Apply profile overrides — profile wins over individual flags when set
+    effective_mcp_path = (profile.mcp_path if profile else None) or mcp_path
+    effective_auth_token = auth_token  # --auth-token always wins; profile only formats it
+    effective_auth_header: str | None = None
+    if effective_auth_token and profile and profile.auth_header_format:
+        effective_auth_header = profile.auth_header_format.replace("{token}", effective_auth_token)
+
     config = ScanConfig(
         target_host=host,
         target_port=port,
         allow_private_targets=allow_private_targets,
         probe_timeout_seconds=probe_timeout_seconds,
-        auth_token=auth_token,
-        mcp_path=mcp_path,
+        auth_token=effective_auth_token,
+        mcp_path=effective_mcp_path,
+        auth_header=effective_auth_header,
     )
 
     # Load + filter catalog
@@ -343,6 +353,18 @@ def _run_scan(
     else:
         threats = all_threats
 
+    # Profile: filter out categories that don't apply to this server type
+    if profile and profile.skip_categories:
+        threats = [t for t in threats if t.category.upper() not in profile.skip_categories]
+        if not threats:
+            import warnings
+            warnings.warn(
+                f"Profile {profile.name!r} skip_categories filtered out all threats — "
+                "the scan will run no probes and exit 0 (clean) with no evidence. "
+                "Check your --categories filter or profile configuration.",
+                stacklevel=3,
+            )
+
     catalog_hash_ = _catalog_hash(threats)
     threat_severity = {t.id: t.severity for t in threats}
 
@@ -354,6 +376,12 @@ def _run_scan(
         # returns (first_tool_name, all_discovered_tools).  Falls back to
         # ("ping", ()) on failure so the scan proceeds identically to pre-P10.
         real_tool_name, discovered_tools = _run_discovery(target_url, config)
+
+        # Profile: remap discovered tool name through tool_name_map if present.
+        # This ensures probes use the real server tool name instead of the
+        # catalog placeholder ("ping") when the server uses a different name.
+        if profile and profile.tool_name_map:
+            real_tool_name = profile.apply_tool_name(real_tool_name)
 
         # For auth-testing categories (T1), probes must run without the auth
         # token — the test IS "does the server reject unauthenticated requests?"
@@ -404,8 +432,11 @@ def _run_scan(
             (frozenset({"T6"}), t6_tool_shadowing_mid_session),
             (frozenset({"T7"}), t7_session_token_binding),
         ]
+        profile_skip = profile.skip_categories if profile else frozenset()
         harness = StatefulHarness(config=config)
         for cats, factory in _stateful_scenarios:
+            if cats & profile_skip:
+                continue  # profile declares this category not applicable
             if run_all or cats & (effective_categories or set()):
                 scenario = factory()
                 result = harness.run_scenario(scenario, target_url)
@@ -464,6 +495,7 @@ class Scanner:
         auth_token: str | None = None,
         mcp_path: str = "/mcp",
         adaptive: bool = True,
+        profile: ServerProfile | None = None,
     ) -> None:
         self.target = target
         self.categories = categories
@@ -475,6 +507,7 @@ class Scanner:
         self.auth_token = auth_token
         self.mcp_path = mcp_path
         self.adaptive = adaptive
+        self.profile = profile
 
     def run(self, categories: list[str] | None = None) -> ScanResult:
         """Run a complete scan and return a :class:`ScanResult`.
@@ -500,6 +533,7 @@ class Scanner:
                 auth_token=self.auth_token,
                 mcp_path=self.mcp_path,
                 adaptive=self.adaptive,
+                profile=self.profile,
             )
         except (ValueError, TargetUnreachableError):
             raise  # let typed exceptions propagate as-is
