@@ -10,8 +10,13 @@ from typing import Any
 
 from cosai_mcp.catalog.models import Severity
 from cosai_mcp.harness.result import ProbeResult
+from cosai_mcp.report.remediation import RemediationBlock, get_remediation
 
-_CSP = "default-src 'none'; style-src 'unsafe-inline'; font-src 'none'"
+
+_CSP = (
+    "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; "
+    "font-src 'none'; img-src 'none'; connect-src 'none'"
+)
 _SAFE_URL_SCHEMES = ("https://", "http://")
 
 _CATEGORY_NAMES: dict[str, str] = {
@@ -236,6 +241,52 @@ pre {
   border-radius: 0 var(--mn-r-md) var(--mn-r-md) 0; color: #FCD34D;
 }
 hr { border: none; border-top: 1px solid var(--mn-border); margin: 32px 0; }
+/* ---- remediation details ---- */
+details.remediation-details {
+  margin: 14px 0 4px;
+  border: 1px solid var(--mn-teal-25);
+  border-radius: var(--mn-r-lg);
+  overflow: hidden;
+}
+details.remediation-details summary {
+  cursor: pointer; list-style: none;
+  background: var(--mn-teal-08);
+  padding: 8px 14px;
+  font-size: 0.8125rem; font-weight: 600; color: #67E8F9;
+  user-select: none;
+}
+details.remediation-details summary::-webkit-details-marker { display: none; }
+details.remediation-details summary::before {
+  content: '▶ '; font-size: 0.65rem; margin-right: 4px; color: var(--mn-teal);
+}
+details.remediation-details[open] summary::before { content: '▼ '; }
+.remediation-body {
+  padding: 12px 16px; background: var(--mn-surface-2);
+  font-size: 0.8125rem; color: var(--mn-text-2);
+}
+.rem-row { margin: 10px 0; }
+.rem-label {
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.07em;
+  text-transform: uppercase; color: #67E8F9; display: block; margin-bottom: 4px;
+}
+.rem-specref {
+  font-size: 0.75rem; color: var(--mn-text-3); font-style: italic;
+}
+.rem-code {
+  background: var(--mn-bg); border: 1px solid var(--mn-border);
+  border-radius: var(--mn-r-md); padding: 8px 10px;
+  font-size: 0.775rem; white-space: pre-wrap; word-break: break-all;
+  color: #a5f3fc;
+  font-family: 'JetBrains Mono','Fira Code',ui-monospace,Menlo,monospace;
+  margin: 4px 0;
+}
+.rem-verify {
+  font-size: 0.775rem; color: #6EE7B7;
+  font-family: 'JetBrains Mono','Fira Code',ui-monospace,Menlo,monospace;
+  background: var(--mn-bg); border: 1px solid var(--mn-border);
+  border-radius: var(--mn-r-md); padding: 6px 10px; margin: 4px 0;
+  white-space: pre-wrap; word-break: break-all;
+}
 .footer {
   font-size: 0.75rem; color: var(--mn-text-3); text-align: center;
   margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--mn-border);
@@ -256,6 +307,15 @@ def _h(text: object) -> str:
 
 
 def _unescape(s: str) -> str:
+    """Reverse HTML-escaping before re-escaping at render time.
+
+    ProbeResult fields are HTML-escaped at ingestion by make_probe_result().
+    This reverses ingestion-escaping so _h() can re-apply it as the single
+    render-time escaping gate.  This also covers the defense-in-depth case
+    where ProbeResult is constructed directly (bypassing make_probe_result),
+    which would store unescaped content — _unescape() is a no-op there, then
+    _h() applies the necessary escaping.  Both paths are safe.
+    """
     return _html_stdlib.unescape(s)
 
 
@@ -306,9 +366,25 @@ class HtmlReportBuilder:
     - References rendered as links only when scheme ∈ {http, https}.
     """
 
-    def __init__(self, target_url: str, scan_timestamp: str) -> None:
+    def __init__(
+        self,
+        target_url: str,
+        scan_timestamp: str,
+        report_mode: str = "full",
+    ) -> None:
+        """
+        Parameters
+        ----------
+        report_mode:
+            One of ``"full"`` (default), ``"developer"``, ``"executive"``.
+            ``"ci"`` is handled by the CLI (no HTML written); it is not a
+            valid mode for the builder itself.
+        """
+        if report_mode not in ("full", "developer", "executive"):
+            report_mode = "full"
         self._target_url = target_url
         self._scan_timestamp = scan_timestamp
+        self._report_mode = report_mode
         self._sections: list[HtmlReportSection] = []
         self._scenarios: list[HtmlScenarioSection] = []
 
@@ -358,8 +434,12 @@ class HtmlReportBuilder:
         )
 
         findings_table = self._render_findings_table()
-        sections_html = self._render_sections()
-        scenario_html = self._render_scenarios()
+        if self._report_mode == "executive":
+            sections_html = ""
+            scenario_html = ""
+        else:
+            sections_html = self._render_sections()
+            scenario_html = self._render_scenarios()
 
         return (
             "<!DOCTYPE html>\n"
@@ -522,9 +602,11 @@ class HtmlReportBuilder:
             )
         else:
             refs_html = self._render_references(section.references)
+            remediation_details = self._render_remediation_details(section)
             body = (
                 f"{probes_html}\n"
                 f"<div class='remediation'><span class='lbl'>How to fix:</span> {_h(section.remediation)}</div>\n"
+                f"{remediation_details}"
                 f"<div class='refs'>References: {refs_html}</div>\n"
             )
 
@@ -665,6 +747,85 @@ class HtmlReportBuilder:
             f"<span class='{step_cls}'>{icon} Step {step.index}: {_h(step.description)}</span>\n"
             f"{resp_html}"
             f"</div>\n"
+        )
+
+    def _render_remediation_details(self, section: HtmlReportSection) -> str:
+        """Render a collapsible <details> remediation block for a failed section.
+
+        Looks up the first failed probe's remediation entry from the registry.
+        Returns empty string when no remediation is registered (never crashes).
+        All content is html.escape()-d at ingestion — this renderer trusts only
+        the static registry, never raw probe response data.
+        """
+        if self._report_mode == "executive":
+            return ""
+
+        # Find the first failed probe that has a registered remediation
+        rem: RemediationBlock | None = None
+        for probe_result in section.probe_results:
+            if not probe_result.passed and not probe_result.inconclusive_reason:
+                rem = get_remediation(probe_result.probe_id)
+                if rem:
+                    break
+
+        if rem is None:
+            return ""
+
+        open_attr = " open" if self._report_mode == "developer" else ""
+
+        spec_ref_html = f"<span class='rem-specref'>{_h(rem.spec_ref)}</span>"
+
+        what_requires_html = (
+            f"<div class='rem-row'>"
+            f"<span class='rem-label'>What the spec requires</span>"
+            f"{_h(rem.what_spec_requires)} {spec_ref_html}"
+            f"</div>"
+        )
+
+        fix_html = (
+            f"<div class='rem-row'>"
+            f"<span class='rem-label'>Fix shape ({_h(rem.fix_shape_language)})</span>"
+            f"<div class='rem-code'>{_h(rem.fix_shape)}</div>"
+            f"</div>"
+        )
+
+        fastmcp_html = ""
+        if rem.fastmcp_snippet:
+            fastmcp_html = (
+                f"<div class='rem-row'>"
+                f"<span class='rem-label'>FastMCP (Python)</span>"
+                f"<div class='rem-code'>{_h(rem.fastmcp_snippet)}</div>"
+                f"</div>"
+            )
+
+        ts_html = ""
+        if rem.typescript_snippet:
+            ts_html = (
+                f"<div class='rem-row'>"
+                f"<span class='rem-label'>MCP SDK (TypeScript)</span>"
+                f"<div class='rem-code'>{_h(rem.typescript_snippet)}</div>"
+                f"</div>"
+            )
+
+        verify_cmd = f"cosai scan {_h('<target>')} {_h(rem.verify_command_suffix)}"
+        verify_html = (
+            f"<div class='rem-row'>"
+            f"<span class='rem-label'>Verify with cosai-mcp</span>"
+            f"<div class='rem-verify'>{verify_cmd}</div>"
+            f"</div>"
+        )
+
+        return (
+            f"<details class='remediation-details'{open_attr}>\n"
+            f"<summary>Remediation — {_h(rem.threat_id)}</summary>\n"
+            f"<div class='remediation-body'>\n"
+            f"{what_requires_html}\n"
+            f"{fix_html}\n"
+            f"{fastmcp_html}\n"
+            f"{ts_html}\n"
+            f"{verify_html}\n"
+            f"</div>\n"
+            f"</details>\n"
         )
 
     def _render_references(self, references: tuple) -> str:

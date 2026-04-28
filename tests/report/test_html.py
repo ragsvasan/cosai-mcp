@@ -57,12 +57,12 @@ class TestHtmlCSP:
         assert "default-src 'none'" in html
 
     def test_html_csp_covers_scripts(self):
-        """default-src 'none' blocks scripts — no explicit script-src override needed."""
+        """CSP includes both default-src 'none' and explicit script-src 'none'."""
         b = _builder()
         report = b.build()
-        # default-src 'none' implicitly blocks scripts; no relaxation allowed
         assert "default-src 'none'" in report
-        assert "script-src" not in report
+        # Explicit script-src 'none' is included for scanner compliance checklists
+        assert "script-src 'none'" in report
 
     def test_html_meta_charset_utf8(self):
         b = _builder()

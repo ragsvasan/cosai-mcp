@@ -68,6 +68,19 @@ def main() -> None:
                    "Defaults to cosai-report.html in the current directory.")
 @click.option("--no-report", is_flag=True, default=False,
               help="Suppress the default cosai-report.html output.")
+@click.option(
+    "--report-mode",
+    type=click.Choice(["full", "developer", "executive", "ci"], case_sensitive=False),
+    default="full",
+    show_default=True,
+    help=(
+        "Report detail level. "
+        "full: findings + collapsible remediation tabs (default). "
+        "developer: same as full with remediation expanded by default. "
+        "executive: summary grid only, no per-finding code or detail. "
+        "ci: suppress HTML output (plain text summary only)."
+    ),
+)
 @click.option("--report-csv", type=click.Path(), default=None,
               help="Write CSV findings report to this file path (Excel-compatible).")
 @click.option("--report-coverage", is_flag=True, default=False,
@@ -103,6 +116,7 @@ def scan(
     report_sarif: str | None,
     report_html: str | None,
     no_report: bool,
+    report_mode: str,
     report_csv: str | None,
     report_coverage: bool,
     probe_timeout: float,
@@ -196,11 +210,16 @@ def scan(
             click.echo(f"[ERROR] Failed to write SARIF report: {exc}", err=True)
             sys.exit(2)
 
-    # Default: write cosai-report.html unless --no-report or explicit --report-html given
-    effective_html_path = report_html or (None if no_report else "cosai-report.html")
+    # Default: write cosai-report.html unless --no-report, --report-mode ci, or
+    # explicit --report-html given. ci mode suppresses HTML (plain-text summary only).
+    effective_html_path = (
+        None
+        if (no_report or report_mode.lower() == "ci")
+        else (report_html or "cosai-report.html")
+    )
     if effective_html_path:
         try:
-            _write_html_report(result, Path(effective_html_path))
+            _write_html_report(result, Path(effective_html_path), report_mode=report_mode)
             click.echo(f"HTML report written to {effective_html_path}")
         except Exception as exc:  # noqa: BLE001
             click.echo(f"[ERROR] Failed to write HTML report: {exc}", err=True)
@@ -436,7 +455,7 @@ def _write_csv_report(result: ScanResult, path: Path) -> None:
     write_csv_report(result, path)
 
 
-def _write_html_report(result: ScanResult, path: Path) -> None:
+def _write_html_report(result: ScanResult, path: Path, report_mode: str = "full") -> None:
     import json as _json
     from collections import defaultdict
 
@@ -451,6 +470,7 @@ def _write_html_report(result: ScanResult, path: Path) -> None:
     builder = HtmlReportBuilder(
         target_url=result.target_url,
         scan_timestamp=result.scan_timestamp,
+        report_mode=report_mode,
     )
 
     # Build probe_context lookup: probe_id → ProbeContext

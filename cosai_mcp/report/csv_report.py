@@ -7,6 +7,7 @@ from pathlib import Path
 
 from cosai_mcp.api import ScanResult
 from cosai_mcp.catalog.models import ThreatDefinition
+from cosai_mcp.report.remediation import get_remediation
 
 _CATEGORY_NAMES: dict[str, str] = {
     "T1":  "Improper Authentication",
@@ -40,6 +41,8 @@ _HEADERS = [
     "error",
     "duration_seconds",
     "remediation",
+    "remediation_spec_ref",
+    "remediation_fix_shape",
 ]
 
 
@@ -61,6 +64,9 @@ def write_csv_report(result: ScanResult, path: Path) -> None:
         category = threat.category if threat else ""
         severity = threat.severity.value if threat else ""
         remediation = getattr(threat, "remediation", "") if threat else ""
+        rem_block = get_remediation(r.probe_id)
+        rem_spec_ref = rem_block.spec_ref if rem_block else ""
+        rem_fix_shape = rem_block.fix_shape if rem_block else ""
 
         # One row per failed assertion; one row total if all passed (or error)
         if r.assertions:
@@ -75,13 +81,15 @@ def write_csv_report(result: ScanResult, path: Path) -> None:
                     "PASS" if r.passed else "FINDING",
                     a.target,
                     a.operator,
-                    a.expected,
-                    a.actual,
+                    _safe_cell(str(a.expected)),
+                    _safe_cell(str(a.actual)),
                     "yes" if a.passed else "no",
-                    _truncate(r.response_body, 500),
-                    r.error or "",
+                    _safe_cell(_truncate(r.response_body, 500)),
+                    _safe_cell(r.error or ""),
                     f"{r.duration_seconds:.2f}",
                     remediation,
+                    rem_spec_ref,
+                    rem_fix_shape,
                 ])
         else:
             writer.writerow([
@@ -93,10 +101,12 @@ def write_csv_report(result: ScanResult, path: Path) -> None:
                 "prober",
                 "PASS" if r.passed else ("ERROR" if r.error else "FINDING"),
                 "", "", "", "", "",
-                _truncate(r.response_body, 500),
-                r.error or "",
+                _safe_cell(_truncate(r.response_body, 500)),
+                _safe_cell(r.error or ""),
                 f"{r.duration_seconds:.2f}",
                 remediation,
+                rem_spec_ref,
+                rem_fix_shape,
             ])
 
     # --- scenario results (one row per step) ---
@@ -122,6 +132,8 @@ def write_csv_report(result: ScanResult, path: Path) -> None:
                         step.error or "",
                         "",
                         f"Step {step.step_index}: {step.description}",
+                        "",  # remediation_spec_ref
+                        "",  # remediation_fix_shape
                     ])
             else:
                 writer.writerow([
@@ -137,6 +149,8 @@ def write_csv_report(result: ScanResult, path: Path) -> None:
                     step.error or "",
                     "",
                     f"Step {step.step_index}: {step.description}",
+                    "",  # remediation_spec_ref
+                    "",  # remediation_fix_shape
                 ])
 
     path.write_text(buf.getvalue(), encoding="utf-8-sig")  # utf-8-sig = Excel-compatible BOM
@@ -147,4 +161,22 @@ def _truncate(s: str, max_len: int) -> str:
         return ""
     if len(s) > max_len:
         return s[:max_len] + "…"
+    return s
+
+
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _safe_cell(s: str) -> str:
+    """Prefix cells that start with formula-injection characters with a tab.
+
+    Excel treats cells starting with ``=``, ``+``, ``-``, ``@`` as formulas.
+    Prefixing with a tab character disarms the injection while preserving content.
+    This applies to all attacker-controlled string fields (response_body, error,
+    assertion actual values) — not to scanner-authored fields like probe_id.
+    """
+    if not s:
+        return s
+    if s[0] in _FORMULA_PREFIXES:
+        return "\t" + s
     return s
