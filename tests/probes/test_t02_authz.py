@@ -93,3 +93,121 @@ class TestT02ConfusedDeputy:
                 results.append(r)
 
         assert all(r.passed for r in results)
+
+
+class TestT02CatalogLoadsT02003:
+
+    def test_t02_003_loads(self, catalog):
+        from pathlib import Path
+        t = catalog.load_file(Path("official/T02-003.json"))
+        assert t.id == "T02-003"
+        assert t.category == "T2"
+        assert t.severity.value == "critical"
+        assert len(t.probes) == 2
+        for probe in t.probes:
+            assert any(a.target == "response.error" for a in probe.assertions)
+            assert any(a.value is True for a in probe.assertions)
+
+    def test_t02_003_p1_payload_has_destructive_args(self, catalog):
+        from pathlib import Path
+        t = catalog.load_file(Path("official/T02-003.json"))
+        args = t.probes[0].payload.get("arguments", {})
+        assert args.get("action") == "delete"
+        assert args.get("force") is True
+
+    def test_t02_003_p1_payload_has_no_confirm_boolean(self, catalog):
+        """Probe must NOT include confirm:true — avoids satisfying boolean-gate servers."""
+        from pathlib import Path
+        t = catalog.load_file(Path("official/T02-003.json"))
+        args = t.probes[0].payload.get("arguments", {})
+        assert "confirm" not in args
+
+    def test_t02_003_p2_payload_has_destroy_no_dry_run(self, catalog):
+        from pathlib import Path
+        t = catalog.load_file(Path("official/T02-003.json"))
+        args = t.probes[1].payload.get("arguments", {})
+        assert args.get("operation") == "destroy"
+        assert args.get("dry_run") is False
+
+
+class TestT02DestructiveOneShotTool:
+    """T02-003: destructive one-shot tool execution."""
+
+    @pytest.mark.asyncio
+    async def test_secure_server_rejects_delete_action(self, catalog):
+        """Server that requires confirmation token rejects one-shot delete → probe passes."""
+        from pathlib import Path
+        threat = catalog.load_file(Path("official/T02-003.json"))
+        probe = threat.probes[0]  # action:delete, force:true
+
+        with MockMCPServer(tools_call_response=error_response(-32001, "Confirmation token required")) as server:
+            server.wait_ready()
+            result = await run_probe(probe, threat, server)
+
+        assert result.passed is True
+
+    @pytest.mark.asyncio
+    async def test_vulnerable_server_executes_delete_without_token(self, catalog):
+        """Server that executes delete without confirmation → vulnerability → probe fails."""
+        from pathlib import Path
+        threat = catalog.load_file(Path("official/T02-003.json"))
+        probe = threat.probes[0]
+
+        with MockMCPServer(tools_call_response=ok_response("Deleted")) as server:
+            server.wait_ready()
+            result = await run_probe(probe, threat, server)
+
+        assert result.passed is False
+
+    @pytest.mark.asyncio
+    async def test_secure_server_rejects_destroy_no_dry_run(self, catalog):
+        """Server that rejects destroy without confirmation token → probe passes."""
+        from pathlib import Path
+        threat = catalog.load_file(Path("official/T02-003.json"))
+        probe = threat.probes[1]  # operation:destroy, dry_run:false
+
+        with MockMCPServer(tools_call_response=error_response(-32001, "Confirmation token required for destructive operations")) as server:
+            server.wait_ready()
+            result = await run_probe(probe, threat, server)
+
+        assert result.passed is True
+
+    @pytest.mark.asyncio
+    async def test_vulnerable_server_executes_destroy_without_token(self, catalog):
+        """Server that executes destroy without confirmation token → probe fails."""
+        from pathlib import Path
+        threat = catalog.load_file(Path("official/T02-003.json"))
+        probe = threat.probes[1]
+
+        with MockMCPServer(tools_call_response=ok_response("cosai-test-resource destroyed")) as server:
+            server.wait_ready()
+            result = await run_probe(probe, threat, server)
+
+        assert result.passed is False
+
+    @pytest.mark.asyncio
+    async def test_server_accepting_boolean_confirm_is_marked_vulnerable(self, catalog):
+        """Server that executes on confirm:true boolean (no token) → one-shot gate → probe fails."""
+        from pathlib import Path
+        threat = catalog.load_file(Path("official/T02-003.json"))
+        probe = threat.probes[0]
+        # Server that honours any destructive call — simulates a boolean-confirm-only gate
+        with MockMCPServer(tools_call_response=ok_response("Deleted (boolean confirm accepted)")) as server:
+            server.wait_ready()
+            result = await run_probe(probe, threat, server)
+        assert result.passed is False, "Boolean confirm gate is not two-stage commit — must be flagged"
+
+    @pytest.mark.asyncio
+    async def test_all_t02_003_probes_pass_on_two_stage_server(self, catalog):
+        """All T02-003 probes pass when server enforces confirmation token gate."""
+        from pathlib import Path
+        threat = catalog.load_file(Path("official/T02-003.json"))
+
+        results = []
+        for probe in threat.probes:
+            with MockMCPServer(tools_call_response=error_response(-32001, "Confirmation token required")) as server:
+                server.wait_ready()
+                r = await run_probe(probe, threat, server)
+                results.append(r)
+
+        assert all(r.passed for r in results)

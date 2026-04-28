@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0",
+  "id": "T02-003",
+  "category": "T2",
+  "severity": "critical",
+  "cosai_ref": "T2",
+  "owasp_ref": "MCP-Top10-A02",
+  "cwe": [
+    "CWE-862",
+    "CWE-285"
+  ],
+  "probes": [
+    {
+      "id": "T02-003-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "description": "One-shot delete with no prior plan call. Server must reject because no confirmation token was issued by a plan step. Note: probe deliberately omits any 'confirm' boolean to avoid satisfying weaker boolean-gate implementations.",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "action": "delete",
+          "force": true
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true,
+          "description": "Server must reject a one-shot destructive call without a prior confirmation token"
+        }
+      ]
+    },
+    {
+      "id": "T02-003-p2",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "operation": "destroy",
+          "target": "cosai-test-resource",
+          "dry_run": false
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true,
+          "description": "Server must reject destroy/no-dry-run call without a prior plan step"
+        }
+      ]
+    }
+  ],
+  "remediation": "Implement two-stage commit for all destructive tools: a plan call that returns a description and confirmation token, and an execute call that requires the token from the plan response. One-shot destructive tools are a CoSAI T2/T9 violation.",
+  "references": [
+    "https://cosai.org/T2",
+    "https://cwe.mitre.org/data/definitions/862.html",
+    "https://owasp.org/www-project-top-10-for-large-language-model-applications/"
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "id": "T12-002",
+  "category": "T12",
+  "severity": "info",
+  "cosai_ref": "T12",
+  "owasp_ref": "MCP-Top10-A12",
+  "cwe": [
+    "CWE-778",
+    "CWE-116"
+  ],
+  "probes": [
+    {
+      "id": "T12-002-p1",
+      "transport": "http",
+      "method": "tools/list",
+      "payload": {},
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": false,
+          "description": "Server must respond to tools/list so tool descriptions can be audited"
+        }
+      ]
+    },
+    {
+      "id": "T12-002-p2",
+      "transport": "http",
+      "method": "tools/list",
+      "payload": {},
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "matches_regex",
+          "value": "(?i)(irreversible|permanently delete|permanently destroy|cannot be undone|destructive operation|will be deleted|will be destroyed|warning.*delete|warning.*destroy)",
+          "description": "At least one tool description must disclose destructive or irreversible behaviour. FAIL means either no tools have warnings or this server has no destructive tools (verify manually)."
+        }
+      ]
+    }
+  ],
+  "remediation": "Tool descriptions for destructive operations must include explicit irreversibility disclosure (e.g. 'This action permanently deletes the resource and cannot be undone'). Pair with two-stage commit (T02-003) so the LLM sees the warning before requesting confirmation.",
+  "references": [
+    "https://cosai.org/T12",
+    "https://cwe.mitre.org/data/definitions/778.html"
+  ]
+}

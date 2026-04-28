@@ -145,6 +145,95 @@ _BLOCKS: list[RemediationBlock] = [
     ),
 
     # ------------------------------------------------------------------
+    # T02 — Missing Access Control
+    # ------------------------------------------------------------------
+
+    RemediationBlock(
+        threat_id="T02-003",
+        probe_id="T02-003-p1",
+        spec_ref="CoSAI T2 §2.3 (Destructive tool authorization)",
+        what_spec_requires=(
+            "Destructive tools MUST implement a two-stage commit: a plan call "
+            "returns a description and short-lived confirmation token; the execute "
+            "call requires that token. One-shot destructive calls must be rejected."
+        ),
+        fix_shape=(
+            "# Two-stage commit pattern:\n"
+            "def delete_resource_plan(resource_id: str) -> dict:\n"
+            "    token = secrets.token_hex(16)  # short-lived, single-use\n"
+            "    store_pending(token, resource_id, ttl=60)\n"
+            "    return {'description': f'Permanently delete {resource_id}', 'confirm_token': token}\n\n"
+            "def delete_resource_execute(confirm_token: str) -> dict:\n"
+            "    resource_id = consume_pending(confirm_token)  # raises if invalid/expired\n"
+            "    actually_delete(resource_id)\n"
+            "    return {'deleted': resource_id}"
+        ),
+        fix_shape_language="python",
+        fastmcp_snippet=(
+            "# FastMCP: separate plan and execute tools\n"
+            "# WARNING: _pending is process-local. In multi-worker deployments\n"
+            "# (gunicorn/uvicorn workers>1) use a shared store (Redis, DB) instead\n"
+            "# — tokens issued by worker A are invisible to worker B.\n"
+            "import secrets\n"
+            "import time\n\n"
+            "_pending: dict[str, tuple[str, float]] = {}  # token -> (resource_id, expires_at)\n\n"
+            "@app.tool()\n"
+            "def delete_plan(resource_id: str) -> dict:\n"
+            "    # Prune expired entries to prevent unbounded growth\n"
+            "    now = time.time()\n"
+            "    for k in [k for k, (_, exp) in _pending.items() if exp < now]:\n"
+            "        _pending.pop(k, None)\n"
+            "    token = secrets.token_hex(16)\n"
+            "    _pending[token] = (resource_id, now + 60)\n"
+            "    return {'description': f'Permanently delete {resource_id}', 'confirm_token': token}\n\n"
+            "@app.tool()\n"
+            "def delete_execute(confirm_token: str) -> dict:\n"
+            "    entry = _pending.pop(confirm_token, None)\n"
+            "    if not entry or time.time() > entry[1]:\n"
+            "        raise ValueError('Invalid or expired confirmation token')\n"
+            "    return {'deleted': actually_delete(entry[0])}"
+        ),
+        typescript_snippet=(
+            "// MCP SDK: plan + execute pattern\n"
+            "server.tool('delete_plan', async ({ resource_id }) => {\n"
+            "  const token = crypto.randomBytes(16).toString('hex');\n"
+            "  pending.set(token, { resource_id, expires: Date.now() + 60_000 });\n"
+            "  return { description: `Delete ${resource_id} permanently`, confirm_token: token };\n"
+            "});\n"
+            "server.tool('delete_execute', async ({ confirm_token }) => {\n"
+            "  const entry = pending.get(confirm_token);\n"
+            "  if (!entry || Date.now() > entry.expires)\n"
+            "    throw new McpError(ErrorCode.InvalidParams, 'Invalid or expired token');\n"
+            "  pending.delete(confirm_token);\n"
+            "  return { deleted: await actuallyDelete(entry.resource_id) };\n"
+            "});"
+        ),
+        verify_command_suffix="--categories T2 --fail-on critical",
+    ),
+
+    RemediationBlock(
+        threat_id="T02-003",
+        probe_id="T02-003-p2",
+        spec_ref="CoSAI T2 §2.3 (Destructive tool authorization)",
+        what_spec_requires=(
+            "Tools that destroy resources without dry_run=true MUST require a "
+            "prior confirmation token. Accepting operation=destroy, dry_run=false "
+            "without a token is a one-shot destructive execution vulnerability."
+        ),
+        fix_shape=(
+            "# Same two-stage commit applies — dry_run does not substitute for a token:\n"
+            "# WRONG: if not dry_run: actually_destroy(target)\n"
+            "# RIGHT: require confirm_token for any non-dry-run destructive path\n"
+            "if not dry_run and not confirm_token:\n"
+            "    raise McpError(INVALID_PARAMS, 'Confirmation token required for destructive operations')"
+        ),
+        fix_shape_language="python",
+        fastmcp_snippet=None,
+        typescript_snippet=None,
+        verify_command_suffix="--categories T2 --fail-on critical",
+    ),
+
+    # ------------------------------------------------------------------
     # T03 — Input Validation Failures
     # ------------------------------------------------------------------
 
@@ -429,6 +518,74 @@ _BLOCKS: list[RemediationBlock] = [
         fastmcp_snippet=None,
         typescript_snippet=None,
         verify_command_suffix="--categories T11 --fail-on high",
+    ),
+
+    # ------------------------------------------------------------------
+    # T12 — Insufficient Logging / Tool Description Transparency
+    # ------------------------------------------------------------------
+
+    RemediationBlock(
+        threat_id="T12-002",
+        probe_id="T12-002-p1",
+        spec_ref="CoSAI T12 §12.2 (Observability and auditability)",
+        what_spec_requires=(
+            "tools/list MUST be accessible so operators can enumerate tool "
+            "descriptions and audit which tools are exposed to agents."
+        ),
+        fix_shape=(
+            "# Ensure tools/list is handled by your MCP server dispatcher:\n"
+            "# Standard method — all MCP servers must implement it.\n"
+            "# If returning 401/403, ensure scanner credentials can list tools."
+        ),
+        fix_shape_language="pseudocode",
+        fastmcp_snippet=None,
+        typescript_snippet=None,
+        verify_command_suffix="--categories T12 --fail-on info",
+    ),
+
+    RemediationBlock(
+        threat_id="T12-002",
+        probe_id="T12-002-p2",
+        spec_ref="CoSAI T12 §12.2 (Tool description transparency)",
+        what_spec_requires=(
+            "Tool descriptions for destructive operations MUST include explicit "
+            "irreversibility disclosure so the LLM and operator know the action "
+            "cannot be undone before a confirmation is issued."
+        ),
+        fix_shape=(
+            "# Add irreversibility disclosure to destructive tool descriptions:\n"
+            '# BEFORE: "Deletes the specified resource."\n'
+            '# AFTER:  "Permanently deletes the specified resource. '
+            'This action is irreversible and cannot be undone. '
+            'Use delete_plan first to review what will be deleted."\n\n'
+            "# Pair with T02-003 two-stage commit so the warning appears\n"
+            "# in the plan response before the confirmation token is issued."
+        ),
+        fix_shape_language="pseudocode",
+        fastmcp_snippet=(
+            "# FastMCP: tool description in decorator\n"
+            "@app.tool(\n"
+            "    description=(\n"
+            "        'Permanently deletes the specified resource. '\n"
+            "        'THIS ACTION IS IRREVERSIBLE AND CANNOT BE UNDONE. '\n"
+            "        'Call delete_plan first to obtain a confirmation token.'\n"
+            "    )\n"
+            ")\n"
+            "def delete_execute(confirm_token: str) -> dict:\n"
+            "    ..."
+        ),
+        typescript_snippet=(
+            "// MCP SDK: description on tool registration\n"
+            "server.tool(\n"
+            "  'delete_execute',\n"
+            "  'Permanently deletes the specified resource. '\n"
+            "  + 'THIS ACTION IS IRREVERSIBLE AND CANNOT BE UNDONE. '\n"
+            "  + 'Requires a confirmation token from delete_plan.',\n"
+            "  { confirm_token: z.string() },\n"
+            "  async ({ confirm_token }) => { ... }\n"
+            ");"
+        ),
+        verify_command_suffix="--categories T12 --fail-on info",
     ),
 ]
 

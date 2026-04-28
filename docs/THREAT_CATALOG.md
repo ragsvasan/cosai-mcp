@@ -67,15 +67,18 @@ Insufficient authorization checks for autonomous tool calls. The "confused deput
 - **Confused deputy:** agent with service-account-level DB credentials executes `DELETE * FROM records` because the user asked for it, without verifying the user has DELETE permission
 - **Multi-turn privilege escalation:** attacker gains access to a low-privilege tool, uses it to extract information that enables calling a high-privilege tool in a subsequent turn
 - **Scope elevation:** agent re-negotiates tool access mid-session to include tools outside the initial authorization scope
+- **Destructive one-shot tool execution:** a tool that permanently deletes, destroys, or deploys accepts a single call with no prior confirmation step — an agentic LLM can trigger irreversible actions (data deletion, infra teardown, financial transactions) without any human in the loop. Severity is amplified by root-scoped credentials and the speed of agentic execution (see [Compound Threat Patterns](#compound-threat-patterns))
 
 ### What cosai-mcp tests
 - **Black-box (partial):** call privileged tool without appropriate scope claim in token → accepted (FAIL) or rejected (PASS)
+- **Black-box (T02-003):** call any tool with destructive argument patterns (`action:delete`, `force:true`, `dry_run:false`, `operation:destroy`) → server executes without prior confirmation token (FAIL) or rejects (PASS)
 - **Stateful harness (full):** scripted 3-turn sequence: low-priv tool call → scope inspection → high-priv tool call; asserts server rejects step 3 without elevated scope grant
 
 ### Remediation
 - Validate the calling user's permissions for every tool invocation — do not rely on agent-level credentials
 - Implement per-tool RBAC; scope tokens to specific tools, not broad resource access
 - Use RFC 8693 delegation tokens that encode both agent identity and user identity; backend validates both
+- **Implement two-stage commit for all destructive tools:** a `plan` call returns a human-readable description and a short-lived confirmation token; an `execute` call requires the token. One-shot destructive tools are a CoSAI T2/T9 violation regardless of how their description is worded
 - Log all privilege checks; alert on unexpected scope elevation
 
 ---
@@ -345,11 +348,15 @@ When an incident occurs (agent leaks proprietary data, executes unauthorized act
 - Model hallucination due to context overflow
 - A legitimate authorized action
 
-### What cosai-mcp tests (middleware instrumentation)
+### What cosai-mcp tests (middleware instrumentation + black-box)
 The audit middleware instruments:
 - Whether tool invocations are logged with a DAG causal chain (parent_id linking concurrent/nested calls)
 - Whether logs are append-only and tamper-evident (SHA-256 hash chain)
 - Whether log content carries enough context to reconstruct the tool-call sequence
+
+The black-box prober (T12-002) checks tool description transparency:
+- **T12-002-p1:** `tools/list` must succeed — tool descriptions must be enumerable for audit
+- **T12-002-p2 (info):** at least one tool description must include explicit irreversibility disclosure for destructive operations. FAIL means either no tool warns about irreversibility or no destructive tools exist (manual review required)
 
 ### The cosai-mcp audit log
 cosai-mcp's own middleware implements an MCP-layer execution trace:
@@ -399,6 +406,55 @@ The CoSAI whitepaper describes a DAG that cryptographically links: **prompt → 
 - Store traces in an append-only log; verify chain integrity on demand
 - Retain traces per your compliance requirement (typically 90 days minimum for SOC 2)
 - Integrate traces into your SIEM with alerts on chain breaks or unexpected tool call patterns
+- **Tool description transparency:** tool descriptions for destructive operations must explicitly state that the action is irreversible (e.g. "This action permanently deletes the resource and cannot be undone"). Combine with T02-003 two-stage commit so the LLM sees the warning before issuing a confirmation
+
+---
+
+## Compound Threat Patterns
+
+Some incidents involve multiple CoSAI categories firing simultaneously. Understanding compound patterns is critical for agentic systems where a single autonomous decision can chain multiple failures.
+
+### "Destructive Agentic Blast Radius" — T2 + T9 + T12
+
+**Pattern:** An agentic LLM calls a destructive tool without human confirmation, executing irreversible changes at machine speed.
+
+**Anatomy:**
+| Layer | Failure | CoSAI category |
+|-------|---------|----------------|
+| Authorization | Tool accepts one-shot destructive call — no confirmation token required | T2 (Missing Access Control) |
+| Trust boundary | Agent relies on LLM judgment to decide whether destructive action is safe — no deterministic policy gate | T9 (Trust Boundary Failures) |
+| Observability | No pre-execution signal or tool description warning — operator cannot interrupt before damage occurs | T12 (Insufficient Logging) |
+
+**Amplifiers:**
+- Root-scoped or overly broad credentials (no least-privilege on the service account)
+- Backup stored alongside primary data — deletion is total
+- Agentic execution speed: 9 seconds from decision to irreversible action (documented in PocketOS 2026 incident)
+
+**Remediation (all three layers required):**
+1. **T2:** Two-stage commit — plan call returns description + confirmation token; execute requires token
+2. **T9:** Deterministic policy gate — server enforces confirmation, never delegates to LLM judgment
+3. **T12:** Pre-execution logging + description transparency — operator sees what will happen before it does
+
+**Detection with cosai-mcp:**
+```bash
+cosai scan http://your-mcp-server --categories T2,T9,T12 --fail-on critical
+```
+
+T02-003 (destructive one-shot) fires first. If it passes, T12-002 checks description transparency. A server that passes both gives operators a meaningful human-in-the-loop opportunity before irreversible actions execute.
+
+### PocketOS 2026 Incident Reference
+
+A Railway volume containing production data and its only backup was deleted by an agentic system in under 10 seconds. Root causes mapped to CoSAI categories:
+
+| Root cause | CoSAI category | cosai-mcp probe |
+|------------|---------------|-----------------|
+| Railway API volume delete accepted single call — no confirmation required | T2 | T02-003 |
+| Root-scoped token with no tool restriction | T2 | T02-001 (privilege scope) |
+| Agent acted on LLM judgment without deterministic policy gate | T9 | Middleware |
+| No pre-execution warning in tool description | T12 | T12-002 |
+| Backup co-located with primary (no off-volume backup) | Out of scope | Infrastructure |
+
+The T2 + T9 failure was necessary and sufficient for the data loss. T12 transparency failure removed the last human-observable signal before execution.
 
 ---
 
