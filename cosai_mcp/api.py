@@ -10,6 +10,7 @@ import socket
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from cosai_mcp.adversarial import AdversarialMode
@@ -139,6 +140,29 @@ def _run_discovery(
     discovered: tuple[DiscoveredTool, ...] = discover_tools(target_url, config)
     first_name = discovered[0].name if discovered else "ping"
     return first_name, discovered
+
+
+def _adversarial_safety_dict(threat: ThreatDefinition) -> dict[str, Any]:
+    """Return the executable subset of a threat for adversarial safety checks.
+
+    Reference URLs and remediation text are intentionally excluded: the enforcer
+    is meant to inspect probe material that can influence requests, not metadata.
+    """
+    from cosai_mcp.harness.context import _to_json_safe
+
+    return {
+        "id": threat.id,
+        "mode": threat.mode,
+        "probes": [
+            {
+                "id": probe.id,
+                "transport": probe.transport,
+                "method": probe.method,
+                "payload": _to_json_safe(probe.payload),
+            }
+            for probe in threat.probes
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +391,17 @@ def _run_scan(
     else:
         threats = all_threats
 
+    if adv.enabled:
+        from cosai_mcp.adversarial.enforcer import check_no_external_endpoints
+
+        for threat in threats:
+            if "-ADV-" in threat.id.upper():
+                check_no_external_endpoints(
+                    _adversarial_safety_dict(threat),
+                    target_url,
+                    allow_stateful=adv.allow_stateful,
+                )
+
     # Profile: filter out categories that don't apply to this server type
     if profile and profile.skip_categories:
         threats = [t for t in threats if t.category.upper() not in profile.skip_categories]
@@ -433,15 +468,6 @@ def _run_scan(
             # After the probe runs, detect whether the canary appeared in the response.
             is_adversarial_threat = adv.enabled and "-ADV-" in threat.id.upper()
             if is_adversarial_threat:
-                # Gate stateful adversarial probes — they modify server state and
-                # are only permitted when --allow-stateful-adversarial is set.
-                if threat.mode == "stateful" and not adv.allow_stateful:
-                    from cosai_mcp.adversarial.enforcer import UnsafeProbeError
-                    raise UnsafeProbeError(
-                        f"Adversarial threat {threat.id!r} has mode='stateful' but "
-                        "--allow-stateful-adversarial was not set. "
-                        "Stateful adversarial probes modify server state — pass the flag to enable."
-                    )
                 canary = adv.make_canary(threat.id)
                 variables["canary"] = canary.value
             else:
