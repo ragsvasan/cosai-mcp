@@ -6,22 +6,20 @@ Reference for all 12 CoSAI threat categories, their attack patterns, what cosai-
 
 ## Coverage Matrix (Three-Engine Model)
 
-See [COVERAGE.md](COVERAGE.md) for the authoritative implementation status. This table is the intended final-state design.
-
-| Category | Name | Engine | Intended coverage | Current status |
-|----------|------|--------|------------------|---------------|
-| T1 | Improper Authentication | Black-box prober | Full | Partial (2/4 probes done) |
-| T2 | Missing Access Control | Stateful harness + partial BB | Full | Partial (1 BB probe; stateful P6) |
-| T3 | Input Validation Failures | Black-box prober | Full | Done |
-| T4 | Data/Control Boundary | Middleware instrumentation | Requires middleware | Done |
-| T5 | Inadequate Data Protection | Middleware instrumentation | Requires middleware | Planned P4c |
-| T6 | Integrity/Verification | Stateful harness + partial BB | Full | Partial (manifest check done; typosquat P4c; stateful P6) |
-| T7 | Session Security Failures | Stateful harness | Full | Planned P6 |
-| T8 | Network Binding Failures | Black-box prober | Full | Partial (SSRF done; 0.0.0.0 binding P4c) |
-| T9 | Trust Boundary Failures | Middleware instrumentation | Requires middleware | Done |
-| T10 | Resource Management | Black-box prober | Full | Partial (size/rate done; DoW/heartbeat P4c) |
-| T11 | Supply Chain/Lifecycle | Black-box prober (partial) | Partial — static analysis | Partial (allowlist done; typosquat P4c) |
-| T12 | Insufficient Logging | Middleware instrumentation | Requires middleware | Done |
+| Category | Name | Engine | Status |
+|----------|------|--------|--------|
+| T1 | Improper Authentication | Black-box prober | Done — 4 probes (missing auth, token replay, cross-session, DPoP) |
+| T2 | Missing Access Control | Black-box prober + stateful harness | Done — BB: privilege scope + destructive one-shot (T02-003); Stateful: privilege escalation chain + confused deputy |
+| T3 | Input Validation Failures | Black-box prober | Done — injection, path traversal, SQL, null bytes, oversized payloads |
+| T4 | Data/Control Boundary | Middleware instrumentation | Done — requires middleware in target server |
+| T5 | Inadequate Data Protection | Black-box prober | Done — PII pattern detection, credential pattern detection in tool responses |
+| T6 | Integrity/Verification | Black-box prober + stateful harness | Done — BB: typosquat detection; Stateful: mid-session manifest diff (rug pull) |
+| T7 | Session Security Failures | Stateful harness | Done — session fixation, token-in-URL, cross-session replay, revocation (T7-SC-002) |
+| T8 | Network Binding Failures | Black-box prober | Done — 0.0.0.0 binding, SSRF (RFC1918/link-local/loopback), shadow server detection |
+| T9 | Trust Boundary Failures | Middleware instrumentation | Done — requires middleware in target server |
+| T10 | Resource Management | Black-box prober | Done — rate limiting, response size limits, recursive depth, heartbeat |
+| T11 | Supply Chain/Lifecycle | Black-box prober | Done — tool allowlist, typosquat (Levenshtein ≤ 1), signature verification |
+| T12 | Insufficient Logging | Middleware + black-box prober | Done — middleware: hash-chained audit log; BB: T12-002 tool description transparency |
 
 **Why "Requires middleware" for T4, T9, T12?**
 These categories are observable only from inside the call path. A black-box scanner sees what the server returns — it cannot observe what content flows into the LLM's reasoning loop (T4, T9) or whether execution is being logged (T12). The cosai-mcp middleware deployed in the target server instruments those boundaries. See [ARCHITECTURE.md](ARCHITECTURE.md) for the three-engine rationale.
