@@ -98,6 +98,26 @@ pytest --cosai-target=http://localhost:8000 --cosai-severity=critical
 
 cosai-mcp is the only tool that combines runtime black-box probing + stateful multi-turn conformance testing + all 12 CoSAI categories + CI/CD gate. Static analyzers and runtime proxies are complements — they test what you wrote and monitor production; cosai-mcp gates what ships.
 
+## FAQ
+
+**How is this different from MCP-Bastion or MCPProxy-go?**
+Those are runtime proxies — they sit in front of a production server and monitor live traffic. cosai-mcp is a scanner — it runs before deploy, in CI. They test what's running in production; we gate what gets to production. Complements, not competitors.
+
+**How is this different from static analysis tools (Cisco, Snyk, Enkrypt)?**
+Static analyzers test what you wrote — the source code. We test what you shipped — the running server. An MCP server can pass every static check and still echo raw arguments into a shell at runtime. You need both.
+
+**T4, T9, T12 need middleware — what's the black-box coverage story there?**
+For T4, adversarial mode with canary tokens catches exfiltration and prompt injection echoing from outside. For T9 and T12, we detect the absence of controls — probing whether logging endpoints exist and whether audit trails are present. But detecting that something happened requires being in the call path. That's what the middleware engine handles.
+
+**Is this ready for others to use?**
+801 passing tests, Apache 2.0, installs with pip. The catalog format and taxonomy coverage are stable. Reference-implementation quality — solid enough to standardize the probe catalog schema against, not yet production-hardened for enterprise deployment at scale.
+
+**What about non-Python MCP servers?**
+The scanner speaks JSON-RPC — it's language-agnostic. Any MCP server regardless of implementation language is a valid target. The server-side middleware is Python-only today, but the scanner works against TypeScript, Go, or anything.
+
+**Who decides what goes in the official catalog?**
+Currently the project, with threat definitions Ed25519-signed by the project keypair. The proposal to the CoSAI working group is that WS4 becomes the signing authority — same model as OWASP and the Top 10. Community submits, working group ratifies, signed artifacts ship.
+
 ## License
 
 Apache 2.0. Contributions welcome — see [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
