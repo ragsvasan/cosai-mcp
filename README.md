@@ -5,7 +5,10 @@ Open-source MCP security framework covering all 12 CoSAI threat categories (T1�
 **Status:** Alpha — 801 tests passing, all T1–T12 categories implemented, Apache 2.0.
 
 ```bash
-# Install and scan any MCP server
+# Try without installing
+uvx --from cosai-mcp cosai scan http://localhost:8000
+
+# Or install permanently
 pip install cosai-mcp
 cosai scan http://localhost:8000
 ```
