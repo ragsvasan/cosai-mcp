@@ -187,6 +187,12 @@ Caught: locked catalog invariant: official files must be Ed25519-signed. `_load_
 
 Caught: `THREAT_META_SCHEMA` allowed `T##-ADV-###` IDs but `_RULE_ID_RE = r"^T\d{2}-\d{3}$"` in `report/sarif.py` silently rejected them, crashing SARIF output for every adversarial result.
 
+### Tests Panel Check (tests panel — mandatory)
+> "For each new enforcement function: is there an integration test that calls `_run_scan` or `Scanner.run` (not the function directly) with a payload that triggers the condition, and asserts the gate fires? Unit tests on the function alone do not verify it is wired into the scan path."
+> "List every existing test that asserts `SessionStatus.READY`, `manifest == []`, `transport_type == <string>`, or any value this diff changes. Confirm each is updated to assert the new correct behavior. A test that asserts old wrong behavior is a bug trap, not coverage."
+> "For each test that asserts a field value (e.g. `info.transport_type == 'LegacySSETransport'`): is there a paired test asserting a behavioral side effect — that `close()` was called on the old transport, that the new transport received `send('initialize', ...)`? If not, the test is checking a label, not behavior."
+> "For each new catalog ID format (e.g. `T##-ADV-###`) or schema field (e.g. `mode`): is there a test that loads the catalog, runs a scan, and writes a SARIF/HTML report — asserting the new value survives the full pipeline without crashing?"
+
 ### Rationalization Hunt (adversary panel — explicit mandate)
 > "Find every comment or docstring in the diff that says a security check is unnecessary because of a compensating control. For each one: is that compensating control actually equivalent to the required check, or is it weaker? Treat each rationalization as a potential bypass and attempt to exploit it."
 
