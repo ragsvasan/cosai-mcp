@@ -161,6 +161,37 @@ docs/
 
 ---
 
+## Project-Specific Panel Checklist
+
+Every panel prompt for this project must include these checks. They are derived from the exact failure modes that Codex caught post-commit (2026-04-29) that in-development panels missed.
+
+### Wiring Check (correctness panel)
+> "For each new safety or enforcement function introduced in this diff, trace its call path from `_run_scan` / CLI entry to where it executes. If the function is not in that call chain, flag it as dead code. List: function name → where it is defined → where it is called from `_run_scan`."
+
+Caught: `check_no_external_endpoints()` existed and had unit tests but was never called in the probe execution loop.
+
+### Label-vs-Behavior Check (correctness panel)
+> "For each assignment in this diff that sets a string, flag, or type label (e.g. `self._transport_type = 'LegacySSETransport'`), confirm that downstream code reads that value and takes a different action. If nothing changes behavior, the assignment is cosmetic and the real fix is missing."
+
+Caught: `self._transport_type = "LegacySSETransport"` with no actual transport switch — subsequent probes still ran over the wrong wire.
+
+### Locked-Contract Check (correctness + security panels)
+> "List every locked spec in `CLAUDE.md` that this change is supposed to implement. For each one: (a) find the exact line that implements it, not a substitute gate; (b) confirm no comment says 'X is unnecessary because of Y' where Y is weaker than what the spec requires."
+
+Caught: locked lifecycle: `tools/list` failure → `scan-incomplete`. Code comment said `# non-fatal; some servers omit it` and silently set an empty manifest.
+
+Caught: locked catalog invariant: official files must be Ed25519-signed. `_load_adversarial()` comment said "signature verification is skipped here because adversarial mode already requires dual opt-in" — dual opt-in is not a substitute for catalog integrity.
+
+### Format Coverage Check (correctness panel)
+> "If this diff introduces a new ID format, enum variant, or schema pattern (e.g. `T##-ADV-###`), grep every regex, match statement, and allowlist in the codebase that filters on the old format. List each one and confirm it accepts the new format."
+
+Caught: `THREAT_META_SCHEMA` allowed `T##-ADV-###` IDs but `_RULE_ID_RE = r"^T\d{2}-\d{3}$"` in `report/sarif.py` silently rejected them, crashing SARIF output for every adversarial result.
+
+### Rationalization Hunt (adversary panel — explicit mandate)
+> "Find every comment or docstring in the diff that says a security check is unnecessary because of a compensating control. For each one: is that compensating control actually equivalent to the required check, or is it weaker? Treat each rationalization as a potential bypass and attempt to exploit it."
+
+---
+
 ## Panel Gate — COMPLETE (2026-04-26)
 
 T1 Full panel ran 2026-04-26. CONDITIONAL PASS. Full findings: [docs/architecture-decisions.md](docs/architecture-decisions.md).
