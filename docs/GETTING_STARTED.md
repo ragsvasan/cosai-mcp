@@ -1,16 +1,21 @@
 # Getting Started with cosai-mcp
 
-cosai-mcp scans MCP servers for security vulnerabilities across all 12 CoSAI threat categories. It requires nothing installed on the target — point it at any running MCP server and get a report.
+cosai scans MCP servers for security vulnerabilities across all 12 CoSAI threat categories. It requires nothing installed on the target — point it at any running MCP server and get a report.
 
 ---
 
-## Quickstart: Zero Install
+## Quickstart
 
 ```bash
-uvx cosai-mcp scan http://localhost:8000
+# Try without a permanent install
+uvx --from cosai-mcp cosai scan http://localhost:8000
+
+# Or install permanently
+pip install cosai-mcp
+cosai scan http://localhost:8000
 ```
 
-That's it. `uvx` downloads and runs the scanner without a permanent install. You get a report to stdout and exit code `0` (clean) or `1` (findings).
+You get a report to stdout and exit code `0` (clean) or `1` (findings).
 
 ---
 
@@ -34,22 +39,22 @@ Python 3.11+ required.
 
 ```bash
 # Scan a local MCP server
-cosai-mcp scan http://localhost:8000
+cosai scan http://localhost:8000
 
 # Scan with SARIF report (for GitHub Security tab)
-cosai-mcp scan http://localhost:8000 --report sarif --output results.sarif
+cosai scan http://localhost:8000 --report sarif --output results.sarif
 
 # Scan with HTML report
-cosai-mcp scan http://localhost:8000 --report html --output results.html
+cosai scan http://localhost:8000 --report html --output results.html
 
 # Fail only on critical findings
-cosai-mcp scan http://localhost:8000 --fail-on critical
+cosai scan http://localhost:8000 --fail-on critical
 
 # Scan specific threat categories only
-cosai-mcp scan http://localhost:8000 --categories T1,T3,T7
+cosai scan http://localhost:8000 --categories T1,T3,T7
 
 # Show coverage matrix (which engine covers which category)
-cosai-mcp scan http://localhost:8000 --report-coverage
+cosai scan http://localhost:8000 --report-coverage
 ```
 
 ---
@@ -80,7 +85,7 @@ The scanner detects the right transport automatically based on the server's `ini
 For stdio (local MCP server binary):
 
 ```bash
-cosai-mcp scan --stdio ./my-mcp-server --allow-stdio
+cosai scan --stdio ./my-mcp-server --allow-stdio
 ```
 
 ---
@@ -153,7 +158,7 @@ jobs:
       - name: Start your MCP server
         run: ./start-mcp-server.sh &
 
-      - name: Run cosai-mcp scan
+      - name: Run cosai scan
         uses: cosai-mcp/scan-action@<commit-sha>
         with:
           target: http://localhost:8000
@@ -201,14 +206,14 @@ The report includes a coverage matrix showing which engine covered each threat c
 | T2: Access Control | Stateful harness | Full |
 | T3: Input Validation | Black-box prober | Full |
 | T4: Data/Control Boundary | Middleware only | Requires middleware deployment |
-| T5: Data Protection | Middleware only | Requires middleware deployment |
-| T6: Integrity | Stateful harness | Full |
+| T5: Data Protection | Black-box prober | Full |
+| T6: Integrity | Black-box + stateful harness | Full |
 | T7: Session Security | Stateful harness | Full |
 | T8: Network Binding | Black-box prober | Full |
 | T9: Trust Boundaries | Middleware only | Requires middleware deployment |
 | T10: Resource Management | Black-box prober | Full |
-| T11: Supply Chain | Black-box prober (partial) | Partial — static analysis only |
-| T12: Logging | Middleware only | Requires middleware deployment |
+| T11: Supply Chain | Black-box prober | Full |
+| T12: Logging | Middleware + black-box prober | Full (middleware) + T12-002 description transparency |
 
 **T4, T9, T12** require the target server to have the cosai-mcp middleware installed. A black-box scanner cannot observe what flows through the LLM's reasoning loop.
 
@@ -313,13 +318,13 @@ With middleware deployed, run the scan again — T4, T9, T12 findings will now b
 Verify a signed report has not been tampered with:
 
 ```bash
-cosai-mcp audit verify results.sarif
+cosai audit verify results.sarif
 ```
 
 Verify the audit log chain:
 
 ```bash
-cosai-mcp audit verify /var/log/cosai/traces/audit.log
+cosai audit verify /var/log/cosai/traces/audit.log
 ```
 
 Output:
@@ -339,7 +344,7 @@ Add your own threat definitions without changing code:
 
 ```bash
 # Enable custom catalog support
-cosai-mcp scan http://localhost:8000 \
+cosai scan http://localhost:8000 \
   --allow-custom-catalog \
   --custom-catalog-path ./my-org-threats/
 ```
