@@ -97,6 +97,19 @@ class StreamableHTTPTransport(Transport):
         self._client: httpx.AsyncClient | None = None
         self._recv_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=64)
 
+        # Compute the single endpoint URL used for every POST.
+        # If base_url already has a non-root path (user passed the full MCP URL),
+        # use it as-is.  Otherwise, append mcp_path from config (user passed only
+        # the origin and expects us to mount at the configured path).
+        _parsed = urlparse(self._base_url)
+        _url_path = _parsed.path
+        if _url_path and _url_path not in ("/", ""):
+            # Full URL supplied — the path IS the MCP endpoint.
+            self._endpoint = self._base_url + "/"
+        else:
+            _origin = f"{_parsed.scheme}://{_parsed.netloc}"
+            self._endpoint = _origin + config.mcp_path.rstrip("/") + "/"
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -158,12 +171,8 @@ class StreamableHTTPTransport(Transport):
             raise RuntimeError("Transport not connected — call connect() first")
 
         payload = self._make_rpc(method, params)
-        # Append trailing slash to avoid 307 from ASGI framework path-redirect.
-        mcp_path = self._config.mcp_path.rstrip("/") + "/"
-        url = f"{self._base_url}{mcp_path}"
-
         response = await self._client.post(
-            url,
+            self._endpoint,
             content=json.dumps(payload).encode(),
             headers=self._build_headers(),
         )
@@ -184,11 +193,9 @@ class StreamableHTTPTransport(Transport):
         """POST a pre-built JSON-RPC notification (no id, fire-and-forget)."""
         if self._client is None:
             return
-        mcp_path = self._config.mcp_path.rstrip("/") + "/"
-        url = f"{self._base_url}{mcp_path}"
         try:
             response = await self._client.post(
-                url,
+                self._endpoint,
                 content=json.dumps(notification).encode(),
                 headers=self._build_headers(),
             )

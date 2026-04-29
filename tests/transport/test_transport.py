@@ -945,11 +945,7 @@ class TestMnemoScanRegressions:
             allow_private_targets=True,
         )
         transport = StreamableHTTPTransport("http://localhost:8080", config)
-        # The URL built for requests must end with "/"
-        mcp_path = config.mcp_path.rstrip("/") + "/"
-        expected_url = f"http://localhost:8080{mcp_path}"
-        assert expected_url.endswith("/"), f"URL must end with /: {expected_url!r}"
-        assert "/mcp/" in expected_url
+        assert transport._endpoint == "http://localhost:8080/mcp/"
 
     def test_regression_custom_mcp_path_respected(self):
         """mcp_path override must be honoured — some servers mount MCP at /v1/mcp."""
@@ -962,8 +958,26 @@ class TestMnemoScanRegressions:
             mcp_path="/v1/mcp",
         )
         transport = StreamableHTTPTransport("http://localhost:8080", config)
-        mcp_path = config.mcp_path.rstrip("/") + "/"
-        url = f"http://localhost:8080{mcp_path}"
-        assert url == "http://localhost:8080/v1/mcp/"
+        assert transport._endpoint == "http://localhost:8080/v1/mcp/"
+
+    def test_regression_full_url_not_doubled(self):
+        """When base_url already contains a non-root path (user passed full MCP URL),
+        the transport must not double the path by appending mcp_path again.
+
+        Regression: scan http://server:8099/api/mcp produced endpoint
+        http://server:8099/api/mcp/mcp/ — all probes failed with decompression errors
+        from the 404 HTML response.
+        """
+        from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
+
+        config = ScanConfig(
+            target_host="127.0.0.1",
+            target_port=8099,
+            allow_private_targets=True,
+        )
+        transport = StreamableHTTPTransport("http://127.0.0.1:8099/api/mcp", config)
+        assert transport._endpoint == "http://127.0.0.1:8099/api/mcp/"
+        # Must NOT be the doubled form
+        assert transport._endpoint != "http://127.0.0.1:8099/api/mcp/mcp/"
 
 
