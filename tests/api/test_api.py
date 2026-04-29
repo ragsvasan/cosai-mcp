@@ -1,13 +1,18 @@
 """Python API tests — Scanner, ScanResult, scrub_env, COVERAGE_MATRIX."""
 from __future__ import annotations
 
+import base64
+import json
 import os
 from pathlib import Path
 from types import MappingProxyType
 from unittest.mock import patch
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from cosai_mcp.adversarial import AdversarialMode
+from cosai_mcp.adversarial.enforcer import UnsafeProbeError
 from cosai_mcp.api import (
     CATALOG_ROOT,
     COVERAGE_MATRIX,
@@ -18,6 +23,7 @@ from cosai_mcp.api import (
     _determine_exit_code,
     _normalise_categories,
     _parse_target,
+    _run_scan,
     scrub_env,
 )
 from cosai_mcp.catalog.models import Severity
@@ -372,3 +378,157 @@ class TestDetermineExitCodeWithSeverity:
         probe = self._make_probe(passed=False, threat_id="T99-999")
         code = _determine_exit_code([probe], [], "critical", threat_severity={})
         assert code == 1
+
+
+# ---------------------------------------------------------------------------
+# Adversarial scan safety wiring
+# ---------------------------------------------------------------------------
+
+def _write_signed_adversarial_catalog(
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    threat_id: str = "T03-ADV-001",
+    category: str = "T3",
+    mode: str = "read-only",
+    callback: str | None = None,
+) -> None:
+    private_key = Ed25519PrivateKey.generate()
+    pubkey = private_key.public_key().public_bytes_raw()
+    monkeypatch.setenv("COSAI_PUBKEY", base64.b64encode(pubkey).decode())
+
+    payload = {
+        "name": "echo",
+        "arguments": {"input": "{{canary}}"},
+    }
+    if callback is not None:
+        payload["arguments"]["callback"] = callback
+
+    threat = {
+        "schema_version": "1.0",
+        "id": threat_id,
+        "category": category,
+        "severity": "high",
+        "cosai_ref": category,
+        "owasp_ref": "MCP-Top10-A03",
+        "cwe": ["CWE-74"],
+        "adversarial": True,
+        "mode": mode,
+        "description": "Adversarial test fixture",
+        "canary_placement": "arguments.input",
+        "probes": [
+            {
+                "id": f"{threat_id}-p1",
+                "transport": "http",
+                "method": "tools/call",
+                "payload": payload,
+                "assertions": [
+                    {"target": "response.body", "operator": "not_contains", "value": "{{canary}}"}
+                ],
+            }
+        ],
+        "remediation": "Do not exfiltrate canaries.",
+        "references": ["https://cosai.org/adversarial"],
+    }
+
+    adv_dir = root / "official" / "adversarial"
+    adv_dir.mkdir(parents=True)
+    raw = json.dumps(threat, indent=2).encode()
+    json_path = adv_dir / f"{threat_id}.json"
+    json_path.write_bytes(raw)
+    json_path.with_suffix(".json.sig").write_bytes(
+        base64.b64encode(private_key.sign(raw)) + b"\n"
+    )
+
+
+class TestAdversarialScanSafety:
+    def test_regression_stateful_adversarial_rejected_by_scan_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Stateful adversarial probes must be rejected by _run_scan without the flag."""
+        _write_signed_adversarial_catalog(
+            tmp_path,
+            monkeypatch,
+            threat_id="T05-ADV-001",
+            category="T5",
+            mode="stateful",
+        )
+
+        with pytest.raises(UnsafeProbeError, match="stateful"):
+            _run_scan(
+                target="http://myserver.example.com:8000",
+                categories=["T5"],
+                engine="prober",
+                allow_custom_catalog=False,
+                probe_timeout_seconds=1.0,
+                catalog_root=tmp_path,
+                allow_private_targets=True,
+                adversarial_mode=AdversarialMode(
+                    enabled=True,
+                    ownership_declaration="I own myserver.example.com",
+                    allow_stateful=False,
+                ),
+            )
+
+    def test_regression_external_endpoint_rejected_by_scan_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """External URLs in adversarial probe payloads must be rejected by _run_scan."""
+        _write_signed_adversarial_catalog(
+            tmp_path,
+            monkeypatch,
+            callback="https://attacker.example/callback",
+        )
+
+        with pytest.raises(UnsafeProbeError, match="external URL"):
+            _run_scan(
+                target="http://myserver.example.com:8000",
+                categories=["T3"],
+                engine="prober",
+                allow_custom_catalog=False,
+                probe_timeout_seconds=1.0,
+                catalog_root=tmp_path,
+                allow_private_targets=True,
+                adversarial_mode=AdversarialMode(
+                    enabled=True,
+                    ownership_declaration="I own myserver.example.com",
+                ),
+            )
+
+    def test_regression_stateful_adversarial_allowed_with_flag(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The allow-stateful flag should let scan orchestration continue."""
+        _write_signed_adversarial_catalog(
+            tmp_path,
+            monkeypatch,
+            threat_id="T05-ADV-001",
+            category="T5",
+            mode="stateful",
+        )
+
+        with patch("cosai_mcp.api._run_discovery", return_value=("echo", ())), \
+             patch("cosai_mcp.harness.runner.ProbeRunner.run_threat", return_value=[]):
+            result = _run_scan(
+                target="http://myserver.example.com:8000",
+                categories=["T5"],
+                engine="prober",
+                allow_custom_catalog=False,
+                probe_timeout_seconds=1.0,
+                catalog_root=tmp_path,
+                allow_private_targets=True,
+                adversarial_mode=AdversarialMode(
+                    enabled=True,
+                    ownership_declaration="I own myserver.example.com",
+                    allow_stateful=True,
+                ),
+            )
+
+        assert result.exit_code == 0
+        assert [t.id for t in result.threats] == ["T05-ADV-001"]

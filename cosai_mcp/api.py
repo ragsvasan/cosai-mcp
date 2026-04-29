@@ -434,7 +434,6 @@ def _run_scan(
 
         # For auth-testing categories (T1), probes must run without the auth
         # token — the test IS "does the server reject unauthenticated requests?"
-        import dataclasses
         no_auth_config = dataclasses.replace(config, auth_token=None)
 
         runner = ProbeRunner(config=config, target_url=target_url)
