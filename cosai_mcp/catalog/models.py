@@ -59,3 +59,4 @@ class ThreatDefinition:
     remediation: str
     references: tuple    # tuple[str, ...]
     provenance: Provenance
+    mode: str = "read-only"  # adversarial-only: "read-only" | "stateful"

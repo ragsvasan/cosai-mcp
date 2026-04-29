@@ -48,9 +48,10 @@ class MCPSession:
       5. allow ``tools/call`` and other probe methods
     """
 
-    def __init__(self, transport: Transport, config: ScanConfig) -> None:
+    def __init__(self, transport: Transport, config: ScanConfig, target_url: str = "") -> None:
         self._transport = transport
         self._config = config
+        self._target_url = target_url
         self._status = SessionStatus.INCOMPLETE
         self._protocol_version: str = ""
         self._server_info: dict[str, Any] = {}
@@ -126,6 +127,37 @@ class MCPSession:
 
         if self._protocol_version == "2024-11-05":
             self._transport_type = "LegacySSETransport"
+            if self._target_url:
+                # Server requires the 2024-11-05 HTTP+SSE transport — switch now.
+                # Close the streamable-HTTP connection used for the initial probe,
+                # create a LegacySSETransport, connect it, and re-run the handshake
+                # so all subsequent sends go over the correct transport.
+                from cosai_mcp.transport.legacy_sse import LegacySSETransport
+                await self._transport.close()
+                legacy = LegacySSETransport(self._target_url, self._config)
+                await legacy.connect()
+                self._transport = legacy
+                # Re-run initialize on the new transport; extract result fields again.
+                try:
+                    reinit_response = await self._transport.send(
+                        "initialize",
+                        {
+                            "protocolVersion": "2025-03-26",
+                            "clientInfo": CLIENT_INFO,
+                            "capabilities": CLIENT_CAPABILITIES,
+                        },
+                    )
+                except Exception as exc:
+                    raise SessionIncompleteError(
+                        f"initialize on LegacySSETransport failed: {exc}"
+                    ) from exc
+                if "error" in reinit_response:
+                    raise SessionIncompleteError(
+                        f"Server rejected initialize on LegacySSETransport: {reinit_response['error']}"
+                    )
+                reinit_result = reinit_response.get("result", {})
+                self._protocol_version = reinit_result.get("protocolVersion", self._protocol_version)
+                self._server_info = reinit_result.get("serverInfo", self._server_info)
 
         # Step 3: initialized notification — must have no 'id' (JSON-RPC 2.0 notification)
         try:
@@ -135,16 +167,19 @@ class MCPSession:
                 f"initialized notification failed: {exc}"
             ) from exc
 
-        # Step 4: tools/list — non-fatal; some servers omit it
+        # Step 4: tools/list — required by the locked lifecycle; failure → INCOMPLETE
         try:
             tools_response = await self._transport.send("tools/list", {})
-            if "error" in tools_response:
-                self._tool_manifest = []
-            else:
-                tools_result = tools_response.get("result", {})
-                self._tool_manifest = tools_result.get("tools", [])
-        except Exception:
-            self._tool_manifest = []
+        except Exception as exc:
+            raise SessionIncompleteError(
+                f"tools/list failed: {exc}"
+            ) from exc
+        if "error" in tools_response:
+            raise SessionIncompleteError(
+                f"Server returned error on tools/list: {tools_response['error']}"
+            )
+        tools_result = tools_response.get("result", {})
+        self._tool_manifest = tools_result.get("tools", [])
 
         # Step 5: session is now READY
         self._status = SessionStatus.READY

@@ -433,6 +433,15 @@ def _run_scan(
             # After the probe runs, detect whether the canary appeared in the response.
             is_adversarial_threat = adv.enabled and "-ADV-" in threat.id.upper()
             if is_adversarial_threat:
+                # Gate stateful adversarial probes — they modify server state and
+                # are only permitted when --allow-stateful-adversarial is set.
+                if threat.mode == "stateful" and not adv.allow_stateful:
+                    from cosai_mcp.adversarial.enforcer import UnsafeProbeError
+                    raise UnsafeProbeError(
+                        f"Adversarial threat {threat.id!r} has mode='stateful' but "
+                        "--allow-stateful-adversarial was not set. "
+                        "Stateful adversarial probes modify server state — pass the flag to enable."
+                    )
                 canary = adv.make_canary(threat.id)
                 variables["canary"] = canary.value
             else:

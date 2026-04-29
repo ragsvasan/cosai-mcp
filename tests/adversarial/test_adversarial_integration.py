@@ -63,14 +63,18 @@ class TestCanaryTemplateVariable:
 
 class TestAdversarialCatalogLoading:
 
-    def test_adversarial_catalog_loads_without_sig(self, tmp_path):
-        """Adversarial catalog files must load without Ed25519 .sig sidecars.
+    def test_adversarial_catalog_requires_sig(self, tmp_path):
+        """Adversarial catalog files must have Ed25519 .sig sidecars.
 
-        ARCH [2]: adversarial mode is already gated by dual opt-in; requiring
-        signatures blocks development workflows and the feature is non-functional
-        without them. Schema validation is still enforced.
+        FIX [Codex P1]: Previously _load_adversarial() skipped signature verification
+        (ARCH [2] rationalized dual opt-in as a substitute). The Codex review found
+        this allows tampered official files to load. The fix: _load_adversarial now
+        delegates to _load_official which enforces the sig check.
+
+        Test: file without .sig raises SignatureVerificationError.
         """
         from cosai_mcp.catalog.loader import CatalogLoader
+        from cosai_mcp.exceptions import SignatureVerificationError
 
         catalog_root = tmp_path
         adv_dir = catalog_root / "official" / "adversarial"
@@ -100,10 +104,10 @@ class TestAdversarialCatalogLoading:
             "references": []
         }))
 
-        # No .sig sidecar created — must succeed
+        # No .sig sidecar — must raise
         loader = CatalogLoader(catalog_root, allow_adversarial=True)
-        threats = loader.load_all()
-        assert any(t.id == "T03-TEST-001" for t in threats)
+        with pytest.raises(SignatureVerificationError):
+            loader.load_all()
 
     def test_adversarial_catalog_not_loaded_without_flag(self, tmp_path):
         """Adversarial catalog must be skipped when allow_adversarial=False (default)."""

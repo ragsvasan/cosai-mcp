@@ -202,7 +202,7 @@ def _probe_subprocess_entry(
 
         await transport.connect()
         try:
-            session = MCPSession(transport, config)
+            session = MCPSession(transport, config, target_url=target_url)
             try:
                 await session.start()
             except SessionIncompleteError as exc:

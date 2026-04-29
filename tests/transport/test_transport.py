@@ -715,13 +715,18 @@ class TestRegressionFindings:
         assert notif["jsonrpc"] == "2.0"
 
     # -----------------------------------------------------------------------
-    # Fix 3: tools/list failure is non-fatal
+    # Fix 3 / Codex P2: tools/list failure must raise SessionIncompleteError
     # -----------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    async def test_regression_tools_list_failure_nonfatal(self):
-        """FIX 3: tools/list failure must not prevent session from reaching READY.
-        Some MCP servers don't implement tools/list; scan should still proceed."""
+    async def test_regression_tools_list_exception_raises_incomplete(self):
+        """FIX [Codex P2]: tools/list exception must raise SessionIncompleteError, not silently
+        set an empty manifest and proceed. A server that cannot serve tools/list is
+        non-conformant; continuing produces partial evidence and false-clean results.
+
+        Change: bare except → re-raised as SessionIncompleteError.
+        Test: start() raises; session remains INCOMPLETE.
+        """
         config = _public_config()
         mock_transport = create_autospec(Transport, instance=True)
 
@@ -737,14 +742,17 @@ class TestRegressionFindings:
         mock_transport.close = AsyncMock()
 
         session = MCPSession(mock_transport, config)
-        info = await session.start()  # must not raise
-
-        assert session.status == SessionStatus.READY
-        assert info.tool_manifest == []
+        with pytest.raises(SessionIncompleteError, match="tools/list failed"):
+            await session.start()
+        assert session.status == SessionStatus.INCOMPLETE
 
     @pytest.mark.asyncio
-    async def test_regression_tools_list_error_response_nonfatal(self):
-        """FIX 3b: tools/list returning an error response is also non-fatal."""
+    async def test_regression_tools_list_error_response_raises_incomplete(self):
+        """FIX [Codex P2]: tools/list error response must also raise SessionIncompleteError.
+
+        Change: error-response branch set empty manifest → now raises.
+        Test: start() raises; session remains INCOMPLETE.
+        """
         config = _public_config()
         mock_transport = create_autospec(Transport, instance=True)
 
@@ -760,10 +768,9 @@ class TestRegressionFindings:
         mock_transport.close = AsyncMock()
 
         session = MCPSession(mock_transport, config)
-        info = await session.start()
-
-        assert session.status == SessionStatus.READY
-        assert info.tool_manifest == []
+        with pytest.raises(SessionIncompleteError, match="tools/list"):
+            await session.start()
+        assert session.status == SessionStatus.INCOMPLETE
 
     # -----------------------------------------------------------------------
     # Fix 4: unsupported protocol version warns but does not abort
@@ -813,6 +820,64 @@ class TestRegressionFindings:
         HOME allows spawned processes to read ~/.profile and exfiltrate config."""
         env = _safe_env()
         assert "HOME" not in env, "HOME must never be passed to child processes"
+
+    # -----------------------------------------------------------------------
+    # Codex P1: LegacySSE fallback actually switches transport
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_regression_legacy_sse_transport_actually_switched(self):
+        """FIX [Codex P1]: When the server negotiates 2024-11-05, MCPSession must
+        close the old transport, create LegacySSETransport, connect it, and re-run
+        the handshake. Previously only _transport_type label was set.
+
+        Change: target_url parameter added; if non-empty the real switch happens.
+        Test: old transport close() is called; LegacySSETransport is instantiated
+        with the target URL; the session ends READY on the new transport.
+        """
+        from unittest.mock import patch, MagicMock
+
+        config = _public_config()
+        old_transport = create_autospec(Transport, instance=True)
+        legacy_mock = create_autospec(Transport, instance=True)
+
+        async def old_send(method: str, params: dict) -> dict:
+            if method == "initialize":
+                return _make_init_success(protocol_version="2024-11-05")
+            return {}
+
+        async def legacy_send(method: str, params: dict) -> dict:
+            if method == "initialize":
+                return _make_init_success(protocol_version="2024-11-05")
+            if method == "tools/list":
+                return _make_tools_list_response()
+            return {}
+
+        old_transport.send = AsyncMock(side_effect=old_send)
+        old_transport.send_notification = AsyncMock()
+        old_transport.close = AsyncMock()
+
+        legacy_mock.send = AsyncMock(side_effect=legacy_send)
+        legacy_mock.send_notification = AsyncMock()
+        legacy_mock.close = AsyncMock()
+
+        captured_url: list[str] = []
+
+        def make_legacy(url: str, cfg: object) -> Transport:
+            captured_url.append(url)
+            return legacy_mock
+
+        with patch("cosai_mcp.transport.legacy_sse.LegacySSETransport", side_effect=make_legacy):
+            session = MCPSession(old_transport, config, target_url="http://localhost:9000")
+            info = await session.start()
+
+        # Old transport must have been closed
+        old_transport.close.assert_awaited_once()
+        # LegacySSETransport was created with the correct URL
+        assert captured_url == ["http://localhost:9000"]
+        # Session is READY on the new transport
+        assert session.status == SessionStatus.READY
+        assert info.transport_type == "LegacySSETransport"
 
 
 # ===========================================================================

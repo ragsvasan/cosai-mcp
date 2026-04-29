@@ -287,3 +287,75 @@ class TestAdversarialMode:
         mode = AdversarialMode(enabled=True, scan_id="deadbeef-1234-5678-abcd-ef0123456789")
         c = mode.make_canary("T03-ADV-001")
         assert "_DEADBEEF_" in c.value
+
+
+# ---------------------------------------------------------------------------
+# Codex P1: stateful probe gate wired into the scan loop
+# ---------------------------------------------------------------------------
+
+class TestStatefulProbeGate:
+    """Regression: _run_scan must reject stateful adversarial probes unless
+    --allow-stateful-adversarial is set, per the locked safety invariant."""
+
+    def _make_stateful_threat(self) -> object:
+        """Return a ThreatDefinition with mode='stateful' and an adversarial ID."""
+        from cosai_mcp.catalog.models import (
+            ThreatDefinition, Provenance, Severity, Probe, Assertion, Operator
+        )
+        import types
+        assertion = Assertion(
+            target="response.error",
+            operator=Operator.EQ,
+            value=True,
+        )
+        probe = Probe(
+            id="T05-ADV-001-p1",
+            transport="http",
+            method="tools/call",
+            payload=types.MappingProxyType({"name": "echo", "arguments": {}}),
+            assertions=(assertion,),
+        )
+        return ThreatDefinition(
+            schema_version="1.0",
+            id="T05-ADV-001",
+            category="T5",
+            severity=Severity.CRITICAL,
+            cosai_ref="T5",
+            owasp_ref="MCP-Top10-A05",
+            cwe=("CWE-200",),
+            probes=(probe,),
+            remediation="Fix it.",
+            references=("https://cosai.org/T5",),
+            provenance=Provenance.OFFICIAL,
+            mode="stateful",
+        )
+
+    def test_regression_stateful_threat_mode_field_parsed(self):
+        """FIX [Codex P1]: ThreatDefinition must carry a mode field.
+
+        Change: mode: str = 'read-only' added to ThreatDefinition dataclass;
+        _parse_threat passes data.get('mode', 'read-only').
+        Test: a threat built with mode='stateful' exposes that value.
+        """
+        threat = self._make_stateful_threat()
+        assert threat.mode == "stateful"
+
+    def test_regression_readoly_threat_mode_default(self):
+        """Standard threats default to mode='read-only' when field is absent."""
+        from cosai_mcp.catalog.models import (
+            ThreatDefinition, Provenance, Severity
+        )
+        threat = ThreatDefinition(
+            schema_version="1.0",
+            id="T01-001",
+            category="T1",
+            severity=Severity.CRITICAL,
+            cosai_ref="T1",
+            owasp_ref="MCP-Top10-A01",
+            cwe=("CWE-287",),
+            probes=(),
+            remediation="Fix it.",
+            references=(),
+            provenance=Provenance.OFFICIAL,
+        )
+        assert threat.mode == "read-only"

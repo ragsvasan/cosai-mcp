@@ -64,7 +64,7 @@ cosai scan http://localhost:8000 --report-html report.html
 cosai scan http://localhost:8000 --report-sarif findings.sarif
 
 # Adversarial mode (canary token exfiltration detection — own targets only)
-cosai scan http://localhost:8000 --adversarial --i-own-this-target
+cosai scan http://localhost:8000 --adversarial --i-own-this-target=localhost
 
 # Use a built-in server profile
 cosai scan http://localhost:8000 --profile fastmcp

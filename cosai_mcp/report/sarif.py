@@ -20,8 +20,8 @@ _TOOL_NAME = "cosai-mcp"
 _TOOL_VERSION = "0.1.0"
 _MAX_MESSAGE_CHARS = 4096
 
-# Only catalog threat-definition IDs are valid ruleIds (T01-001 … T12-999).
-_RULE_ID_RE = re.compile(r"^T\d{2}-\d{3}$")
+# Valid ruleIds: standard (T01-001 … T12-999) and adversarial (T03-ADV-001 etc.)
+_RULE_ID_RE = re.compile(r"^T\d{2}(-[A-Z]{2,5})?-\d{3}$")
 
 
 def _strip_control_chars(s: str) -> str:

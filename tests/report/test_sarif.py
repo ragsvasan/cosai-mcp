@@ -234,6 +234,33 @@ class TestSarifInjectionSafety:
                 rule_description="x",
             )
 
+    def test_regression_adversarial_rule_id_accepted(self):
+        """FIX [Codex P2]: Adversarial threat IDs (T03-ADV-001) must be valid SARIF ruleIds.
+
+        Previously _RULE_ID_RE = r'^T\d{2}-\d{3}$' rejected any ID with a text
+        segment, so --adversarial --report-sarif raised ValueError for every result.
+        The regex was widened to r'^T\d{2}(-[A-Z]{2,5})?-\d{3}$'.
+        Test: adversarial IDs pass add_result without raising; standard IDs still pass.
+        """
+        b = SarifBuilder(_context())
+        for adv_id in ("T03-ADV-001", "T05-ADV-001", "T07-ADV-001", "T11-ADV-001"):
+            r = _failed_result(probe_id=adv_id, threat_id="T3")
+            b.add_result(
+                r,
+                severity=Severity.HIGH,
+                rule_id=adv_id,
+                rule_name="Adversarial probe",
+                rule_description="Adversarial threat test",
+            )
+        # Standard IDs still work
+        r_std = _failed_result(probe_id="T01-001", threat_id="T1")
+        b.add_result(r_std, severity=Severity.HIGH, rule_id="T01-001",
+                     rule_name="Auth", rule_description="Auth test")
+        doc = b.build()
+        rule_ids = {r["ruleId"] for r in doc["runs"][0]["results"]}
+        assert "T03-ADV-001" in rule_ids
+        assert "T01-001" in rule_ids
+
 
 # ---------------------------------------------------------------------------
 # Validation

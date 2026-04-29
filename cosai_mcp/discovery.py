@@ -227,7 +227,7 @@ async def _discover_tools_async(
     transport = StreamableHTTPTransport(target_url, config)
     try:
         await transport.connect()
-        session = MCPSession(transport, config)
+        session = MCPSession(transport, config, target_url=target_url)
         info = await session.start()
         tool_list = info.tool_manifest or []
 

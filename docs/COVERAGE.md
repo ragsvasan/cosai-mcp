@@ -1,9 +1,9 @@
 # cosai-mcp — Coverage Status
 
-**Date:** 2026-04-28
-**Build:** 801/801 tests passing
-**Catalog:** 20 signed threat definitions + 4 adversarial (Ed25519)
-**Status:** All phases P0–P13 complete.
+**Date:** 2026-04-29
+**Build:** 808/808 tests passing
+**Catalog:** 20 signed threat definitions + 4 adversarial (Ed25519, signatures now enforced)
+**Status:** All phases P0–P13 complete. Codex P1/P2 findings resolved.
 
 ---
 
@@ -76,7 +76,7 @@ Requires `--adversarial --i-own-this-target`. Blocked against RFC1918 and loopba
 
 ## Test Suite
 
-**801 tests passing** across:
+**808 tests passing** across:
 
 | Module | What |
 |--------|------|
@@ -107,3 +107,19 @@ When `cosai scan` runs, each category in the SARIF output includes a `coverage` 
 ```
 
 Categories with `"coverage": "partial"` include a `partial_reason` field explaining what the middleware would additionally detect.
+
+---
+
+## Security Fixes (2026-04-29 — Codex P1/P2 Review)
+
+Five blocking findings from the Codex review were resolved:
+
+| Finding | Severity | Fix |
+|---------|----------|-----|
+| Unsigned adversarial catalog files loaded as official | P1 | `_load_adversarial` now delegates to `_load_official` (same Ed25519 check). All 4 adversarial `.sig` sidecars generated and committed. |
+| Stateful adversarial probes not gated in scan loop | P1 | `ThreatDefinition.mode` field added; `_run_scan` checks `mode == "stateful"` and raises `UnsafeProbeError` unless `--allow-stateful-adversarial` is set. |
+| 2024-11-05 fallback label-only (no actual transport switch) | P1 | `MCPSession` now accepts `target_url`; on `2024-11-05` negotiation it closes the old transport, instantiates `LegacySSETransport`, and re-runs `initialize` + `initialized`. |
+| Failed `tools/list` became a ready session (fail-open) | P2 | `tools/list` error or exception now raises `SessionIncompleteError` — session stays INCOMPLETE, scan reports `scan-incomplete`, not `clean`. |
+| Adversarial SARIF output crashed on `T##-ADV-###` rule IDs | P2 | `_RULE_ID_RE` widened from `^T\d{2}-\d{3}$` to `^T\d{2}(-[A-Z]{2,5})?-\d{3}$`. |
+
+Each fix has an independent regression test. README quickstart `--i-own-this-target` example corrected to include the required hostname value.

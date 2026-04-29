@@ -632,3 +632,79 @@ def test_regression_template_single_brace_allowed() -> None:
     payload = {"name": "{{tool_name}}"}
     result = substitute_probe_payload(payload, {"tool_name": '{"key": "value"}'})
     assert result["name"] == '{"key": "value"}'
+
+
+# ---------------------------------------------------------------------------
+# Codex P1: adversarial catalog files require Ed25519 signatures
+# ---------------------------------------------------------------------------
+
+def test_regression_adversarial_file_requires_signature(
+    tmp_path: Path,
+    test_private_key: Ed25519PrivateKey,
+    test_pubkey_b64: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FIX [Codex P1]: Adversarial catalog files must require Ed25519 .sig sidecars.
+
+    Previously _load_adversarial() skipped verification entirely, allowing tampered
+    files to load with Provenance.OFFICIAL. The fix delegates to _load_official().
+
+    Change: _load_adversarial now calls _load_official (same code path + sig check).
+    Test: an adversarial file without a .sig sidecar raises SignatureVerificationError;
+    a properly signed one loads cleanly.
+    """
+    monkeypatch.setenv("COSAI_PUBKEY", test_pubkey_b64)
+
+    adv_threat = {
+        **_BASE_THREAT,
+        "id": "T03-ADV-001",
+        "adversarial": True,
+        "mode": "read-only",
+        "description": "Adversarial prompt injection probe",
+        "canary_placement": "arguments",
+    }
+
+    # Write adversarial JSON with no .sig sidecar
+    adv_dir = tmp_path / "official" / "adversarial"
+    adv_dir.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps(adv_threat, indent=2).encode()
+    json_path = adv_dir / "T03-ADV-001.json"
+    json_path.write_bytes(raw)
+
+    loader = CatalogLoader(tmp_path, allow_adversarial=True)
+    with pytest.raises(SignatureVerificationError):
+        loader.load_all()
+
+
+def test_regression_adversarial_file_signed_loads_cleanly(
+    tmp_path: Path,
+    test_private_key: Ed25519PrivateKey,
+    test_pubkey_b64: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Properly signed adversarial file loads with Provenance.OFFICIAL and mode parsed."""
+    monkeypatch.setenv("COSAI_PUBKEY", test_pubkey_b64)
+
+    adv_threat = {
+        **_BASE_THREAT,
+        "id": "T03-ADV-001",
+        "adversarial": True,
+        "mode": "read-only",
+        "description": "Adversarial prompt injection probe",
+        "canary_placement": "arguments",
+    }
+
+    adv_dir = tmp_path / "official" / "adversarial"
+    adv_dir.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps(adv_threat, indent=2).encode()
+    sig = _sign(test_private_key, raw)
+    json_path = adv_dir / "T03-ADV-001.json"
+    json_path.write_bytes(raw)
+    sig_path = json_path.with_suffix(".json.sig")
+    sig_path.write_bytes(sig + b"\n")
+
+    loader = CatalogLoader(tmp_path, allow_adversarial=True)
+    threats = loader.load_all()
+    adv = next(t for t in threats if t.id == "T03-ADV-001")
+    assert adv.provenance.value == "official"
+    assert adv.mode == "read-only"

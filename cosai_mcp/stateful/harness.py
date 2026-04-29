@@ -287,7 +287,7 @@ class StatefulHarness:
             )
 
         transport = StreamableHTTPTransport(target_url, self._config)
-        session = MCPSession(transport, self._config)
+        session = MCPSession(transport, self._config, target_url=target_url)
 
         # The finally block always closes transport+session, even if
         # connect() or start() raises — preventing connection leaks.

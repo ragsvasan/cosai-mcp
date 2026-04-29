@@ -147,6 +147,7 @@ def _parse_threat(
         remediation=data["remediation"],
         references=tuple(data["references"]),
         provenance=provenance,
+        mode=data.get("mode", "read-only"),
     )
     _assert_no_mutable_containers(threat, threat.id)
     return threat
@@ -303,20 +304,14 @@ class CatalogLoader:
         return _parse_threat(data, Provenance.OFFICIAL, is_custom=False, allow_regex_in_custom=False)
 
     def _load_adversarial(self, json_path: Path) -> ThreatDefinition:
-        """Load an adversarial catalog file.
+        """Load an adversarial catalog file with full Ed25519 verification.
 
-        Adversarial files are official (Ed25519-signed in production releases)
-        but during development may lack .sig sidecars. Signature verification is
-        skipped here because adversarial mode already requires explicit dual opt-in
-        (--adversarial + --i-own-this-target=<hostname>) and the enforcer's external
-        endpoint check provides the real security boundary.
-
-        Schema validation is always enforced.
+        Adversarial files are official files stored under official/adversarial/.
+        They require signed .sig sidecars just like any other official file —
+        dual opt-in (--adversarial + --i-own-this-target) is not a substitute
+        for catalog integrity verification.
         """
-        raw_bytes = json_path.read_bytes()
-        data = json.loads(raw_bytes)
-        validate_threat_json(data)
-        return _parse_threat(data, Provenance.OFFICIAL, is_custom=False, allow_regex_in_custom=False)
+        return self._load_official(json_path)
 
     def _load_custom(self, json_path: Path) -> ThreatDefinition:
         """Load a custom catalog file (no signature required, marked UNTRUSTED)."""
