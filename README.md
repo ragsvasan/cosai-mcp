@@ -1,8 +1,12 @@
 # cosai-mcp
 
+[![PyPI](https://img.shields.io/pypi/v/cosai-mcp)](https://pypi.org/project/cosai-mcp/)
+[![CI](https://github.com/ragsvasan/cosai-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ragsvasan/cosai-mcp/actions)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 Open-source MCP security framework covering all 12 CoSAI threat categories (T1–T12).
 
-**Status:** Alpha — 811 tests passing, all T1–T12 categories implemented, Apache 2.0.
+**Status:** Alpha — 822 tests passing, all T1–T12 categories implemented, Apache 2.0.
 
 ```bash
 # Try without installing

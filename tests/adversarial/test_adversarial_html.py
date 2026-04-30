@@ -161,3 +161,98 @@ class TestAdversarialHtmlSafety:
         from cosai_mcp.report.adversarial_html import AdversarialHtmlReport
         result = AdversarialHtmlReport._redact_canary("probe payload text", None)
         assert result == "probe payload text"
+
+
+# ---------------------------------------------------------------------------
+# Adversarial report signing
+# ---------------------------------------------------------------------------
+
+class TestAdversarialReportSigning:
+    """Verify that _write_adversarial_html_report produces a .sig.json sidecar."""
+
+    def test_signing_produces_sig_sidecar(self, tmp_path):
+        """Writing an adversarial HTML report must produce a .sig.json sidecar
+        when ReportSigner is available (keyring present).
+
+        Integration path: _write_adversarial_html_report → ReportSigner.sign →
+        sig_path.write_text. The sig must be valid JSON with the required fields.
+        """
+        import json
+        from pathlib import Path
+        from unittest.mock import patch, MagicMock
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        from cosai_mcp.report.sign import ReportSigner, ReportSignature
+
+        # Use a fresh ephemeral key — no keyring I/O in tests
+        private_key = Ed25519PrivateKey.generate()
+        signer = ReportSigner(private_key=private_key)
+
+        html_path = tmp_path / "adversarial-report.html"
+        sig_path = tmp_path / "adversarial-report.sig.json"
+
+        # Build a minimal ScanResult-like object
+        from cosai_mcp.api import ScanResult
+        from cosai_mcp.catalog.models import ThreatDefinition, Severity, Provenance
+
+        result = ScanResult(
+            target_url="http://target.example.com",
+            threats=(),
+            probe_results=(),
+            scenario_results=(),
+            scan_timestamp="2026-04-29T00:00:00Z",
+            catalog_hash="a" * 64,
+            exit_code=0,
+        )
+
+        # ReportSigner is a local import inside _write_adversarial_html_report;
+        # patch at the source module so the local import picks up the mock.
+        with patch("cosai_mcp.report.sign.ReportSigner", return_value=signer):
+            from cosai_mcp.cli import _write_adversarial_html_report
+            _write_adversarial_html_report(
+                result=result,
+                path=html_path,
+                target_url="http://target.example.com",
+                ownership_declaration="I own target.example.com",
+            )
+
+        assert html_path.exists(), "HTML report must be written"
+        assert sig_path.exists(), "Signature sidecar must be written alongside HTML"
+
+        sig_dict = json.loads(sig_path.read_text())
+        for field in ("public_key_fingerprint", "public_key_b64", "scan_timestamp",
+                      "catalog_hash", "report_hash", "signature_b64"):
+            assert field in sig_dict, f"sig.json must contain field {field!r}"
+
+    def test_signing_failure_does_not_abort_report(self, tmp_path):
+        """If signing fails (e.g. keyring unavailable), the HTML report must still
+        be written successfully — signing is best-effort."""
+        from unittest.mock import patch
+        from cosai_mcp.api import ScanResult
+
+        result = ScanResult(
+            target_url="http://target.example.com",
+            threats=(),
+            probe_results=(),
+            scenario_results=(),
+            scan_timestamp="2026-04-29T00:00:00Z",
+            catalog_hash="a" * 64,
+            exit_code=0,
+        )
+
+        html_path = tmp_path / "adversarial-report.html"
+
+        # Make ReportSigner construction raise (e.g. keyring unavailable);
+        # patch at source module so the local import inside the function sees the mock.
+        with patch("cosai_mcp.report.sign.ReportSigner", side_effect=RuntimeError("keyring unavailable")):
+            from cosai_mcp.cli import _write_adversarial_html_report
+            _write_adversarial_html_report(
+                result=result,
+                path=html_path,
+                target_url="http://target.example.com",
+                ownership_declaration="I own target.example.com",
+            )
+
+        assert html_path.exists(), "HTML must be written even when signing fails"
+        sig_path = tmp_path / "adversarial-report.sig.json"
+        assert not sig_path.exists(), "No .sig.json should exist when signing failed"

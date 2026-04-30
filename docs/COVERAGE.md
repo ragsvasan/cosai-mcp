@@ -1,7 +1,7 @@
 # cosai-mcp — Coverage Status
 
 **Date:** 2026-04-29
-**Build:** 808/808 tests passing
+**Build:** 822/822 tests passing
 **Catalog:** 20 signed threat definitions + 4 adversarial (Ed25519, signatures now enforced)
 **Status:** All phases P0–P13 complete. Codex P1/P2 findings resolved.
 

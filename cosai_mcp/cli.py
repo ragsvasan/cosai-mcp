@@ -482,6 +482,8 @@ def _write_sarif_report(result: ScanResult, path: Path) -> None:
             rule_id=threat.id,
             rule_name=getattr(threat, "name", threat.id),
             rule_description=getattr(threat, "remediation", "")[:512],
+            owasp_ref=threat.owasp_ref,
+            cwe=threat.cwe,
         )
 
     sarif_json = builder.build_json()
@@ -674,7 +676,22 @@ def _write_adversarial_html_report(
             error=probe_result.error,
         ))
 
-    path.write_text(report.build(), encoding="utf-8")
+    html_content = report.build()
+    path.write_text(html_content, encoding="utf-8")
+
+    # Sign the adversarial report (best-effort; same mechanism as SARIF signing)
+    try:
+        from cosai_mcp.report.sign import ReportSigner
+        signer = ReportSigner()
+        sig = signer.sign(
+            sarif_json=html_content,   # ReportSigner hashes any report content string
+            scan_timestamp=result.scan_timestamp,
+            catalog_hash=result.catalog_hash,
+        )
+        sig_path = path.with_suffix(".sig.json")
+        sig_path.write_text(json.dumps(sig.to_dict(), indent=2), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass  # signing unavailable (no keyring / no key) — continue without signature
 
 
 # ---------------------------------------------------------------------------

@@ -23,6 +23,17 @@ _MAX_MESSAGE_CHARS = 4096
 # Valid ruleIds: standard (T01-001 … T12-999) and adversarial (T03-ADV-001 etc.)
 _RULE_ID_RE = re.compile(r"^T\d{2}(-[A-Z]{2,5})?-\d{3}$")
 
+# MITRE ATLAS technique IDs by CoSAI threat category (scanner-controlled, from THREAT_MAPPING.md)
+# All values are static constants — never derived from response content.
+_ATLAS_BY_CATEGORY: dict[str, list[str]] = {
+    "T4":  ["AML.T0051"],          # LLM Prompt Injection
+    "T5":  ["AML.T0024"],          # Exfiltration via ML Inference API
+    "T6":  ["AML.T0048"],          # Erode ML Model Integrity
+    "T8":  ["AML.T0013", "AML.T0024"],  # Discover ML Model Ontology + Exfiltration
+    "T9":  ["AML.T0054"],          # LLM Jailbreak
+    "T11": ["AML.T0010"],          # Create Proxy ML Model (supply chain)
+}
+
 
 def _strip_control_chars(s: str) -> str:
     """Remove C0/C1/Cf control chars and Unicode line/paragraph separators.
@@ -98,12 +109,18 @@ class SarifBuilder:
         rule_id: str,
         rule_name: str,
         rule_description: str,
+        owasp_ref: str = "",
+        cwe: tuple = (),
     ) -> None:
         """Register a probe result.
 
         Only FAILED probes produce SARIF findings. rule_id must be a valid
         catalog threat-definition ID (e.g. "T01-001"); caller is responsible
         for passing the catalog value, not response-derived content.
+
+        owasp_ref and cwe must come from the signed catalog — never from
+        response content. They are placed in rule properties, which are
+        scanner-controlled fields.
         """
         if not _RULE_ID_RE.match(rule_id):
             raise ValueError(
@@ -112,12 +129,33 @@ class SarifBuilder:
 
         if rule_id not in self._rules:
             # Sanitize rule metadata before storing — caller may not be catalog-loader.
-            self._rules[rule_id] = {
+            rule_dict: dict[str, Any] = {
                 "id": rule_id,
                 "name": _sanitize_message(rule_name)[:128],
                 "shortDescription": {"text": _sanitize_message(rule_description)[:512]},
                 "defaultConfiguration": {"level": _severity_to_level(severity)},
             }
+
+            # Framework metadata — all scanner-controlled (from signed catalog).
+            # Never populated from response content.
+            props: dict[str, Any] = {}
+            if cwe:
+                props["cwe"] = list(cwe)
+            if owasp_ref:
+                props["owasp_ref"] = owasp_ref
+            # ATLAS techniques derived from category prefix of rule_id (e.g. T04 → T4)
+            m = re.match(r"^T(\d+)", rule_id)
+            if m:
+                atlas = _ATLAS_BY_CATEGORY.get(f"T{int(m.group(1))}")
+                if atlas:
+                    props["atlas_techniques"] = atlas
+            if props:
+                rule_dict["properties"] = props
+            # helpUri — standard SARIF field, points to OWASP MCP Top 10 project
+            if owasp_ref:
+                rule_dict["helpUri"] = "https://github.com/OWASP/www-project-mcp-top-10"
+
+            self._rules[rule_id] = rule_dict
 
         if result.passed:
             return

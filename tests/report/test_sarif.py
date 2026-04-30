@@ -392,3 +392,141 @@ class TestSarifRegressions:
         # Literal < and > must appear, not HTML entities
         assert "&lt;" not in msg
         assert "&gt;" not in msg
+
+
+# ---------------------------------------------------------------------------
+# Framework metadata — CWE, OWASP ref, ATLAS techniques
+# ---------------------------------------------------------------------------
+
+class TestSarifFrameworkMetadata:
+
+    def _add_with_metadata(
+        self,
+        builder: SarifBuilder,
+        result,
+        rule_id: str = "T04-001",
+        owasp_ref: str = "MCP-Top10-A04",
+        cwe: tuple = ("CWE-74",),
+    ) -> None:
+        builder.add_result(
+            result,
+            severity=Severity.HIGH,
+            rule_id=rule_id,
+            rule_name="Data/Control Boundary",
+            rule_description="Tool poisoning — control/data boundary violation.",
+            owasp_ref=owasp_ref,
+            cwe=cwe,
+        )
+
+    def test_cwe_appears_in_rule_properties(self):
+        """CWE tags from signed catalog must appear in rule properties."""
+        b = SarifBuilder(_context())
+        self._add_with_metadata(b, _failed_result(probe_id="T04-001", threat_id="T4"))
+        doc = b.build()
+        rule = doc["runs"][0]["tool"]["driver"]["rules"][0]
+        assert "properties" in rule
+        assert rule["properties"]["cwe"] == ["CWE-74"]
+
+    def test_owasp_ref_appears_in_rule_properties(self):
+        """OWASP MCP Top 10 ref from signed catalog must appear in rule properties."""
+        b = SarifBuilder(_context())
+        self._add_with_metadata(b, _failed_result(probe_id="T04-001", threat_id="T4"))
+        doc = b.build()
+        rule = doc["runs"][0]["tool"]["driver"]["rules"][0]
+        assert rule["properties"]["owasp_ref"] == "MCP-Top10-A04"
+
+    def test_helpuri_set_when_owasp_ref_present(self):
+        """helpUri must be set on the rule when owasp_ref is provided."""
+        b = SarifBuilder(_context())
+        self._add_with_metadata(b, _failed_result(probe_id="T04-001", threat_id="T4"))
+        doc = b.build()
+        rule = doc["runs"][0]["tool"]["driver"]["rules"][0]
+        assert "helpUri" in rule
+        assert "owasp" in rule["helpUri"].lower()
+
+    def test_atlas_techniques_wired_for_t4(self):
+        """T4 rules must carry AML.T0051 (LLM Prompt Injection) in ATLAS properties."""
+        b = SarifBuilder(_context())
+        self._add_with_metadata(b, _failed_result(probe_id="T04-001", threat_id="T4"),
+                                 rule_id="T04-001")
+        doc = b.build()
+        rule = doc["runs"][0]["tool"]["driver"]["rules"][0]
+        assert "AML.T0051" in rule["properties"]["atlas_techniques"]
+
+    def test_atlas_techniques_wired_for_t8(self):
+        """T8 rules must carry both AML.T0013 and AML.T0024."""
+        b = SarifBuilder(_context())
+        b.add_result(
+            _failed_result(probe_id="T08-001", threat_id="T8"),
+            severity=Severity.HIGH,
+            rule_id="T08-001",
+            rule_name="Network Binding",
+            rule_description="SSRF / shadow server detection.",
+            owasp_ref="MCP-Top10-A08",
+            cwe=("CWE-918",),
+        )
+        doc = b.build()
+        rule = doc["runs"][0]["tool"]["driver"]["rules"][0]
+        atlas = rule["properties"]["atlas_techniques"]
+        assert "AML.T0013" in atlas
+        assert "AML.T0024" in atlas
+
+    def test_no_atlas_for_categories_without_mapping(self):
+        """T1 has no ATLAS mapping — properties must not contain atlas_techniques."""
+        b = SarifBuilder(_context())
+        b.add_result(
+            _failed_result(probe_id="T01-001", threat_id="T1"),
+            severity=Severity.CRITICAL,
+            rule_id="T01-001",
+            rule_name="Improper Authentication",
+            rule_description="Missing auth.",
+            owasp_ref="MCP-Top10-A01",
+            cwe=("CWE-287",),
+        )
+        doc = b.build()
+        rule = doc["runs"][0]["tool"]["driver"]["rules"][0]
+        assert "atlas_techniques" not in rule.get("properties", {})
+
+    def test_framework_metadata_not_populated_from_response(self):
+        """CWE and OWASP ref in rule properties must be scanner-provided, not derived
+        from response body — the attacker sentinel must not appear in properties."""
+        sentinel = "ATTACKER_CWE_INJECT"
+        b = SarifBuilder(_context())
+        b.add_result(
+            _failed_result(probe_id="T01-001", threat_id="T1", response_body=sentinel),
+            severity=Severity.HIGH,
+            rule_id="T01-001",
+            rule_name="Auth",
+            rule_description="Auth.",
+            owasp_ref="MCP-Top10-A01",
+            cwe=("CWE-287",),
+        )
+        doc = b.build()
+        rule = doc["runs"][0]["tool"]["driver"]["rules"][0]
+        props_str = json.dumps(rule.get("properties", {}))
+        assert sentinel not in props_str
+
+    def test_no_properties_when_no_metadata(self):
+        """Rules with no owasp_ref and no cwe must not add an empty properties dict."""
+        b = SarifBuilder(_context())
+        _add(b, _failed_result())  # _add passes no owasp_ref or cwe
+        doc = b.build()
+        rule = doc["runs"][0]["tool"]["driver"]["rules"][0]
+        # T01-001 has no ATLAS mapping and _add() passes no owasp_ref/cwe
+        assert "properties" not in rule
+
+    def test_full_pipeline_t4_metadata_survives_build_json(self):
+        """Framework metadata must survive from add_result through build_json serialisation.
+
+        End-to-end: catalog load (simulated) → add_result → build_json → JSON parse.
+        Verifies the metadata is not dropped or corrupted at serialisation time.
+        """
+        b = SarifBuilder(_context())
+        self._add_with_metadata(b, _failed_result(probe_id="T04-001", threat_id="T4"),
+                                 rule_id="T04-001")
+        sarif_json = b.build_json()
+        doc = json.loads(sarif_json)
+        rule = doc["runs"][0]["tool"]["driver"]["rules"][0]
+        assert rule["properties"]["cwe"] == ["CWE-74"]
+        assert rule["properties"]["owasp_ref"] == "MCP-Top10-A04"
+        assert "AML.T0051" in rule["properties"]["atlas_techniques"]

@@ -142,7 +142,7 @@ Note: ASI04 (memory poisoning via multi-agent feedback loops) is partially out o
 | AML.TA0009 — Impact | AML.T0048 Erode ML Model Integrity | T6: tool shadowing, manifest drift detection |
 | AML.TA0010 — Exfiltration | AML.T0024 Exfiltration via ML Inference API | T5 middleware + T8: data protection + network isolation |
 
-SARIF output includes `ruleId` tags that map to ATLAS technique IDs where applicable, enabling ingestion into ATLAS Navigator overlays.
+SARIF output carries ATLAS technique IDs in `rule.properties.atlas_techniques` (e.g. `["AML.T0051"]` for T4, `["AML.T0013","AML.T0024"]` for T8), enabling ingestion into ATLAS Navigator overlays. CWE tags and OWASP MCP Top 10 references are also present in `rule.properties`.
 
 ---
 

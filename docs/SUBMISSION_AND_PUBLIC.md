@@ -92,23 +92,30 @@ cosai-mcp maps directly to their A01–A10 categories.
 
 ### What to prepare before submitting
 
-**A clean README.md with:**
+**A clean README.md with:** ✅ Done
 - 30-second install + scan (zero-config path)
 - Coverage matrix (T1–T12, three engines, what each covers)
 - SARIF output screenshot / GitHub security tab screenshot
 - "Compare to" section positioning against static scanners (they're complements, not competitors)
-- Apache 2.0 badge, CI badge, PyPI badge (add once published)
+- Apache 2.0 badge, CI badge, PyPI badge ✅ Added 2026-04-29
 
-**A one-page position paper** (can be a GitHub wiki page or `docs/POSITION.md`):
+**A one-page position paper:** ✅ `docs/POSITION.md` (written 2026-04-29)
 - The gap: "Every existing tool is either static analysis, a proxy, or a commercial service.
   None provide runtime black-box conformance testing against the full CoSAI taxonomy."
 - The design: three-engine architecture (prober, stateful harness, middleware)
 - The contract: SARIF output, fail-closed exit codes, CI-native
+- Proposal: WS4 as catalog signing authority + cosai-mcp as reference CI gate
+
+**SARIF framework metadata:** ✅ Wired 2026-04-29
+- `rule.properties.cwe` — CWE tags from signed catalog
+- `rule.properties.owasp_ref` — OWASP MCP Top 10 reference
+- `rule.properties.atlas_techniques` — MITRE ATLAS technique IDs
+- `rule.helpUri` — points to OWASP MCP Top 10 project
 
 **A live demo target** (for the working group presentation):
 - A minimal FastMCP server with known vulnerabilities
 - A recorded cosai-mcp scan showing findings + remediation tab
-- The adversarial probe demo once P13 is complete
+- The adversarial probe demo ✅ P13 complete
 
 ### Positioning to the working group
 
