@@ -275,6 +275,14 @@ def _synthesize_probe(
     if probe.method != "tools/call":
         return None
 
+    # Guard: T2 (confused-deputy / missing access control) probes test security
+    # via adversarial parameter NAMES (e.g. session_id, role, privilege_level).
+    # Synthesis replaces those names with the tool's real parameters, turning a
+    # deliberate confused-deputy probe into a benign functional call that will
+    # succeed — producing a false positive.  Disable synthesis for T2 entirely.
+    if threat.category.upper() == "T2":
+        return None
+
     from cosai_mcp.synthesis import synthesize_probe_payload, threat_pattern_from_category
 
     try:

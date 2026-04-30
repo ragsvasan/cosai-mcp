@@ -267,6 +267,42 @@ class TestAssertions:
         assert result.passed is False
         assert result.message  # non-empty
 
+    def test_error_code_in_mcp_content_layer_passes(self):
+        """error_code_in passes when server uses MCP isError:true instead of JSON-RPC error.
+
+        Regression: when a server returns result.isError:true (MCP content-layer
+        error) the JSON-RPC error.code is absent.  The assertion used to fail with
+        'got None'; now it passes because the server IS correctly indicating an error.
+        """
+        mcp_error_response: dict[str, Any] = {
+            "jsonrpc": "2.0",
+            "id": "1",
+            "result": {"content": [{"type": "text", "text": "Unknown tool: foo"}], "isError": True},
+            "_body": '{"content": [{"type": "text", "text": "Unknown tool: foo"}], "isError": true}',
+        }
+        assertion = _make_assertion(
+            "response.error_code", Operator.ERROR_CODE_IN, (-32601, -32602, -32603)
+        )
+        result = evaluate_assertion(assertion, mcp_error_response)
+        assert result.passed is True, (
+            "error_code_in should pass when server correctly rejects via MCP "
+            "content-layer error (isError:true) even though no JSON-RPC error.code exists"
+        )
+
+    def test_error_code_in_none_without_is_error_fails(self):
+        """error_code_in fails when error_code is None and no MCP-layer error either."""
+        ok_with_no_code: dict[str, Any] = {
+            "jsonrpc": "2.0",
+            "id": "1",
+            "result": {"content": [{"type": "text", "text": "success"}], "isError": False},
+            "_body": "",
+        }
+        assertion = _make_assertion(
+            "response.error_code", Operator.ERROR_CODE_IN, (-32601, -32602)
+        )
+        result = evaluate_assertion(assertion, ok_with_no_code)
+        assert result.passed is False, "error_code_in must fail when no error is present at all"
+
 
 # ===========================================================================
 # ProbeContext

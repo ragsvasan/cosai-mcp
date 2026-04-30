@@ -40,3 +40,6 @@ class ScanConfig:
     When set, overrides the default ``"Bearer {auth_token}"`` construction in
     the transport.  Set by profile's ``auth_header_format`` + ``--auth-token``.
     """
+    probe_delay_seconds: float = 0.0
+    """Seconds to sleep between probes.  Use to avoid triggering server-side
+    rate limiters when scanning servers that enforce per-session call budgets."""

@@ -145,6 +145,26 @@ Custom catalogs require `--allow-custom-catalog` (off by default). `matches_rege
 
 ---
 
+## Adaptive Probe Synthesis
+
+When a probe returns INCONCLUSIVE (schema mismatch — the server rejected the payload because it did not match the tool's expected schema), the scanner synthesizes a schema-aware payload using the tool manifest from `tools/list` and retries once. This eliminates false negatives caused by static catalog payloads that predate the target server's schema.
+
+**T2 synthesis suppression (non-negotiable):**
+
+Synthesis is disabled for T2 (confused-deputy / missing access control) probes. T2 probes test security by using adversarial parameter *names* — e.g. `session_id`, `role`, `privilege_level` — that the tool schema does not expect. When the server rejects these, that INCONCLUSIVE result is the expected outcome: the schema check fires before the authorization check is reached.
+
+If synthesis were applied to a T2 probe, it would replace the adversarial parameter names with the tool's real parameters, turning the security probe into a functional call that would succeed — producing a false positive (the probe would "pass" by confirming that a legitimate call works, not that the authorization check fires).
+
+T2 INCONCLUSIVE results are expected and should be interpreted as: the server enforces schema validation. The confused-deputy test requires the middleware engine or manual testing with a server that exposes a permissive schema.
+
+**`error_code_in` MCP-layer fallback:**
+
+The `error_code_in` assertion operator checks `response.error.code` (JSON-RPC protocol error) against an allowlist of expected codes. Some servers return errors via the MCP content layer (`result.isError: true`) instead of JSON-RPC protocol errors — in this case, `error.code` does not exist.
+
+When `error_code_in` is evaluated and `response.error_code` is `None` but `response.error` is `True` (the server DID signal an error via `isError: true`), the assertion passes. The server correctly indicated an error; the specific JSON-RPC code cannot be verified, but error presence is sufficient. This prevents false failures against well-behaved servers that follow the MCP content-layer error convention.
+
+---
+
 ## Network Allowlist
 
 The scanner must not be weaponized for SSRF. A malicious target returning a 302 to `169.254.169.254` (AWS IMDS) must not be followed.
@@ -234,7 +254,7 @@ The scanner's own supply chain is hardened against the attacks it tests for:
 ```
 cosai_mcp/
   keys.py              Ed25519 public key (bytes literal)
-  config.py            ScanConfig, engine selection, flag parsing
+  config.py            ScanConfig, engine selection, flag parsing (probe_delay_seconds, auth_header)
   exceptions.py        SignatureVerificationError, UnsafePatternError, etc.
   session.py           MCPSession: handshake, tools/list, probe dispatch
   api.py               Scanner class (Python API)

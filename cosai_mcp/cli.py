@@ -88,6 +88,9 @@ def main() -> None:
               help="Print coverage matrix showing which engine covers each category.")
 @click.option("--probe-timeout", type=float, default=30.0, show_default=True,
               help="Per-probe timeout in seconds.")
+@click.option("--probe-delay", type=float, default=0.0, show_default=True,
+              help="Seconds to sleep between probes. Use when the target server "
+                   "enforces rate limits on new MCP sessions.")
 @click.option("--allow-private-targets/--block-private-targets", default=True,
               help="Allow scanning RFC1918/loopback targets (default: allowed for dev use). "
                    "Use --block-private-targets in CI to enforce public-target-only policy.")
@@ -135,6 +138,7 @@ def scan(
     report_csv: str | None,
     report_coverage: bool,
     probe_timeout: float,
+    probe_delay: float,
     allow_private_targets: bool,
     catalog_root: str | None,
     auth_token: str | None,
@@ -220,6 +224,7 @@ def scan(
             adaptive=not no_adaptive,
             profile=resolved_profile,
             adversarial_mode=adv_mode,
+            probe_delay_seconds=probe_delay,
         )
     except ValueError as exc:
         # Includes adversarial dual opt-in failures

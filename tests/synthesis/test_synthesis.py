@@ -434,6 +434,52 @@ class TestAdaptiveRetryIntegration:
         # adversarial value is extracted from catalog payload ("x"), not the hardcoded default
         assert adapted.payload["arguments"]["query"] == "x"
 
+    def test_t2_synthesis_disabled(self):
+        """_synthesize_probe returns None for T2 threats.
+
+        Regression: T2 (confused-deputy) probes use adversarial parameter NAMES
+        (e.g. session_id, role, privilege_level) to test access control.  Synthesis
+        replaces those names with the tool's real parameters, turning the probe into
+        a benign functional call — producing a false positive.  _synthesize_probe
+        must return None for T2 so the first (schema-rejected) result is preserved.
+        """
+        from cosai_mcp.harness.runner import _synthesize_probe
+        from cosai_mcp.catalog.models import (
+            Assertion, Operator, Probe, Provenance, Severity, ThreatDefinition,
+        )
+
+        probe = Probe(
+            id="T02-001-p1",
+            transport="http",
+            method="tools/call",
+            payload=types.MappingProxyType({
+                "name": "test",
+                "arguments": {"session_id": "other-user", "user_id": "victim@example.com"},
+            }),
+            assertions=(Assertion(target="response.error", operator=Operator.EQ, value=True),),
+        )
+        tool = _make_tool(string_params=("query",))
+        threat = ThreatDefinition(
+            schema_version="1.0",
+            id="T02-001",
+            category="T2",
+            severity=Severity.CRITICAL,
+            cosai_ref="T2",
+            owasp_ref="MCP-Top10-A02",
+            cwe=(),
+            probes=(probe,),
+            remediation="",
+            references=(),
+            provenance=Provenance.OFFICIAL,
+        )
+
+        result = _synthesize_probe(probe, threat, tool)
+        assert result is None, (
+            "_synthesize_probe must return None for T2 threats — synthesis would "
+            "replace adversarial parameter names with valid params, defeating the "
+            "confused-deputy test and producing a false positive"
+        )
+
     def test_regression_inconclusive_still_works_without_schema(self):
         """Regression: INCONCLUSIVE behavior unchanged when no discovered tool."""
         from cosai_mcp.harness.result import make_probe_result

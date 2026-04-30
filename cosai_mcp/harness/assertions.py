@@ -76,8 +76,17 @@ def evaluate_assertion(assertion: Assertion, response: dict[str, Any]) -> Assert
             pattern = assertion.compiled_pattern
             target_str = str(actual if actual is not None else "")
             passed = bool(pattern.search(target_str)) if pattern else False  # type: ignore[union-attr]
-        elif op in (Operator.STATUS_IN, Operator.ERROR_CODE_IN):
+        elif op == Operator.STATUS_IN:
             passed = actual in expected  # type: ignore[operator]
+        elif op == Operator.ERROR_CODE_IN:
+            if actual is None and _extract_target(response, "response.error"):
+                # Server returned an MCP content-layer error (result.isError:true)
+                # rather than a JSON-RPC protocol error — no error.code exists.
+                # The server IS correctly indicating an error; the specific JSON-RPC
+                # code cannot be verified, but the presence of an error is sufficient.
+                passed = True
+            else:
+                passed = actual in expected  # type: ignore[operator]
         else:
             passed = False
 

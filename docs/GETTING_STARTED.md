@@ -255,7 +255,7 @@ cosai scan http://localhost:8080
 - All non-T1 probes (T2–T12)
 
 **What it is NOT used for:**
-- T1 (authentication) probes always run without the token — the T1 test IS "does the server reject unauthenticated requests?" A server that requires auth for `initialize` will correctly PASS T1.
+- T1 (authentication) probes always run without the token — the T1 test IS "does the server reject unauthenticated requests?" A server that requires auth for `initialize` will correctly PASS T1. The scanner strips **both** `--auth-token` and any pre-formatted `Authorization` header before running T1 probes, so a server that only checks `Authorization: Bearer …` is also correctly exercised.
 
 **How to generate a scan token for your server:**
 
@@ -267,6 +267,26 @@ The scanner needs a valid token for session setup. Most auth systems have a serv
 | API keys | Generate a read-scope API key in your admin panel |
 | JWT (symmetric) | Mint a token with your signing key (add a `scanner` audience claim) |
 | Custom | Ask the server for a `/api-keys` or `/tokens` endpoint |
+
+**Rate-limited servers:**
+
+Some servers enforce per-session call budgets (e.g. one new MCP session per second). Because each probe spawns a fresh subprocess connection, rapid probing can trigger these limits, producing infrastructure errors that look like scanner failures. Use `--probe-delay` to add a sleep between probes:
+
+```bash
+cosai scan http://localhost:8080 --auth-token "$TOKEN" --probe-delay 2.5
+```
+
+A delay of 1–3 seconds is usually sufficient. Start at 1 second and increase if you still see rate-limit errors in `--debug` output.
+
+**Via the Python API:**
+
+```python
+results = Scanner(
+    "http://localhost:8080",
+    auth_token="...",
+    probe_delay_seconds=2.5,
+).run()
+```
 
 **Custom MCP endpoint path:**
 
@@ -369,3 +389,9 @@ Custom catalogs require `--allow-custom-catalog`. If your custom catalog uses `m
 
 **`UnsafePatternError` on custom catalog**
 A `matches_regex` pattern in your catalog was rejected by RE2 (likely catastrophic backtracking potential). Simplify the pattern or use `contains` instead.
+
+**Rate-limit errors in probe output (e.g. "429", "too many requests", "session limit")**
+The target server is rejecting probe connections because they arrive too quickly. Add `--probe-delay 2.5` (or higher) to the scan command. This does not affect result accuracy — each probe still gets a fresh, isolated connection; there are just longer gaps between them.
+
+**T2 probes marked INCONCLUSIVE after synthesis**
+T2 (confused-deputy) probes intentionally use adversarial parameter names (e.g. `session_id`, `role`) that the server will reject. This INCONCLUSIVE result is expected — it means the server enforced its schema and rejected unknown parameters. Synthesis is deliberately suppressed for T2 to avoid replacing those adversarial names with the server's real parameters (which would produce a false positive by turning the security probe into a functional test call).

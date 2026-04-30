@@ -6,7 +6,7 @@
 
 Open-source MCP security framework covering all 12 CoSAI threat categories (T1–T12).
 
-**Status:** Alpha — 822 tests passing, all T1–T12 categories implemented, Apache 2.0.
+**Status:** Alpha — 828 tests passing, all T1–T12 categories implemented, Apache 2.0.
 
 ```bash
 # Try without installing
@@ -31,7 +31,7 @@ cosai scan http://localhost:8000
 
 - **Three-engine architecture** — black-box prober, stateful harness, and middleware instrumentation. No single engine can cover all 12 categories; the guide explains why and which categories belong to which engine.
 - **Remediation-first reports** — every finding includes an exact fix shape and a verify command, not just a description. HTML, SARIF 2.1.0, and CSV output.
-- **Adaptive probe synthesis** — discovers tool schemas via `tools/list` and synthesizes type-correct payloads; eliminates schema-mismatch false negatives.
+- **Adaptive probe synthesis** — discovers tool schemas via `tools/list` and synthesizes type-correct payloads; eliminates schema-mismatch false negatives. Synthesis is automatically suppressed for T2 (confused-deputy) probes, which test security via adversarial parameter *names* — synthesizing a schema-correct payload would defeat the probe and produce a false positive.
 - **Adversarial mode** — embeds CSPRNG canary tokens in payloads; detects exfiltration and prompt-injection echoing from outside the server. Dual opt-in required (`--adversarial --i-own-this-target=<hostname>`). Stateful adversarial probes are additionally gated behind `--allow-stateful-adversarial`.
 - **Server profiles** — zero-config scanning for known MCP server types (FastMCP, FastAPI-MCP, etc.).
 - **SARIF 2.1.0 output** — integrates with GitHub's native security findings tab (same as CodeQL, Dependabot).
@@ -76,6 +76,9 @@ cosai scan http://localhost:8000 --adversarial --i-own-this-target=localhost --a
 # Use a built-in server profile
 cosai scan http://localhost:8000 --profile fastmcp
 
+# Avoid triggering server-side rate limiters (2.5 s between probes)
+cosai scan http://localhost:8080 --auth-token "$TOKEN" --probe-delay 2.5
+
 # pytest plugin
 pytest --cosai-target=http://localhost:8000 --cosai-severity=critical
 ```
@@ -117,7 +120,7 @@ Static analyzers test what you wrote — the source code. We test what you shipp
 For T4, adversarial mode with canary tokens catches exfiltration and prompt injection echoing from outside. For T9 and T12, we detect the absence of controls — probing whether logging endpoints exist and whether audit trails are present. But detecting that something happened requires being in the call path. That's what the middleware engine handles.
 
 **Is this ready for others to use?**
-811 passing tests, Apache 2.0, installs with pip. The catalog format and taxonomy coverage are stable. Reference-implementation quality — solid enough to standardize the probe catalog schema against, not yet production-hardened for enterprise deployment at scale.
+828 passing tests, Apache 2.0, installs with pip. The catalog format and taxonomy coverage are stable. Reference-implementation quality — solid enough to standardize the probe catalog schema against, not yet production-hardened for enterprise deployment at scale.
 
 **What about non-Python MCP servers?**
 The scanner speaks JSON-RPC — it's language-agnostic. Any MCP server regardless of implementation language is a valid target. The server-side middleware is Python-only today, but the scanner works against TypeScript, Go, or anything.

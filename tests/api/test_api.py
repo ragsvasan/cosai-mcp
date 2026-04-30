@@ -271,6 +271,28 @@ class TestScanner:
 
         assert mock_fn.call_args.kwargs["engine"] == "all"
 
+    def test_probe_delay_forwarded_to_run_scan(self) -> None:
+        """probe_delay_seconds set on Scanner is passed through to _run_scan."""
+        mock_result = ScanResult(
+            target_url="http://t:8000", threats=(), probe_results=(),
+            scenario_results=(), scan_timestamp="t", catalog_hash="h", exit_code=0,
+        )
+        with patch("cosai_mcp.api._run_scan", return_value=mock_result) as mock_fn:
+            Scanner("http://t:8000", probe_delay_seconds=1.5).run()
+
+        assert mock_fn.call_args.kwargs["probe_delay_seconds"] == 1.5
+
+    def test_probe_delay_default_is_zero(self) -> None:
+        """Default probe_delay_seconds is 0 — no sleep added without explicit flag."""
+        mock_result = ScanResult(
+            target_url="http://t:8000", threats=(), probe_results=(),
+            scenario_results=(), scan_timestamp="t", catalog_hash="h", exit_code=0,
+        )
+        with patch("cosai_mcp.api._run_scan", return_value=mock_result) as mock_fn:
+            Scanner("http://t:8000").run()
+
+        assert mock_fn.call_args.kwargs["probe_delay_seconds"] == 0.0
+
 
 # ---------------------------------------------------------------------------
 # scrub_env (API-level)
@@ -532,3 +554,101 @@ class TestAdversarialScanSafety:
 
         assert result.exit_code == 0
         assert [t.id for t in result.threats] == ["T05-ADV-001"]
+
+
+# ---------------------------------------------------------------------------
+# Regression: T1 probes must strip both auth_token AND auth_header
+# ---------------------------------------------------------------------------
+
+class TestT1AuthProbeNoAuthHeader:
+    """T1 probes must run without auth so the server can enforce authentication.
+
+    Regression: no_auth_config previously only cleared auth_token but left
+    auth_header intact (the pre-formatted "Bearer <tok>" string set by profile).
+    The transport uses auth_header in _build_headers() and it takes precedence,
+    so T1 probes silently sent valid credentials and never exercised the
+    unauthenticated code path.
+    """
+
+    def test_regression_no_auth_config_clears_auth_header(self, tmp_path: Path) -> None:
+        """_run_scan must build no_auth_config with auth_header=None for T1 probes.
+
+        Integration test: enters _run_scan with a profile that sets auth_header,
+        captures the ScanConfig passed to ProbeRunner for T1 threats, and asserts
+        both auth_token and auth_header are None.
+        """
+        from cosai_mcp.config import ScanConfig
+        from cosai_mcp.profiles.models import ServerProfile
+        import types
+
+        profile = ServerProfile(
+            name="test",
+            description="test",
+            mcp_path="/mcp",
+            auth_header_format="Bearer {token}",
+            tool_name_map=types.MappingProxyType({}),
+            skip_categories=frozenset(),
+            notes="",
+        )
+
+        captured_configs: list[ScanConfig] = []
+
+        class CapturingProbeRunner:
+            def __init__(self, config: ScanConfig, target_url: str) -> None:
+                captured_configs.append(config)
+                self._config = config
+                self._target_url = target_url
+
+            def run_threat(self, threat, variables=None, pass_on_auth_reject=False,
+                           discovered_tool=None):
+                return []
+
+        with patch("cosai_mcp.api._run_discovery", return_value=("ping", ())), \
+             patch("cosai_mcp.api.ProbeRunner", CapturingProbeRunner), \
+             patch("cosai_mcp.api.StatefulHarness"):
+            # Write a minimal T1 catalog entry
+            import json as _json
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+            key = Ed25519PrivateKey.generate()
+            official = tmp_path / "official"
+            official.mkdir()
+            threat = {
+                "schema_version": "1.0", "id": "T01-001", "category": "T1",
+                "severity": "critical", "cosai_ref": "T1", "owasp_ref": "MCP-Top10-A01",
+                "cwe": ["CWE-287"],
+                "probes": [{"id": "T01-001-p1", "transport": "http",
+                            "method": "tools/call",
+                            "payload": {"name": "{{tool_name}}", "arguments": {}},
+                            "assertions": [{"target": "response.error",
+                                            "operator": "eq", "value": True}]}],
+                "remediation": "Enforce auth.", "references": [],
+            }
+            raw = _json.dumps(threat).encode()
+            (official / "T01-001.json").write_bytes(raw)
+            (official / "T01-001.json.sig").write_bytes(
+                base64.b64encode(key.sign(raw)) + b"\n"
+            )
+            import base64 as _b64
+            pub_b64 = _b64.b64encode(key.public_key().public_bytes_raw()).decode()
+            with patch.dict(os.environ, {"COSAI_PUBKEY": pub_b64}):
+                _run_scan(
+                    target="http://localhost:9999",
+                    categories=["T1"],
+                    engine="prober",
+                    allow_custom_catalog=False,
+                    probe_timeout_seconds=1.0,
+                    catalog_root=tmp_path,
+                    allow_private_targets=True,
+                    auth_token="tok_abc",
+                    profile=profile,
+                )
+
+        # The ProbeRunner created for T1 probes (no_auth_config) must have
+        # both auth_token and auth_header cleared.
+        t1_runner_configs = [c for c in captured_configs if c.auth_token is None]
+        assert t1_runner_configs, "No ProbeRunner with auth_token=None — T1 probes may be running with auth"
+        for cfg in t1_runner_configs:
+            assert cfg.auth_header is None, (
+                f"T1 no_auth_config still has auth_header={cfg.auth_header!r}; "
+                "unauthenticated probe would silently use valid credentials"
+            )

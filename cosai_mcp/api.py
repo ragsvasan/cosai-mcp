@@ -332,6 +332,7 @@ def _run_scan(
     adaptive: bool = True,
     profile: ServerProfile | None = None,
     adversarial_mode: AdversarialMode | None = None,
+    probe_delay_seconds: float = 0.0,
 ) -> ScanResult:
     """Orchestrate a complete scan and return a ``ScanResult``.
 
@@ -366,6 +367,7 @@ def _run_scan(
         auth_token=effective_auth_token,
         mcp_path=effective_mcp_path,
         auth_header=effective_auth_header,
+        probe_delay_seconds=probe_delay_seconds,
     )
 
     # Generate a unique scan ID for this run (used for canary traceability)
@@ -434,7 +436,10 @@ def _run_scan(
 
         # For auth-testing categories (T1), probes must run without the auth
         # token — the test IS "does the server reject unauthenticated requests?"
-        no_auth_config = dataclasses.replace(config, auth_token=None)
+        # Both auth_token and auth_header must be cleared: auth_header carries
+        # the pre-formatted "Bearer <tok>" value set by profile, and takes
+        # precedence over auth_token in the transport's _build_headers().
+        no_auth_config = dataclasses.replace(config, auth_token=None, auth_header=None)
 
         runner = ProbeRunner(config=config, target_url=target_url)
         for threat in threats:
@@ -478,6 +483,10 @@ def _run_scan(
                 pass_on_auth_reject=is_auth_category,
                 discovered_tool=active_discovered_tool,
             )
+
+            if config.probe_delay_seconds > 0:
+                import time as _time
+                _time.sleep(config.probe_delay_seconds)
 
             if is_adversarial_threat and canary is not None:
                 import html as _html_mod
@@ -566,6 +575,7 @@ class Scanner:
         adaptive: bool = True,
         profile: ServerProfile | None = None,
         adversarial_mode: AdversarialMode | None = None,
+        probe_delay_seconds: float = 0.0,
     ) -> None:
         self.target = target
         self.categories = categories
@@ -579,6 +589,7 @@ class Scanner:
         self.adaptive = adaptive
         self.profile = profile
         self.adversarial_mode = adversarial_mode
+        self.probe_delay_seconds = probe_delay_seconds
 
     def run(self, categories: list[str] | None = None) -> ScanResult:
         """Run a complete scan and return a :class:`ScanResult`.
@@ -606,6 +617,7 @@ class Scanner:
                 adaptive=self.adaptive,
                 profile=self.profile,
                 adversarial_mode=self.adversarial_mode,
+                probe_delay_seconds=self.probe_delay_seconds,
             )
         except (ValueError, TargetUnreachableError):
             raise  # let typed exceptions propagate as-is
