@@ -8,16 +8,16 @@ Reference for all 12 CoSAI threat categories, their attack patterns, what cosai-
 
 | Category | Name | Engine | Status |
 |----------|------|--------|--------|
-| T1 | Improper Authentication | Black-box prober | Done — 4 probes (missing auth, token replay, cross-session, DPoP) |
-| T2 | Missing Access Control | Black-box prober + stateful harness | Done — BB: privilege scope + destructive one-shot (T02-003); Stateful: privilege escalation chain + confused deputy |
+| T1 | Improper Authentication | Black-box prober | Done — 5 probes (missing auth, token replay, cross-session, DPoP, wrong error code T01-005) |
+| T2 | Missing Access Control | Black-box prober + stateful harness | Done — BB: privilege scope + destructive one-shot (T02-003) + tools/list enumeration (T02-004) + read-scope write bypass (T02-005); Stateful: privilege escalation chain + confused deputy |
 | T3 | Input Validation Failures | Black-box prober | Done — injection, path traversal, SQL, null bytes, oversized payloads |
 | T4 | Data/Control Boundary | Middleware instrumentation | Done — requires middleware in target server |
 | T5 | Inadequate Data Protection | Black-box prober | Done — PII pattern detection, credential pattern detection in tool responses |
 | T6 | Integrity/Verification | Black-box prober + stateful harness | Done — BB: typosquat detection; Stateful: mid-session manifest diff (rug pull) |
-| T7 | Session Security Failures | Stateful harness | Done — session fixation, token-in-URL, cross-session replay, revocation (T7-SC-002) |
+| T7 | Session Security Failures | Stateful harness + black-box prober | Done — Stateful: session fixation, token-in-URL, cross-session replay, revocation (T7-SC-002); BB: CORS wildcard detection (T07-001) |
 | T8 | Network Binding Failures | Black-box prober | Done — 0.0.0.0 binding, SSRF (RFC1918/link-local/loopback), shadow server detection |
 | T9 | Trust Boundary Failures | Middleware instrumentation | Done — requires middleware in target server |
-| T10 | Resource Management | Black-box prober | Done — rate limiting, response size limits, recursive depth, heartbeat |
+| T10 | Resource Management | Black-box prober | Done — rate limiting with probe_count (T10-004), response size limits, recursive depth, heartbeat |
 | T11 | Supply Chain/Lifecycle | Black-box prober | Done — tool allowlist, typosquat (Levenshtein ≤ 1), signature verification |
 | T12 | Insufficient Logging | Middleware + black-box prober | Done — middleware: hash-chained audit log; BB: T12-002 tool description transparency |
 
@@ -45,6 +45,7 @@ Insufficient verification of identity across agent chains. MCP servers must vali
 - Replayed token (same `jti`) → accepted (FAIL) or rejected (PASS)
 - Token from a different session → accepted (FAIL) or rejected (PASS)
 - DPoP-bound token sent without DPoP proof header → accepted (FAIL) or rejected (PASS)
+- **T01-005:** Unknown JSON-RPC method returns wrong error code — `unknown/method` and `tools/doesNotExist` must return `-32601` (Method Not Found), not `-32603` (Internal Error) or a 500; an Internal Error on an unknown method may indicate the method reached execution logic (D-03)
 
 ### Remediation
 - Validate token `jti` for replay prevention; reject tokens used more than once
@@ -70,6 +71,8 @@ Insufficient authorization checks for autonomous tool calls. The "confused deput
 ### What cosai-mcp tests
 - **Black-box (partial):** call privileged tool without appropriate scope claim in token → accepted (FAIL) or rejected (PASS)
 - **Black-box (T02-003):** call any tool with destructive argument patterns (`action:delete`, `force:true`, `dry_run:false`, `operation:destroy`) → server executes without prior confirmation token (FAIL) or rejects (PASS)
+- **Black-box (T02-004):** `tools/list` without elevated scope must not disclose admin/write-scope tool names — if `purge`, `admin`, or write-scoped tools appear in the manifest returned to a read-only caller, the server is leaking attack surface (D-05)
+- **Black-box (T02-005):** call a write or delete tool using a `read`-scope token (`probe_token: "read"`) → write tool executes (FAIL) or returns 401/403 (PASS); requires `--read-token` to be configured (A-05/A-06)
 - **Stateful harness (full):** scripted 3-turn sequence: low-priv tool call → scope inspection → high-priv tool call; asserts server rejects step 3 without elevated scope grant
 
 ### Remediation
@@ -205,12 +208,13 @@ Weak binding of MCP sessions to user identity. Session tokens that can be fixed 
 - **Context-bleed:** shared SSE event queue allows session N's events to appear in session M
 - **Token revocation bypass:** server does not honour explicit token revocation; a revoked credential issued before a privilege change continues to grant access after the change takes effect
 
-### What cosai-mcp tests (stateful harness)
+### What cosai-mcp tests (stateful harness + black-box prober)
 - Client-supplied session ID accepted without server regeneration → FAIL
 - Session token in URL query parameter → FAIL
 - Token replayed in a new session after original session close → accepted (FAIL) or rejected (PASS)
 - Concurrent sessions sharing any context → FAIL
 - **Revocation scenario (T7-SC-002):** initialize session → call `tools/list` (assert success) → signal revocation via DELETE `/session/{id}` or equivalent → call `tools/list` again using the same session token → must return 401/error (PASS) or continues succeeding (FAIL — revocation not honoured)
+- **Black-box (T07-001):** send `Origin: https://evil.example.com` with `tools/list` and `tools/call`; if server echoes `Access-Control-Allow-Origin: *`, any web page can make credentialed MCP requests on behalf of an authenticated user — CORS wildcard must not appear on MCP endpoints (G-02). Uses `probe_headers: {"Origin": "..."}` and `response.header.access-control-allow-origin` assertion target.
 
 ### Remediation
 - Always generate session IDs server-side using a CSPRNG; reject client-supplied session IDs
@@ -287,7 +291,7 @@ Unbounded resource consumption by agentic workflows. Infinite reasoning loops, r
 - **Cost amplification:** each tool call triggers expensive LLM inference; attacker triggers thousands of calls
 
 ### What cosai-mcp tests
-- Rapid-fire `tools/call` requests; checks for rate limiting (429 or equivalent) → no rate limit (FAIL)
+- **T10-004:** Rapid-fire requests (`probe_count: 30` for `tools/list`, `probe_count: 20` for `tools/call`); if all requests return HTTP 200, no rate limiting is enforced — at least one must return 429 or 503 (PASS) (H-03)
 - Tools/call that requests maximum response size; checks for size limits → no size limit (FAIL)
 - Recursive tool call chain simulation; checks for depth limits → no depth limit (FAIL)
 - Long-running SSE connection with no progress notification; checks for heartbeat → absent (FAIL)
@@ -453,6 +457,60 @@ A Railway volume containing production data and its only backup was deleted by a
 | Backup co-located with primary (no off-volume backup) | Out of scope | Infrastructure |
 
 The T2 + T9 failure was necessary and sufficient for the data loss. T12 transparency failure removed the last human-observable signal before execution.
+
+---
+
+## Probe Modifier Fields
+
+Catalog probes support three optional modifier fields that extend basic JSON-RPC probing:
+
+### `probe_token: "read"`
+
+Instructs the scanner to use `config.read_token` (set via `--read-token`) instead of the primary auth token. Used by T02-005 to test whether write tools correctly reject read-scope callers.
+
+```json
+{
+  "id": "T02-005-p1",
+  "probe_token": "read",
+  "method": "tools/call",
+  "payload": {"name": "{{tool_name}}", "arguments": {}},
+  "assertions": [{"target": "response.error", "operator": "eq", "value": true}]
+}
+```
+
+If `--read-token` is not configured, the probe reports `INCONCLUSIVE` rather than `FAIL` — scope enforcement cannot be tested without two distinct tokens.
+
+### `probe_count: N`
+
+Repeats the probe N times and passes on the first response that satisfies all assertions. Used by T10-004 to detect rate limiting: 30 rapid `tools/list` calls must trigger at least one 429.
+
+```json
+{
+  "id": "T10-004-p1",
+  "probe_count": 30,
+  "method": "tools/list",
+  "assertions": [{"target": "response.status_code", "operator": "status_in", "value": [429, 503]}]
+}
+```
+
+### `probe_headers`
+
+Extra HTTP headers injected into the probe request. Used by T07-001 to test CORS policy:
+
+```json
+{
+  "id": "T07-001-p1",
+  "probe_headers": {"Origin": "https://evil.example.com"},
+  "method": "tools/list",
+  "assertions": [
+    {"target": "response.header.access-control-allow-origin", "operator": "ne", "value": "*"}
+  ]
+}
+```
+
+### `response.header.<name>` assertion target
+
+Assertions can target any HTTP response header by name (case-insensitive). Used by T07-001 to inspect `Access-Control-Allow-Origin`. Example: `"target": "response.header.retry-after"`.
 
 ---
 

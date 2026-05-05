@@ -974,3 +974,311 @@ class TestMappingProxyPicklingRegression:
 
         assert not _has_proxy(d), "Output must not contain MappingProxyType objects"
 
+
+# ===========================================================================
+# Pentest-derived probe modifier tests (probe_token, probe_count, probe_headers)
+# ===========================================================================
+
+class TestProbeModifierFields:
+    """Tests for probe_token, probe_count, probe_headers fields added from pentest findings."""
+
+    def test_probe_token_default_is_none(self):
+        """Probe.probe_token defaults to None when not specified."""
+        probe = _make_probe()
+        assert probe.probe_token is None
+
+    def test_probe_count_default_is_one(self):
+        """Probe.probe_count defaults to 1."""
+        probe = _make_probe()
+        assert probe.probe_count == 1
+
+    def test_probe_headers_default_is_none(self):
+        """Probe.probe_headers defaults to None."""
+        probe = _make_probe()
+        assert probe.probe_headers is None
+
+    def test_probe_to_dict_omits_defaults(self):
+        """_probe_to_dict omits probe_token/probe_count/probe_headers when at defaults."""
+        probe = _make_probe()
+        d = _probe_to_dict(probe)
+        assert "probe_token" not in d
+        assert "probe_count" not in d
+        assert "probe_headers" not in d
+
+    def test_probe_to_dict_includes_probe_token(self):
+        """_probe_to_dict includes probe_token when set."""
+        probe = Probe(
+            id="T02-005-p1",
+            transport="http",
+            method="tools/call",
+            payload=types.MappingProxyType({}),
+            assertions=(),
+            probe_token="read",
+        )
+        d = _probe_to_dict(probe)
+        assert d["probe_token"] == "read"
+
+    def test_probe_to_dict_includes_probe_count(self):
+        """_probe_to_dict includes probe_count when > 1."""
+        probe = Probe(
+            id="T10-004-p1",
+            transport="http",
+            method="tools/list",
+            payload=types.MappingProxyType({}),
+            assertions=(),
+            probe_count=30,
+        )
+        d = _probe_to_dict(probe)
+        assert d["probe_count"] == 30
+
+    def test_probe_to_dict_includes_probe_headers(self):
+        """_probe_to_dict includes probe_headers when set."""
+        probe = Probe(
+            id="T07-001-p1",
+            transport="http",
+            method="tools/list",
+            payload=types.MappingProxyType({}),
+            assertions=(),
+            probe_headers=types.MappingProxyType({"Origin": "https://evil.example.com"}),
+        )
+        d = _probe_to_dict(probe)
+        assert d["probe_headers"] == {"Origin": "https://evil.example.com"}
+
+    def test_probe_from_dict_roundtrip_probe_token(self):
+        """probe_token survives _probe_to_dict → _probe_from_dict roundtrip."""
+        probe = Probe(
+            id="T02-005-p1",
+            transport="http",
+            method="tools/call",
+            payload=types.MappingProxyType({}),
+            assertions=(),
+            probe_token="read",
+            probe_count=1,
+        )
+        d = _probe_to_dict(probe)
+        restored = _probe_from_dict(d)
+        assert restored.probe_token == "read"
+
+    def test_probe_from_dict_roundtrip_probe_count(self):
+        """probe_count survives roundtrip."""
+        probe = Probe(
+            id="T10-004-p1",
+            transport="http",
+            method="tools/list",
+            payload=types.MappingProxyType({}),
+            assertions=(),
+            probe_count=30,
+        )
+        d = _probe_to_dict(probe)
+        restored = _probe_from_dict(d)
+        assert restored.probe_count == 30
+
+    def test_probe_from_dict_roundtrip_probe_headers(self):
+        """probe_headers survives roundtrip as MappingProxyType."""
+        probe = Probe(
+            id="T07-001-p1",
+            transport="http",
+            method="tools/list",
+            payload=types.MappingProxyType({}),
+            assertions=(),
+            probe_headers=types.MappingProxyType({"Origin": "https://evil.example.com"}),
+        )
+        d = _probe_to_dict(probe)
+        restored = _probe_from_dict(d)
+        assert isinstance(restored.probe_headers, types.MappingProxyType)
+        assert restored.probe_headers["Origin"] == "https://evil.example.com"
+
+    def test_probe_token_read_inconclusive_when_no_read_token(self):
+        """probe_token='read' with no read_token configured → INCONCLUSIVE result (not crash).
+
+        This exercises the early-exit path in _probe_subprocess_entry that returns
+        inconclusive before any network connection is attempted.
+        """
+        from cosai_mcp.harness.runner import _probe_subprocess_entry
+        import multiprocessing
+        probe = Probe(
+            id="T02-005-p1",
+            transport="http",
+            method="tools/call",
+            payload=types.MappingProxyType({"name": "log_decision", "arguments": {}}),
+            assertions=(Assertion(target="response.error", operator=Operator.EQ, value=True),),
+            probe_token="read",
+        )
+        threat = _make_threat("T02-005")
+        config = ScanConfig(
+            target_host="127.0.0.1",
+            target_port=9999,
+            allow_private_targets=True,
+            read_token=None,  # not configured → should yield inconclusive
+        )
+        q: multiprocessing.Queue = multiprocessing.Queue()
+        # Call the subprocess entry point directly (it is synchronous when invoked inline).
+        _probe_subprocess_entry(
+            q,
+            _probe_to_dict(probe),
+            _threat_to_dict(threat),
+            config,
+            "http://127.0.0.1:9999/mcp",
+            {},
+        )
+        # Use timeout to avoid race on slow machines; the result must be present.
+        result = q.get(timeout=5)
+        assert result["passed"] is False
+        assert result.get("inconclusive_reason") is not None, (
+            "probe_token='read' with no read_token must set inconclusive_reason"
+        )
+        assert "read-token" in result["inconclusive_reason"]
+
+
+# ===========================================================================
+# response.header.* assertion target tests (CORS probe support)
+# ===========================================================================
+
+class TestHeaderAssertionTarget:
+    """Tests for response.header.* assertion target path."""
+
+    def _response_with_headers(self, headers: dict[str, str]) -> dict[str, Any]:
+        return {
+            "jsonrpc": "2.0",
+            "result": {},
+            "_body": "{}",
+            "_status_code": 200,
+            "_headers": {k.lower(): v for k, v in headers.items()},
+        }
+
+    def test_extract_header_present(self):
+        """response.header.x-frame-options extracts the header value."""
+        response = self._response_with_headers({"X-Frame-Options": "DENY"})
+        from cosai_mcp.harness.assertions import _extract_target
+        assert _extract_target(response, "response.header.x-frame-options") == "DENY"
+
+    def test_extract_header_case_insensitive(self):
+        """Header name lookup is case-insensitive."""
+        response = self._response_with_headers({"Access-Control-Allow-Origin": "*"})
+        from cosai_mcp.harness.assertions import _extract_target
+        result = _extract_target(response, "response.header.Access-Control-Allow-Origin")
+        assert result == "*"
+
+    def test_extract_header_missing_returns_none(self):
+        """Missing header returns None."""
+        response = self._response_with_headers({})
+        from cosai_mcp.harness.assertions import _extract_target
+        assert _extract_target(response, "response.header.x-custom") is None
+
+    def test_extract_header_no_headers_key(self):
+        """If _headers not in response, missing header returns None."""
+        response = {"jsonrpc": "2.0", "result": {}}
+        from cosai_mcp.harness.assertions import _extract_target
+        assert _extract_target(response, "response.header.origin") is None
+
+    def test_regression_cors_wildcard_detection(self):
+        """NE assertion on response.header.access-control-allow-origin catches wildcard."""
+        response = self._response_with_headers({"access-control-allow-origin": "*"})
+        assertion = Assertion(
+            target="response.header.access-control-allow-origin",
+            operator=Operator.NE,
+            value="*",
+        )
+        result = evaluate_assertion(assertion, response)
+        assert result.passed is False, "Wildcard CORS must fail the NE assertion (it IS a wildcard)"
+
+    def test_regression_cors_explicit_origin_passes(self):
+        """NE assertion passes when CORS is restricted to a specific origin."""
+        response = self._response_with_headers({
+            "access-control-allow-origin": "https://app.example.com"
+        })
+        assertion = Assertion(
+            target="response.header.access-control-allow-origin",
+            operator=Operator.NE,
+            value="*",
+        )
+        result = evaluate_assertion(assertion, response)
+        assert result.passed is True
+
+    def test_regression_cors_absent_header_passes(self):
+        """NE assertion passes when the header is absent (None != '*')."""
+        response = self._response_with_headers({})
+        assertion = Assertion(
+            target="response.header.access-control-allow-origin",
+            operator=Operator.NE,
+            value="*",
+        )
+        result = evaluate_assertion(assertion, response)
+        assert result.passed is True
+
+
+# ===========================================================================
+# New catalog entry integration tests (load → scan → report pipeline)
+# ===========================================================================
+
+class TestNewCatalogEntriesLoad:
+    """Verify new pentest-derived catalog entries load, validate, and parse correctly."""
+
+    def _load_official_catalog(self) -> list:
+        from pathlib import Path
+        from cosai_mcp.catalog.loader import CatalogLoader
+        catalog_root = (
+            Path(__file__).parent.parent.parent / "catalog"
+        )
+        loader = CatalogLoader(catalog_root)
+        return loader.load_all()
+
+    def test_regression_t01_005_loads(self):
+        """T01-005 (JSON-RPC error code conformance) loads from signed catalog."""
+        threats = self._load_official_catalog()
+        ids = {t.id for t in threats}
+        assert "T01-005" in ids, "T01-005 must be in the official catalog"
+
+    def test_regression_t02_004_loads(self):
+        """T02-004 (tool enumeration without scope filter) loads correctly."""
+        threats = self._load_official_catalog()
+        ids = {t.id for t in threats}
+        assert "T02-004" in ids
+
+    def test_regression_t02_005_loads(self):
+        """T02-005 (read token reaches write tool) loads and has probe_token='read'."""
+        threats = self._load_official_catalog()
+        t = next(t for t in threats if t.id == "T02-005")
+        assert any(p.probe_token == "read" for p in t.probes), (
+            "T02-005 probes must have probe_token='read'"
+        )
+
+    def test_regression_t07_001_loads(self):
+        """T07-001 (CORS wildcard) loads and has probe_headers with Origin."""
+        threats = self._load_official_catalog()
+        ids = {t.id for t in threats}
+        assert "T07-001" in ids
+        t = next(t for t in threats if t.id == "T07-001")
+        assert any(
+            p.probe_headers and "Origin" in p.probe_headers
+            for p in t.probes
+        ), "T07-001 probes must include an Origin probe_header"
+
+    def test_regression_t10_004_loads(self):
+        """T10-004 (rate limiting) loads and has probe_count > 1."""
+        threats = self._load_official_catalog()
+        t = next(t for t in threats if t.id == "T10-004")
+        assert any(p.probe_count > 1 for p in t.probes), (
+            "T10-004 probes must have probe_count > 1 for rate-limit detection"
+        )
+
+    def test_regression_t01_005_error_code_assertion(self):
+        """T01-005 probes assert on response.error_code == -32601."""
+        threats = self._load_official_catalog()
+        t = next(t for t in threats if t.id == "T01-005")
+        assert any(
+            a.target == "response.error_code" and a.value == -32601
+            for p in t.probes
+            for a in p.assertions
+        ), "T01-005 must have an assertion checking for error code -32601"
+
+    def test_regression_t07_001_header_assertion(self):
+        """T07-001 probes assert on response.header.access-control-allow-origin."""
+        threats = self._load_official_catalog()
+        t = next(t for t in threats if t.id == "T07-001")
+        assert any(
+            a.target.startswith("response.header.")
+            for p in t.probes
+            for a in p.assertions
+        ), "T07-001 must assert on a response.header.* target"
+

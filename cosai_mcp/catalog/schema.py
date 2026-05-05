@@ -61,6 +61,13 @@ THREAT_META_SCHEMA: dict = {
                 "replay_token_from": {"type": "string"},
                 "inconclusive_if_no_llm": {"type": "boolean"},
                 "requires_discovered_tools": {"type": "boolean"},
+                # Pentest-derived probe modifiers
+                "probe_token": {"type": "string", "enum": ["read", "null_scope"]},
+                "probe_count": {"type": "integer", "minimum": 1, "maximum": 100},
+                "probe_headers": {
+                    "type": "object",
+                    "additionalProperties": {"type": "string"},
+                },
             },
         },
         "assertion": {

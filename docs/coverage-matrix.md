@@ -4,16 +4,16 @@ Which engine covers which CoSAI threat category, and what is explicitly not cove
 
 | Category | Name | Engine | Coverage | Not Covered |
 |----------|------|--------|----------|-------------|
-| T1 | Improper Authentication | Black-box prober | Missing auth header, token replay, cross-session token, OAuth proxy detection, DPoP binding | JWT cryptographic verification (requires valid key material) |
-| T2 | Missing Access Control | Stateful harness | Multi-turn privilege escalation chain, confused deputy | Runtime RBAC policy enforcement (use mcp-armor middleware) |
+| T1 | Improper Authentication | Black-box prober | Missing auth header, token replay, cross-session token, OAuth proxy detection, DPoP binding, wrong error code for unknown methods (T01-005) | JWT cryptographic verification (requires valid key material) |
+| T2 | Missing Access Control | Stateful harness + black-box prober | Multi-turn privilege escalation chain, confused deputy; BB: tools/list enumeration (T02-004), read-scope write bypass (T02-005) | Runtime RBAC policy enforcement (use mcp-armor middleware) |
 | T3 | Input Validation Failures | Black-box prober | Command injection, path traversal, SQL injection, oversized payload, null bytes, Unicode normalization | Server-side schema enforcement internals |
 | T4 | Data/Control Boundary | **Black-box prober (passive) + Middleware** | Passive manifest scan: `ToolPoisoningDetector` runs on every `tools/list` response fetched during discovery — injection patterns in tool names, descriptions, and `inputSchema` properties surface as findings. Full response-body injection requires middleware in the call path. | Response content from inside tool calls cannot be observed from outside |
 | T5 | Inadequate Data Protection | Black-box prober | API key / JWT / SSN / credit card leakage in tool responses, credential exfiltration | PII in encrypted channels (requires MITM) |
 | T6 | Integrity/Verification | Stateful harness + prober | Tool shadowing mid-session, manifest drift, typosquat detection (Levenshtein ≤ 2) | Code-level supply chain (use Snyk/Enkrypt pre-deploy) |
-| T7 | Session Security Failures | Stateful harness | Session fixation, token replay across sessions, session revocation bypass (T7-SC-002) | TLS MITM (infrastructure concern, not MCP-layer) |
+| T7 | Session Security Failures | Stateful harness + black-box prober | Session fixation, token replay across sessions, session revocation bypass (T7-SC-002); BB: CORS wildcard detection (T07-001) | TLS MITM (infrastructure concern, not MCP-layer) |
 | T8 | Network Binding Failures | Black-box prober | 0.0.0.0 binding detection, SSRF via tool-initiated outbound, shadow server detection | Container network namespace isolation (infrastructure concern) |
 | T9 | Trust Boundary Failures | **Middleware only** | Scanner self-protection: all MCP response content sanitised before re-use | Overreliance on LLM judgment requires LLM-in-the-loop (by design out of scope) |
-| T10 | Resource Management | Black-box prober | Rate limit absence, unbounded response size, recursive depth, heartbeat enforcement | Per-tenant quota accounting (application-layer concern) |
+| T10 | Resource Management | Black-box prober | Rate limit absence with multi-probe (T10-004, probe_count: 30), unbounded response size, recursive depth, heartbeat enforcement | Per-tenant quota accounting (application-layer concern) |
 | T11 | Supply Chain/Lifecycle | Black-box prober (partial) | Typosquatted tool names, unsigned tool definitions, unexpected registry origin | Code-level dependency CVEs (use Snyk/SCA pre-deploy) |
 | T12 | Insufficient Logging | **Middleware only** | Hash-chained audit log, DAG execution trace, tamper detection via `cosai audit verify` | Prompt/LLM reasoning trace (outside MCP layer); `resources/read` logged as ⚠️ partial |
 

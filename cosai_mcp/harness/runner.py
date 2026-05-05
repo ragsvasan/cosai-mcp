@@ -77,7 +77,7 @@ def _validate_raw_result(raw: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _probe_to_dict(probe: Probe) -> dict[str, Any]:
-    return {
+    d: dict[str, Any] = {
         "id": probe.id,
         "transport": probe.transport,
         "method": probe.method,
@@ -91,6 +91,13 @@ def _probe_to_dict(probe: Probe) -> dict[str, Any]:
             for a in probe.assertions
         ],
     }
+    if probe.probe_token is not None:
+        d["probe_token"] = probe.probe_token
+    if probe.probe_count != 1:
+        d["probe_count"] = probe.probe_count
+    if probe.probe_headers is not None:
+        d["probe_headers"] = dict(probe.probe_headers)
+    return d
 
 
 def _threat_to_dict(threat: ThreatDefinition) -> dict[str, Any]:
@@ -111,12 +118,16 @@ def _probe_from_dict(d: dict[str, Any]) -> Probe:
         )
         for a in d["assertions"]
     )
+    raw_headers = d.get("probe_headers")
     return Probe(
         id=d["id"],
         transport=d["transport"],
         method=d["method"],
         payload=types.MappingProxyType(d["payload"]),
         assertions=assertions,
+        probe_token=d.get("probe_token"),
+        probe_count=d.get("probe_count", 1),
+        probe_headers=types.MappingProxyType(raw_headers) if raw_headers else None,
     )
 
 
@@ -181,6 +192,7 @@ def _probe_subprocess_entry(
         rather than a scanner error.  The server correctly enforces auth.
     """
     async def _run() -> dict[str, Any]:
+        import dataclasses
         from cosai_mcp.exceptions import SessionIncompleteError
         from cosai_mcp.harness.context import ProbeContext
         from cosai_mcp.session import MCPSession
@@ -188,21 +200,53 @@ def _probe_subprocess_entry(
         probe = _probe_from_dict(probe_dict)
         threat = _threat_from_dict(threat_dict)
 
+        # Apply probe_token: select the appropriate bearer token for this probe.
+        effective_config = config
+        if probe.probe_token == "read":
+            if not config.read_token:
+                # No read-scoped token configured — probe is inconclusive.
+                return make_probe_result(
+                    probe_id=probe.id,
+                    threat_id=threat.id,
+                    passed=False,
+                    assertions=(),
+                    error=None,
+                    duration_seconds=0.0,
+                    inconclusive_reason=(
+                        "probe_token='read' requires --read-token to be configured; "
+                        "skipping scope-enforcement probe"
+                    ),
+                ).to_dict()
+            effective_config = dataclasses.replace(
+                config,
+                auth_token=config.read_token,
+                auth_header=None,
+            )
+
+        # Apply probe_headers: merge into extra_request_headers for this probe.
+        if probe.probe_headers:
+            merged = dict(effective_config.extra_request_headers or {})
+            merged.update(probe.probe_headers)
+            effective_config = dataclasses.replace(
+                effective_config,
+                extra_request_headers=merged,
+            )
+
         # Finding 6: dispatch on probe.transport, not hardcoded HTTP
         transport_type = probe_dict.get("transport", "http")
         if transport_type == "http":
             from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
-            transport = StreamableHTTPTransport(target_url, config)
+            transport = StreamableHTTPTransport(target_url, effective_config)
         elif transport_type == "stdio":
             from cosai_mcp.transport.stdio import StdioTransport
             # For stdio probes target_url is the executable path
-            transport = StdioTransport([target_url], config)
+            transport = StdioTransport([target_url], effective_config)
         else:
             raise ValueError(f"Unknown transport type: {transport_type!r}")
 
         await transport.connect()
         try:
-            session = MCPSession(transport, config, target_url=target_url)
+            session = MCPSession(transport, effective_config, target_url=target_url)
             try:
                 await session.start()
             except SessionIncompleteError as exc:
@@ -228,7 +272,19 @@ def _probe_subprocess_entry(
                         duration_seconds=0.0,
                     ).to_dict()
                 raise
-            ctx = ProbeContext(session, config, target_url)
+            ctx = ProbeContext(session, effective_config, target_url)
+
+            # probe_count > 1: repeat the probe N times (rate-limit detection).
+            # Return the first result that passes all assertions; fall through
+            # to the last result if none pass.
+            if probe.probe_count > 1:
+                last_result = None
+                for _ in range(probe.probe_count):
+                    last_result = await ctx.execute_probe(probe, threat, variables)
+                    if last_result.passed:
+                        return last_result.to_dict()
+                return last_result.to_dict()  # type: ignore[union-attr]
+
             result = await ctx.execute_probe(probe, threat, variables)
             return result.to_dict()
         finally:
@@ -295,6 +351,9 @@ def _synthesize_probe(
             method=probe.method,
             payload=synth_payload,
             assertions=probe.assertions,
+            probe_token=probe.probe_token,
+            probe_count=probe.probe_count,
+            probe_headers=probe.probe_headers,
         )
     except ValueError:
         # Expected from template-escape guard or missing adversarial value (P2 fix)

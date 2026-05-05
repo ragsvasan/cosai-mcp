@@ -42,6 +42,12 @@ def _extract_target(response: dict[str, Any], target_path: str) -> Any:
     if target_path == "response.status_code":
         return response.get("_status_code")
 
+    if target_path.startswith("response.header."):
+        header_name = target_path[len("response.header."):]
+        headers: dict[str, str] = response.get("_headers", {})
+        # Headers stored lowercase; try as-is then lowercased
+        return headers.get(header_name) or headers.get(header_name.lower())
+
     # Generic dotted walk: "response.result.content" → response["result"]["content"]
     parts = target_path.split(".")
     current: Any = response
