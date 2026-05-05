@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "id": "T01-005",
+  "category": "T1",
+  "severity": "low",
+  "cosai_ref": "T1",
+  "owasp_ref": "MCP-Top10-A01",
+  "cwe": ["CWE-703", "CWE-209"],
+  "probes": [
+    {
+      "id": "T01-005-p1",
+      "transport": "http",
+      "method": "unknown/method",
+      "description": "Send an unknown JSON-RPC method. MCP spec requires -32601 (MethodNotFound). Returning -32602 (InvalidParams) leaks that the server dispatches by parameter shape rather than by method name, and may indicate non-conforming middleware.",
+      "payload": {},
+      "assertions": [
+        {
+          "target": "response.error_code",
+          "operator": "eq",
+          "value": -32601,
+          "description": "Server MUST return -32601 MethodNotFound for unknown methods, not -32602 InvalidParams"
+        }
+      ]
+    },
+    {
+      "id": "T01-005-p2",
+      "transport": "http",
+      "method": "tools/doesNotExist",
+      "description": "Unknown method in the tools namespace — must also return -32601.",
+      "payload": {},
+      "assertions": [
+        {
+          "target": "response.error_code",
+          "operator": "eq",
+          "value": -32601
+        }
+      ]
+    }
+  ],
+  "remediation": "Return JSON-RPC error -32601 (MethodNotFound) for all unknown methods. Returning -32602 (InvalidParams) indicates the dispatcher is pattern-matching on parameters rather than method name — a protocol non-conformance that can expose server internals and may hide dispatch bugs.",
+  "references": [
+    "https://www.jsonrpc.org/specification#error_object",
+    "https://spec.modelcontextprotocol.io",
+    "https://cosai.org/T1"
+  ]
+}

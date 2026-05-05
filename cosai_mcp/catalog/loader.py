@@ -116,12 +116,17 @@ def _parse_probe(
     payload = _make_mapping_proxy(raw["payload"])
     if not isinstance(payload, types.MappingProxyType):
         payload = types.MappingProxyType({})
+    raw_headers = raw.get("probe_headers")
+    probe_headers = _make_mapping_proxy(raw_headers) if raw_headers else None
     return Probe(
         id=raw["id"],
         transport=raw["transport"],
         method=raw["method"],
         payload=payload,
         assertions=assertions,
+        probe_token=raw.get("probe_token"),
+        probe_count=raw.get("probe_count", 1),
+        probe_headers=probe_headers,
     )
 
 

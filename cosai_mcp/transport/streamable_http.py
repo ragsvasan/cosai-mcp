@@ -128,6 +128,8 @@ class StreamableHTTPTransport(Transport):
             headers["Authorization"] = self._config.auth_header
         elif self._config.auth_token:
             headers["Authorization"] = f"Bearer {self._config.auth_token}"
+        if self._config.extra_request_headers:
+            headers.update(self._config.extra_request_headers)
         return headers
 
     def _make_rpc(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -182,12 +184,16 @@ class StreamableHTTPTransport(Transport):
         content_type = response.headers.get("content-type", "")
 
         if "text/event-stream" in content_type:
-            return await self._consume_sse_response(response)
+            data = await self._consume_sse_response(response)
         else:
             data = response.json()
             if sid := response.headers.get("Mcp-Session-Id"):
                 self._session_id = sid
-            return data  # type: ignore[no-any-return]
+        # Inject HTTP metadata for response.status_code and response.header.* assertions
+        if isinstance(data, dict):
+            data["_status_code"] = response.status_code
+            data["_headers"] = {k.lower(): v for k, v in response.headers.items()}
+        return data  # type: ignore[no-any-return]
 
     async def send_notification(self, notification: dict[str, Any]) -> None:
         """POST a pre-built JSON-RPC notification (no id, fire-and-forget)."""

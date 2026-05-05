@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "id": "T02-004",
+  "category": "T2",
+  "severity": "medium",
+  "cosai_ref": "T2",
+  "owasp_ref": "MCP-Top10-A02",
+  "cwe": ["CWE-862", "CWE-200"],
+  "probes": [
+    {
+      "id": "T02-004-p1",
+      "transport": "http",
+      "method": "tools/list",
+      "description": "Enumerate all tool names. Sensitive tool names (admin, purge, delete, export, import, destroy) should not appear in the manifest returned to limited-scope tokens. Any authenticated token receiving the full manifest leaks the attack surface to low-privilege callers.",
+      "payload": {},
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "\"purge",
+          "description": "Tools with destructive semantics (purge_*) must not appear in the manifest for limited-scope callers"
+        }
+      ]
+    },
+    {
+      "id": "T02-004-p2",
+      "transport": "http",
+      "method": "tools/list",
+      "description": "Admin tools must not be disclosed to any authenticated token that lacks an admin scope.",
+      "payload": {},
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "\"admin\"",
+          "description": "A tool literally named 'admin' must not be enumerable by non-admin tokens"
+        }
+      ]
+    }
+  ],
+  "remediation": "Filter tools/list results based on the authenticated token's scope. Destructive, admin, and privileged tools should only appear in the manifest when the caller holds the required scope. At minimum, tool names must not reveal privilege boundaries to low-trust callers.",
+  "references": [
+    "https://cosai.org/T2",
+    "https://cwe.mitre.org/data/definitions/862.html",
+    "https://cwe.mitre.org/data/definitions/200.html"
+  ]
+}

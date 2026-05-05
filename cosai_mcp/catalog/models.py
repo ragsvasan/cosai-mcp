@@ -44,6 +44,9 @@ class Probe:
     method: str                      # JSON-RPC method name
     payload: types.MappingProxyType  # frozen dict
     assertions: tuple                # tuple[Assertion, ...]
+    probe_token: str | None = None   # "read" → use config.read_token instead of auth_token
+    probe_count: int = 1             # >1 → repeat N times; passes if any response satisfies assertions
+    probe_headers: types.MappingProxyType | None = None  # extra HTTP headers added to the request
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0",
+  "id": "T02-005",
+  "category": "T2",
+  "severity": "high",
+  "cosai_ref": "T2",
+  "owasp_ref": "MCP-Top10-A02",
+  "cwe": ["CWE-862", "CWE-284"],
+  "probes": [
+    {
+      "id": "T02-005-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "description": "Send a write-category tool call using a read-scoped token (configured via --read-token). The MCP dispatch layer must reject with 403 before the tool handler executes. A 200 response means scope is not enforced at dispatch.",
+      "probe_token": "read",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "action": "write",
+          "data": "cosai-scope-probe"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true,
+          "description": "Read-scoped token must be rejected (error) when calling write-capable tools"
+        }
+      ]
+    },
+    {
+      "id": "T02-005-p2",
+      "transport": "http",
+      "method": "tools/call",
+      "description": "Attempt to call a tool with write semantics using a read token. Any 200 response is a scope enforcement failure.",
+      "probe_token": "read",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "operation": "create",
+          "content": "cosai-scope-probe"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.status_code",
+          "operator": "status_in",
+          "value": [401, 403],
+          "description": "HTTP status must be 401 or 403 when read-scoped token calls a write tool"
+        }
+      ]
+    }
+  ],
+  "remediation": "Enforce token scope at the MCP dispatch layer before routing to any tool handler. The scope check must be consistent across ALL tools — delegating scope enforcement to individual backend handlers creates an inconsistent surface where some tools are protected and others are not. Require a 'write' (or tool-specific) scope claim for any tool that mutates state.",
+  "references": [
+    "https://cosai.org/T2",
+    "https://cwe.mitre.org/data/definitions/862.html",
+    "https://cwe.mitre.org/data/definitions/284.html",
+    "https://datatracker.ietf.org/doc/html/rfc6749#section-3.3"
+  ]
+}

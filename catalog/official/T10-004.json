@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "id": "T10-004",
+  "category": "T10",
+  "severity": "medium",
+  "cosai_ref": "T10",
+  "owasp_ref": "MCP-Top10-A10",
+  "cwe": ["CWE-770"],
+  "probes": [
+    {
+      "id": "T10-004-p1",
+      "transport": "http",
+      "method": "tools/list",
+      "description": "Send 30 rapid tools/list calls in succession. A server with rate limiting must return HTTP 429 (Too Many Requests) or JSON-RPC -32029 before all 30 calls succeed. If all 30 return 200, no rate limit is enforced on the MCP endpoint.",
+      "probe_count": 30,
+      "payload": {},
+      "assertions": [
+        {
+          "target": "response.status_code",
+          "operator": "status_in",
+          "value": [429, 503],
+          "description": "At least one of the rapid calls must receive 429 or 503 to confirm rate limiting is active"
+        }
+      ]
+    },
+    {
+      "id": "T10-004-p2",
+      "transport": "http",
+      "method": "tools/call",
+      "description": "Rapid tool invocations must also be rate-limited. A server that limits tools/list but not tools/call has an incomplete rate-limiting policy.",
+      "probe_count": 20,
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {}
+      },
+      "assertions": [
+        {
+          "target": "response.status_code",
+          "operator": "status_in",
+          "value": [429, 503]
+        }
+      ]
+    }
+  ],
+  "remediation": "Enforce per-session and per-IP rate limits on all MCP endpoints. Return HTTP 429 with a Retry-After header when limits are exceeded. A budget of 60 tools/list + 120 tools/call calls per minute per session is a reasonable starting point. Log rate-limit events for abuse detection.",
+  "references": [
+    "https://cosai.org/T10",
+    "https://cwe.mitre.org/data/definitions/770.html",
+    "https://datatracker.ietf.org/doc/html/rfc6585#section-4"
+  ]
+}

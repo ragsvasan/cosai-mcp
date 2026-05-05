@@ -43,3 +43,9 @@ class ScanConfig:
     probe_delay_seconds: float = 0.0
     """Seconds to sleep between probes.  Use to avoid triggering server-side
     rate limiters when scanning servers that enforce per-session call budgets."""
+    read_token: str | None = None
+    """Bearer token with read-only scope.  Used by probes with ``probe_token: "read"``
+    to verify that limited-scope tokens are rejected by write-capable tools."""
+    extra_request_headers: dict[str, str] | None = None
+    """Extra HTTP headers added to every request in this config context.
+    Used by probe_headers to inject headers like Origin for CORS testing."""

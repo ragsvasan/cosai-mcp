@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0",
+  "id": "T07-001",
+  "category": "T7",
+  "severity": "medium",
+  "cosai_ref": "T7",
+  "owasp_ref": "MCP-Top10-A07",
+  "cwe": ["CWE-942"],
+  "probes": [
+    {
+      "id": "T07-001-p1",
+      "transport": "http",
+      "method": "tools/list",
+      "description": "Send a tools/list request with an Origin header from a cross-origin host. A CORS wildcard (Access-Control-Allow-Origin: *) on the MCP endpoint allows any web page to make authenticated MCP requests using the victim's credentials, enabling cross-site request forgery at the MCP protocol layer.",
+      "probe_headers": {
+        "Origin": "https://evil.example.com"
+      },
+      "payload": {},
+      "assertions": [
+        {
+          "target": "response.header.access-control-allow-origin",
+          "operator": "ne",
+          "value": "*",
+          "description": "CORS wildcard must not be set on the MCP endpoint; use an explicit allowlist of trusted origins"
+        }
+      ]
+    },
+    {
+      "id": "T07-001-p2",
+      "transport": "http",
+      "method": "initialize",
+      "description": "CORS policy must also restrict the initialize handshake. A wildcard on /mcp/ applies to all methods including initialize.",
+      "probe_headers": {
+        "Origin": "https://attacker.example.com"
+      },
+      "payload": {
+        "protocolVersion": "2025-03-26",
+        "clientInfo": {"name": "cosai-cors-probe", "version": "1.0"},
+        "capabilities": {}
+      },
+      "assertions": [
+        {
+          "target": "response.header.access-control-allow-origin",
+          "operator": "ne",
+          "value": "*",
+          "description": "CORS wildcard must not be present on the initialize response"
+        }
+      ]
+    }
+  ],
+  "remediation": "Replace Access-Control-Allow-Origin: * on the MCP endpoint with an explicit allowlist of trusted origins (e.g. your front-end domain). Never combine wildcard CORS with credentialed requests. Consider adding a CSRF token requirement for state-mutating MCP calls if the server is browser-accessible.",
+  "references": [
+    "https://cosai.org/T7",
+    "https://cwe.mitre.org/data/definitions/942.html",
+    "https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS",
+    "https://owasp.org/www-community/attacks/CORS_OriginHeaderScrutiny"
+  ]
+}
