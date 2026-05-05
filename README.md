@@ -6,7 +6,7 @@
 
 Open-source MCP security framework covering all 12 CoSAI threat categories (T1–T12).
 
-**Status:** Alpha — 828 tests passing, all T1–T12 categories implemented, Apache 2.0.
+**Status:** Alpha — 885 tests passing, all T1–T12 categories implemented, Apache 2.0.
 
 ```bash
 # Try without installing
@@ -46,7 +46,7 @@ cosai scan http://localhost:8000
 | T4 | Data/Control Boundary | Middleware (deploy in target) |
 | T5 | Inadequate Data Protection | Black-box prober |
 | T6 | Integrity/Verification | Stateful harness |
-| T7 | Session Security Failures | Stateful harness |
+| T7 | Session Security Failures | Stateful harness + black-box prober |
 | T8 | Network Binding Failures | Black-box prober |
 | T9 | Trust Boundary Failures | Middleware (deploy in target) |
 | T10 | Resource Management | Black-box prober |
@@ -78,6 +78,9 @@ cosai scan http://localhost:8000 --profile fastmcp
 
 # Avoid triggering server-side rate limiters (2.5 s between probes)
 cosai scan http://localhost:8080 --auth-token "$TOKEN" --probe-delay 2.5
+
+# Scope enforcement test (T02-005): provide both primary and read-only tokens
+cosai scan http://localhost:8000 --auth-token "$WRITE_TOKEN" --read-token "$READ_TOKEN"
 
 # pytest plugin
 pytest --cosai-target=http://localhost:8000 --cosai-severity=critical
@@ -120,7 +123,7 @@ Static analyzers test what you wrote — the source code. We test what you shipp
 For T4, adversarial mode with canary tokens catches exfiltration and prompt injection echoing from outside. For T9 and T12, we detect the absence of controls — probing whether logging endpoints exist and whether audit trails are present. But detecting that something happened requires being in the call path. That's what the middleware engine handles.
 
 **Is this ready for others to use?**
-828 passing tests, Apache 2.0, installs with pip. The catalog format and taxonomy coverage are stable. Reference-implementation quality — solid enough to standardize the probe catalog schema against, not yet production-hardened for enterprise deployment at scale.
+885 passing tests, Apache 2.0, installs with pip. The catalog format and taxonomy coverage are stable. Reference-implementation quality — solid enough to standardize the probe catalog schema against, not yet production-hardened for enterprise deployment at scale.
 
 **What about non-Python MCP servers?**
 The scanner speaks JSON-RPC — it's language-agnostic. Any MCP server regardless of implementation language is a valid target. The server-side middleware is Python-only today, but the scanner works against TypeScript, Go, or anything.
