@@ -428,6 +428,11 @@ def _run_scan(
         # ("ping", ()) on failure so the scan proceeds identically to pre-P10.
         real_tool_name, discovered_tools = _run_discovery(target_url, config)
 
+        # T4: passive manifest scan — no probe sent, uses already-fetched manifest.
+        # Runs whenever T4 is in scope (no category filter, or T4 explicitly requested).
+        if effective_categories is None or "T4" in effective_categories:
+            probe_results.extend(_scan_manifest_t4(tuple(discovered_tools) if discovered_tools else ()))
+
         # Profile: remap discovered tool name through tool_name_map if present.
         # This ensures probes use the real server tool name instead of the
         # catalog placeholder ("ping") when the server uses a different name.
@@ -531,6 +536,52 @@ def _run_scan(
             probe_results, scenario_results, fail_on, threat_severity
         ),
     )
+
+
+def _scan_manifest_t4(
+    discovered_tools: tuple,
+) -> list[ProbeResult]:
+    """Scan the tools/list manifest for T4 tool-poisoning patterns.
+
+    Runs ToolPoisoningDetector on every tool returned by the target server and
+    converts each finding into a ProbeResult so it surfaces in ScanResult and
+    report output.  This is passive analysis (no probe sent) — it uses the
+    manifest already fetched during discovery.
+
+    Called from _run_scan after _run_discovery, inside the prober block.
+    """
+    import json as _json
+    from cosai_mcp.middleware.boundary import ToolPoisoningDetector
+    from cosai_mcp.harness.result import ProbeResult as _ProbeResult
+
+    if not discovered_tools:
+        return []
+
+    # Deep-convert MappingProxyType → regular dict via JSON round-trip so that
+    # ToolPoisoningDetector's isinstance(prop_def, dict) check works on nested schemas.
+    tool_dicts: list[dict] = []
+    for t in discovered_tools:
+        try:
+            schema = _json.loads(_json.dumps(dict(t.input_schema)))
+        except (TypeError, ValueError):
+            schema = {}
+        tool_dicts.append({"name": t.name, "description": t.description, "inputSchema": schema})
+
+    scan = ToolPoisoningDetector().scan(tool_dicts)
+    results: list[ProbeResult] = []
+    for i, finding in enumerate(scan.findings):
+        results.append(_ProbeResult(
+            probe_id=f"T04-manifest-p{i + 1}",
+            threat_id="T04",
+            passed=False,
+            status_code=None,
+            response_body=finding.excerpt,
+            error=None,
+            assertions=(),
+            duration_seconds=0.0,
+            inconclusive_reason=None,
+        ))
+    return results
 
 
 def _normalise_categories(categories: list[str] | None) -> frozenset[str] | None:
