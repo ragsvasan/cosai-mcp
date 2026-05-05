@@ -1,7 +1,7 @@
 # cosai-mcp — Coverage Status
 
-**Date:** 2026-04-29
-**Build:** 822/822 tests passing
+**Date:** 2026-05-04
+**Build:** 860/860 tests passing
 **Catalog:** 20 signed threat definitions + 4 adversarial (Ed25519, signatures now enforced)
 **Status:** All phases P0–P13 complete. Codex P1/P2 findings resolved.
 
@@ -17,7 +17,7 @@ cosai-mcp uses three fundamentally different detection mechanisms. The right eng
 | **Stateful conformance harness** | Scripted multi-turn sessions with state tracking | Session state changes, mid-session mutations |
 | **Middleware instrumentation** | Library deployed inside the target server | Content flowing through the call path |
 
-**Critical constraint (locked architecture decision):** T4, T9, and T12 are structurally undetectable from outside. No black-box probe can observe whether content in a tool response contains prompt injection (T4), whether LLM output is sanitized before re-feed (T9), or whether execution is being logged (T12). The middleware IS the test for these categories.
+**Critical constraint (locked architecture decision):** T4 response-body injection, T9, and T12 are structurally undetectable from outside the call path. However, T4 **manifest poisoning** (injection hidden in `tools/list` metadata) is passively detectable: the scanner runs `ToolPoisoningDetector` on the manifest already fetched during discovery and surfaces any findings as `ProbeResult` objects with `threat_id="T04"`. Full T4/T9/T12 coverage still requires middleware instrumentation inside the target.
 
 ---
 
@@ -28,7 +28,7 @@ cosai-mcp uses three fundamentally different detection mechanisms. The right eng
 | T1 | Improper Authentication | Black-box prober | T01-001–004 | **Done** — missing auth, cross-session token, token replay (jti), DPoP binding |
 | T2 | Missing Access Control | Black-box + stateful harness | T02-001, T02-003 | **Done** — privilege scope probe; destructive one-shot (T02-003); stateful privilege escalation chain + confused deputy |
 | T3 | Input Validation Failures | Black-box prober | T03-001, T03-002 | **Done** — command injection, path traversal, SQL injection, null bytes, oversized payloads |
-| T4 | Data/Control Boundary | Middleware instrumentation | — | **Done** — ToolPoisoningDetector + ResponseBoundaryGuard (deploy middleware in target) |
+| T4 | Data/Control Boundary | Black-box prober (passive) + Middleware | — | **Done** — passive manifest scan wired into `_run_scan`; `ToolPoisoningDetector` + `ResponseBoundaryGuard` for full response-path coverage |
 | T5 | Inadequate Data Protection | Black-box prober | T05-001, T05-002 | **Done** — PII pattern detection, credential pattern detection in tool responses |
 | T6 | Integrity/Verification | Black-box + stateful harness | T06-001, T06-002 | **Done** — typosquat detection (Levenshtein ≤ 1); stateful mid-session manifest diff (rug pull) |
 | T7 | Session Security Failures | Stateful harness | — | **Done** — session fixation, token-in-URL, cross-session replay, explicit revocation (T7-SC-002) |
@@ -57,9 +57,9 @@ Requires `--adversarial --i-own-this-target`. Blocked against RFC1918 and loopba
 
 ## Middleware Implementations
 
-**T4 — `cosai_mcp/middleware/boundary.py`**
-- `ToolPoisoningDetector`: scans `tools/list` manifest for prompt injection hidden in tool name, description, and `inputSchema` properties
-- `ResponseBoundaryGuard`: scans tool call response bodies for indirect prompt injection
+**T4 — `cosai_mcp/middleware/boundary.py` + wired into `_run_scan`**
+- `ToolPoisoningDetector`: scans `tools/list` manifest for prompt injection hidden in tool name, description, and `inputSchema` properties. **Called automatically by the scanner** on the manifest fetched during discovery — findings surface as `ProbeResult(threat_id="T04", passed=False)` in scan output and SARIF.
+- `ResponseBoundaryGuard`: scans tool call response bodies for indirect prompt injection — deploy server-side for full response-path coverage
 - 18 RE2-compatible injection patterns
 
 **T9 — `cosai_mcp/middleware/trust.py`**
@@ -76,12 +76,12 @@ Requires `--adversarial --i-own-this-target`. Blocked against RFC1918 and loopba
 
 ## Test Suite
 
-**808 tests passing** across:
+**860 tests passing** across:
 
 | Module | What |
 |--------|------|
 | `tests/harness/` | Probe harness unit + regression tests |
-| `tests/probes/` | Black-box probe definitions (T1–T3, T5–T6, T8, T10–T12) |
+| `tests/probes/` | Black-box probe definitions (T1–T4, T5–T6, T8, T10–T12) |
 | `tests/stateful/` | Stateful harness (T2 privilege chain, T6 shadowing, T7 session) |
 | `tests/middleware/` | Boundary, trust, audit middleware |
 | `tests/adversarial/` | Adversarial mode, canary detection, enforcer |
