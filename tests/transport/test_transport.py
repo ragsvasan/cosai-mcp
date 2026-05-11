@@ -1027,11 +1027,13 @@ class TestMnemoScanRegressions:
 
     def test_regression_full_url_not_doubled(self):
         """When base_url already contains a non-root path (user passed full MCP URL),
-        the transport must not double the path by appending mcp_path again.
+        the transport must not double the path by appending mcp_path again, and must
+        not add a trailing slash (Next.js/Nginx servers 308 trailing slashes on
+        explicit paths, which cosai-mcp surfaces as SuspiciousRedirectError).
 
-        Regression: scan http://server:8099/api/mcp produced endpoint
-        http://server:8099/api/mcp/mcp/ — all probes failed with decompression errors
-        from the 404 HTML response.
+        Regression 1: scan http://server:8099/api/mcp → http://server:8099/api/mcp/mcp/
+        Regression 2: scan http://localhost:3000/api/mcp → http://localhost:3000/api/mcp/
+                       → 308 from Next.js → SuspiciousRedirectError, all probes failed.
         """
         from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
 
@@ -1041,8 +1043,11 @@ class TestMnemoScanRegressions:
             allow_private_targets=True,
         )
         transport = StreamableHTTPTransport("http://127.0.0.1:8099/api/mcp", config)
-        assert transport._endpoint == "http://127.0.0.1:8099/api/mcp/"
+        # No trailing slash — caller supplied the full path explicitly
+        assert transport._endpoint == "http://127.0.0.1:8099/api/mcp"
         # Must NOT be the doubled form
         assert transport._endpoint != "http://127.0.0.1:8099/api/mcp/mcp/"
+        # Must NOT have a trailing slash (causes 308 on Next.js servers)
+        assert not transport._endpoint.endswith("/")
 
 
