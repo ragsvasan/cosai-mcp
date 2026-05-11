@@ -104,10 +104,13 @@ class StreamableHTTPTransport(Transport):
         _parsed = urlparse(self._base_url)
         _url_path = _parsed.path
         if _url_path and _url_path not in ("/", ""):
-            # Full URL supplied — the path IS the MCP endpoint.
-            self._endpoint = self._base_url + "/"
+            # Full URL supplied — use as-is. Caller is explicit about the path;
+            # adding a trailing slash would cause 308s on Next.js/Nginx servers.
+            self._endpoint = self._base_url.rstrip("/")
         else:
             _origin = f"{_parsed.scheme}://{_parsed.netloc}"
+            # Trailing slash required for Starlette-mounted endpoints:
+            # Mount('/mcp') issues a 307 to '/mcp/' without it.
             self._endpoint = _origin + config.mcp_path.rstrip("/") + "/"
 
     # ------------------------------------------------------------------
