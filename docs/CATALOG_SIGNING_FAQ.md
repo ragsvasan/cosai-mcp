@@ -201,6 +201,34 @@ The env var is moot in a compromised environment.
 
 The hardcoded key is the security boundary (stops PyPI poisoning). The env var is a convenience boundary (enables key rotation in a *trusted* environment). Don't confuse them.
 
+### Q: If env var access implies the infrastructure is compromised, why bother hardcoding at all?
+
+Because they defend **different threat models** at different supply-chain layers.
+
+**Hardcoding defends against: PyPI poisoning (supply chain, no infrastructure compromise required)**
+- Developer runs `pip install cosai-mcp` 
+- Attacker poisons the release on PyPI with malicious threat definitions
+- Developer's local machine, CI/CD runner, or clean container pulls the poisoned version
+- Hardcoded key in the binary rejects the unsigned catalog entries — attack fails
+- This is real and has happened (SolarWinds, Codecov, xz-utils)
+
+**Env var is for: Enterprise key rotation (operational convenience, assumes trusted environment)**
+- Enterprise controls their CI/CD, secrets manager, deployment servers
+- They want to rotate signing keys without shipping a new binary
+- They set `COSAI_PUBKEY` from their secrets manager
+- This assumes the environment is already trusted — if someone can modify env vars, they've already compromised infrastructure. But that doesn't invalidate hardcoding; it means env var is not a security feature, just an operational one.
+
+**Threat models are different:**
+
+| Layer | Attacker Power | Defense |
+|-------|---|---|
+| PyPI package | Compromises release, no private key | Hardcoded key in binary ✓ |
+| Developer machine | Installs poisoned release, can set env vars | Hardcoding wins; env var is moot |
+| Enterprise CI/CD | Controls secrets and env vars | Env var enables key rotation (not a security boundary, an operational feature) |
+| Infrastructure root | Can replace binary, modify env, disable scanning | Game over; neither helps |
+
+**The bottom line:** Hardcoding solves a narrow but real problem (PyPI supply-chain poisoning). The env var doesn't weaken hardcoding — they address different use cases. Hardcoding is supply-chain defense. Env var is operational flexibility. Don't confuse them.
+
 ### Q: Who controls the private key?
 
 Currently: the project maintainers.
