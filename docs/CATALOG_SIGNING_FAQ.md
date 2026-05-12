@@ -124,14 +124,82 @@ Trust the environment first; signature checking is a defense-in-depth layer.
 
 Ed25519 signatures are validated using `joserfc` (or `PyJWT[crypto]` as fallback) at catalog load time. Invalid signatures cause `UnsignedFileError`. The threat catalog JSON schema is validated before signature checking, so schema violations fail fast and independently of signature verification.
 
-### Q: What if the ecosystem moves to different cryptography?
+### Q: Can't an attacker modify the binary to include their own hardcoded key?
 
-If Ed25519 is deprecated, we can:
-1. Support multiple algorithms via a `signature_algorithm` field in the JSON
-2. Issue a new binary with a new key and upgraded validation logic
-3. Publish an attestation explaining the transition
+Yes, they *can* modify the binary. But that's a different attack — binary modification, not catalog poisoning — and it's detectable.
 
-This is a low-probability event — Ed25519 is a modern standard with no known cryptographic weaknesses and is standardized in FIPS and NIST guidelines.
+**The distinction:**
+
+The hardcoded key defends against **catalog poisoning without modifying the binary** — the narrow case where an attacker compromises PyPI but cannot forge signatures.
+
+If an attacker goes further and modifies the binary to include their own key, they've now changed the binary itself. This is detectable via:
+
+1. **Sigstore attestation** — the binary is cryptographically signed by the project. A modified binary fails verification.
+   ```bash
+   cosign verify ghcr.io/ragsvasan/cosai-mcp:v1.2.3 \
+     --certificate-identity-regexp "cosai-mcp" \
+     --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+   ```
+
+2. **Hash verification** — the binary's SHA-256 is published on releases. An attacker-modified binary has a different hash.
+   ```bash
+   sha256sum cosai-mcp-v1.2.3.tar.gz
+   # Must match the published hash on GitHub releases
+   ```
+
+3. **Source inspection** — before installing, inspect `cosai_mcp/keys.py` in the source.
+   ```bash
+   git show v1.2.3:cosai_mcp/keys.py | grep COSAI_PUBKEY
+   ```
+
+4. **Supply chain tooling** — SBOMs, transparency logs, and CI attestations make silent binary modifications detectable.
+
+**Threat model layers:**
+
+| Layer | Attack | Defense |
+|-------|--------|---------|
+| Catalog only | Poison `/catalog/official/` without private key | Hardcoded public key |
+| Binary + catalog | Modify binary with attacker's key | Sigstore attestation + hash verification |
+| Binary + supply chain | Slip a modified binary past all checks | Transparency logs + offline verification |
+
+The hardcoded key wins at layer 1. Layers 2+ require Sigstore and hash verification, which are published with every release.
+
+### Q: If enterprises get the `COSAI_PUBKEY` env var, can't attackers use it too?
+
+Yes, they *could* set the env var. But that assumes they've already compromised your infrastructure — at which point the env var is irrelevant.
+
+**The key distinction:** `COSAI_PUBKEY` is NOT a security feature — it's an operational convenience for key rotation.
+
+**Who controls the environment?**
+
+In an enterprise deployment:
+- Environment variables are set by secrets management (AWS Secrets Manager, Vault, etc.)
+- Only IAM-authenticated operators can modify them
+- The enterprise explicitly decides to rotate keys and how to distribute them
+
+An attacker could set `COSAI_PUBKEY` if they:
+- Compromised the CI/CD pipeline (attacker already has root)
+- Compromised the container build (attacker already has root)
+- Compromised the deployment server (attacker already has root)
+- Have SSH/shell access (attacker already has root)
+
+All of these are "attacker owns your infrastructure" scenarios. At that point, the attacker can:
+- Replace the entire scanner binary
+- Modify threat definitions on disk
+- Intercept scan results
+- Disable scanning entirely
+
+The env var is moot in a compromised environment.
+
+**Threat models are different:**
+
+| Scenario | Defense |
+|----------|---------|
+| PyPI is compromised, but my build is clean | Hardcoded key (attacker can't forge without private key) |
+| I trust my environment but want to rotate keys | Env var (enterprise operational convenience) |
+| My infrastructure is compromised | No defense; you're already breached |
+
+The hardcoded key is the security boundary (stops PyPI poisoning). The env var is a convenience boundary (enables key rotation in a *trusted* environment). Don't confuse them.
 
 ### Q: Who controls the private key?
 
