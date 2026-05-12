@@ -97,6 +97,7 @@ pytest --cosai-target=http://localhost:8000 --cosai-severity=critical
 | [docs/THREAT_CATALOG.md](docs/THREAT_CATALOG.md) | T1–T12 reference; attack patterns; remediation |
 | [docs/THREAT_MAPPING.md](docs/THREAT_MAPPING.md) | ISO 27001 / NIST AI RMF / OWASP MCP Top 10 / OWASP ASI Top 10 / MITRE ATLAS / SOC 2 |
 | [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Threat definition JSON schema; adding new probes |
+| [docs/CATALOG_SIGNING_FAQ.md](docs/CATALOG_SIGNING_FAQ.md) | Threat definition signing & trust model; key rotation; enterprise overrides |
 | [docs/architecture-decisions.md](docs/architecture-decisions.md) | Full architecture panel findings |
 | [docs/workplan.md](docs/workplan.md) | Implementation roadmap (P0–P13, all complete) |
 
@@ -129,7 +130,10 @@ For T4, adversarial mode with canary tokens catches exfiltration and prompt inje
 The scanner speaks JSON-RPC — it's language-agnostic. Any MCP server regardless of implementation language is a valid target. The server-side middleware is Python-only today, but the scanner works against TypeScript, Go, or anything.
 
 **Who decides what goes in the official catalog?**
-Currently the project, with threat definitions Ed25519-signed by the project keypair. This includes files under `catalog/official/adversarial/` — unsigned official adversarial files are rejected at load time. The proposal to the CoSAI working group is that WS4 becomes the signing authority — same model as OWASP and the Top 10. Community submits, working group ratifies, signed artifacts ship.
+Currently the project, with threat definitions Ed25519-signed by the project keypair. The public key is hardcoded in the binary — even if an attacker poisons the PyPI package, they cannot forge valid signatures without the private key. See [docs/CATALOG_SIGNING_FAQ.md](docs/CATALOG_SIGNING_FAQ.md) for details on key rotation, custom catalogs, and trust. The proposal to the CoSAI working group is that WS4 becomes the signing authority — same model as OWASP and the Top 10. Community submits, working group ratifies, signed artifacts ship.
+
+**How do I know the threat definitions haven't been tampered with?**
+Official definitions are Ed25519-signed; the scanner validates signatures at load time. The public key is hardcoded in the binary and published via Sigstore attestation. Custom threats (unsigned) require explicit `--allow-custom-catalog` flag. See [docs/CATALOG_SIGNING_FAQ.md](docs/CATALOG_SIGNING_FAQ.md) for the full security model, including enterprise key rotation via `COSAI_PUBKEY` environment variable.
 
 ## License
 
