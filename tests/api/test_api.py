@@ -167,6 +167,16 @@ class TestDetermineExitCode:
     def test_no_results_returns_0(self) -> None:
         assert _determine_exit_code([], [], "critical") == 0
 
+    def test_regression_probe_timeout_does_not_return_2(self) -> None:
+        """Timed-out probes set error + inconclusive_reason and must not trigger exit 2."""
+        r = self._make_probe_result(
+            passed=False,
+            error="Probe timed out after 10.0s",
+            inconclusive_reason="Probe timed out after 10.0s — security property could not be verified",
+        )
+        code = _determine_exit_code([r], [], "critical")
+        assert code != 2, "timed-out probe must not produce exit code 2"
+
     def test_regression_transport_inconclusive_does_not_return_2(self) -> None:
         """Transport-inconclusive probes set both error and inconclusive_reason.
         They must NOT trigger exit code 2 — they are classified infrastructure

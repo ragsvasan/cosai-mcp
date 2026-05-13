@@ -458,6 +458,10 @@ class ProbeRunner:
                 assertions=(),
                 error=f"Probe timed out after {timeout:.1f}s",
                 duration_seconds=elapsed,
+                inconclusive_reason=(
+                    f"Probe timed out after {timeout:.1f}s — "
+                    "security property could not be verified"
+                ),
             )
 
         if result_queue.empty():
@@ -468,6 +472,10 @@ class ProbeRunner:
                 assertions=(),
                 error="Probe subprocess exited without producing a result",
                 duration_seconds=elapsed,
+                inconclusive_reason=(
+                    "Probe subprocess exited without producing a result — "
+                    "security property could not be verified"
+                ),
             )
 
         raw = result_queue.get_nowait()
