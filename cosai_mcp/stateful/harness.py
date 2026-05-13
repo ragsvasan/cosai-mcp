@@ -29,6 +29,21 @@ import types as _types
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
+
+def _levenshtein(a: str, b: str) -> int:
+    """Edit distance between two strings (for tool-name suggestion)."""
+    if len(a) < len(b):
+        a, b = b, a
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        curr = [i]
+        for j, cb in enumerate(b, 1):
+            curr.append(min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = curr
+    return prev[-1]
+
 from cosai_mcp.config import ScanConfig
 from cosai_mcp.session import MCPSession
 from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
@@ -319,14 +334,31 @@ class StatefulHarness:
                 t.get("name", "") for t in session.tool_manifest
             }
             if available_tools:  # non-empty manifest — we can check coverage
+                overrides: dict[str, str] = self._config.method_overrides or {}
                 required_tools = {
-                    step.action.params.get("name", "")
+                    overrides.get(
+                        step.action.params.get("name", ""),
+                        step.action.params.get("name", ""),
+                    )
                     for step in scenario.steps
                     if step.action.method == "tools/call"
                     and step.action.params.get("name")
                 }
                 missing = required_tools - available_tools
                 if missing:
+                    # Suggest the closest available tool by edit distance for each
+                    # missing name so the user knows exactly which override to add.
+                    suggestions: list[str] = []
+                    for m in sorted(missing):
+                        closest = min(available_tools, key=lambda t: _levenshtein(m, t))
+                        suggestions.append(
+                            f"--method-override {m}={closest}"
+                        )
+                    suggestion_text = (
+                        f" Closest available tools: {'; '.join(suggestions)}."
+                        if suggestions
+                        else " Configure method_overrides to map them to equivalent tools."
+                    )
                     return ScenarioResult(
                         scenario_id=scenario.id,
                         scenario_name=scenario.name,
@@ -338,8 +370,7 @@ class StatefulHarness:
                             f"Scenario requires tool(s) not present on this server: "
                             f"{', '.join(sorted(missing))}. "
                             f"The scenario tests a generic vulnerability pattern using "
-                            f"placeholder tool names. To test this scenario, configure "
-                            f"method_overrides to map them to equivalent tools on this server."
+                            f"placeholder tool names.{suggestion_text}"
                         ),
                     )
 
@@ -385,7 +416,11 @@ class StatefulHarness:
             # including tools/list.  session.tools_list() returns the cached
             # manifest from initialization; using it for T6 would defeat
             # shadowing detection entirely.
-            response = await session.send_raw(step.action.method, dict(step.action.params))
+            params = dict(step.action.params)
+            if step.action.method == "tools/call" and "name" in params:
+                overrides: dict[str, str] = self._config.method_overrides or {}
+                params["name"] = overrides.get(params["name"], params["name"])
+            response = await session.send_raw(step.action.method, params)
         except Exception as exc:
             return StepResult(
                 step_index=index,

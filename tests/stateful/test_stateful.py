@@ -704,3 +704,97 @@ class TestScenarioFactoryFields:
         assert s.id == "T7-SC-001"
         assert "T7" in s.threat_categories
         assert len(s.steps) >= 2
+
+
+# ---------------------------------------------------------------------------
+# method_overrides — tool name remapping
+# ---------------------------------------------------------------------------
+
+_REAL_TOOLS = [
+    {"name": "execute_task", "description": "Run a task", "inputSchema": {"type": "object"}},
+    {"name": "log_freeform", "description": "Log text", "inputSchema": {"type": "object"}},
+]
+
+
+class TestMethodOverrides:
+    """StatefulHarness must apply method_overrides when checking tool availability
+    and when issuing network calls — so scenarios with placeholder tool names work
+    against servers that name their tools differently.
+    """
+
+    def _harness_with_overrides(self, overrides: dict[str, str]) -> StatefulHarness:
+        config = ScanConfig(
+            target_host="127.0.0.1",
+            target_port=0,
+            allow_private_targets=True,
+            probe_timeout_seconds=5.0,
+            method_overrides=overrides,
+        )
+        return StatefulHarness(config)
+
+    def _simple_scenario(self, tool_name: str) -> "Scenario":
+        return Scenario(
+            id="T2-SC-TEST",
+            name="Method Override Test",
+            threat_categories=("T2",),
+            steps=(
+                ScenarioStep(
+                    description="call placeholder tool",
+                    action=StepAction(
+                        method="tools/call",
+                        params={"name": tool_name, "arguments": {}},
+                    ),
+                    assertions=(
+                        StepAssertion(
+                            target="result",
+                            operator="is_not_none",
+                            message="tool should respond",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+    def test_method_override_remaps_tool_call(self):
+        """Scenario using placeholder name 'admin_delete' runs against a server
+        that only has 'execute_task' when method_overrides maps the two."""
+        harness = self._harness_with_overrides({"admin_delete": "execute_task"})
+        scenario = self._simple_scenario("admin_delete")
+
+        with MockMCPServer(tools=_REAL_TOOLS) as server:
+            server.wait_ready()
+            result = harness.run_scenario(scenario, f"http://127.0.0.1:{server.port}")
+
+        assert result.status == "complete", (
+            f"Expected complete, got {result.status!r} — method_override did not remap tool name"
+        )
+
+    def test_missing_tool_without_override_is_inconclusive(self):
+        """A scenario calling 'admin_delete' on a server that has 'execute_task'
+        (but no override configured) must return inconclusive, not complete."""
+        harness = self._harness_with_overrides({})
+        scenario = self._simple_scenario("admin_delete")
+
+        with MockMCPServer(tools=_REAL_TOOLS) as server:
+            server.wait_ready()
+            result = harness.run_scenario(scenario, f"http://127.0.0.1:{server.port}")
+
+        assert result.status == "inconclusive", (
+            f"Expected inconclusive for unknown tool, got {result.status!r}"
+        )
+
+    def test_inconclusive_reason_suggests_override(self):
+        """Inconclusive result must include a --method-override suggestion for the
+        missing tool name so the user knows exactly what to configure."""
+        harness = self._harness_with_overrides({})
+        scenario = self._simple_scenario("admin_delete")
+
+        with MockMCPServer(tools=_REAL_TOOLS) as server:
+            server.wait_ready()
+            result = harness.run_scenario(scenario, f"http://127.0.0.1:{server.port}")
+
+        assert result.inconclusive_reason is not None
+        assert "--method-override" in result.inconclusive_reason, (
+            "inconclusive_reason must suggest the --method-override flag"
+        )
+        assert "admin_delete" in result.inconclusive_reason

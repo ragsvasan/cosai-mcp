@@ -1341,3 +1341,122 @@ class TestInitializeTransportErrorIsInconclusive:
                 "SARIF FINDING — transport failures must be inconclusive"
             )
 
+
+# ---------------------------------------------------------------------------
+# Retry-with-backoff
+# ---------------------------------------------------------------------------
+
+def _transport_inconclusive_result() -> ProbeResult:
+    """Return a ProbeResult that looks like a transport-level inconclusive."""
+    return make_probe_result(
+        probe_id="T01-001-p1",
+        threat_id="T01-001",
+        passed=False,
+        assertions=(),
+        error="rate_limit_exceeded",
+        duration_seconds=0.0,
+        inconclusive_reason=(
+            "Scanner could not complete MCP handshake (rate_limit_exceeded) — "
+            "security property could not be verified"
+        ),
+    )
+
+
+def _passing_result() -> ProbeResult:
+    return make_probe_result(
+        probe_id="T01-001-p1",
+        threat_id="T01-001",
+        passed=True,
+        assertions=(),
+        error=None,
+        duration_seconds=0.1,
+        inconclusive_reason=None,
+    )
+
+
+class TestRetryWithBackoff:
+    """ProbeRunner.run_probe must retry up to max_probe_retries times when a probe
+    returns a transport-level inconclusive (MCP handshake failure), and must stop
+    retrying as soon as a non-transport-inconclusive result is returned.
+    """
+
+    def _runner(self, max_retries: int = 2, backoff: float = 0.0) -> ProbeRunner:
+        config = ScanConfig(
+            target_host="127.0.0.1",
+            target_port=0,
+            allow_private_targets=True,
+            max_probe_retries=max_retries,
+            retry_backoff_seconds=backoff,
+        )
+        return ProbeRunner(config, "http://127.0.0.1:0")
+
+    def test_retry_succeeds_on_second_attempt(self):
+        """When first attempt is transport-inconclusive but second succeeds,
+        run_probe must return the successful result."""
+        runner = self._runner(max_retries=2, backoff=0.0)
+        probe = _make_probe()
+        threat = _make_threat()
+
+        call_seq = [_transport_inconclusive_result(), _passing_result()]
+        with patch.object(
+            runner, "_run_subprocess_once", side_effect=call_seq
+        ) as mock_run:
+            result = runner.run_probe(probe, threat)
+
+        assert result.passed is True, "retry must return the passing result"
+        assert mock_run.call_count == 2, "must have tried exactly twice"
+
+    def test_retry_exhausted_returns_last_inconclusive(self):
+        """When all attempts are transport-inconclusive, run_probe must return
+        the last inconclusive result (not raise)."""
+        runner = self._runner(max_retries=1, backoff=0.0)
+        probe = _make_probe()
+        threat = _make_threat()
+
+        call_seq = [_transport_inconclusive_result(), _transport_inconclusive_result()]
+        with patch.object(
+            runner, "_run_subprocess_once", side_effect=call_seq
+        ) as mock_run:
+            result = runner.run_probe(probe, threat)
+
+        assert result.inconclusive_reason is not None, "exhausted retries must stay inconclusive"
+        assert mock_run.call_count == 2  # 1 initial + 1 retry
+
+    def test_no_retry_when_max_retries_zero(self):
+        """max_probe_retries=0 must run exactly once with no retry loop."""
+        runner = self._runner(max_retries=0, backoff=0.0)
+        probe = _make_probe()
+        threat = _make_threat()
+
+        with patch.object(
+            runner, "_run_subprocess_once", return_value=_transport_inconclusive_result()
+        ) as mock_run:
+            result = runner.run_probe(probe, threat)
+
+        assert mock_run.call_count == 1, "max_retries=0 must not retry"
+        assert result.inconclusive_reason is not None
+
+    def test_non_transport_inconclusive_is_not_retried(self):
+        """Schema-mismatch inconclusives (no 'MCP handshake' in reason) must not
+        trigger the retry loop — retrying schema errors wastes time and can't fix them."""
+        runner = self._runner(max_retries=2, backoff=0.0)
+        probe = _make_probe()
+        threat = _make_threat()
+
+        schema_inconclusive = make_probe_result(
+            probe_id="T01-001-p1",
+            threat_id="T01-001",
+            passed=False,
+            assertions=(),
+            error=None,
+            duration_seconds=0.1,
+            inconclusive_reason="probe payload rejected by server schema — field 'cmd' not in inputSchema",
+        )
+        with patch.object(
+            runner, "_run_subprocess_once", return_value=schema_inconclusive
+        ) as mock_run:
+            result = runner.run_probe(probe, threat)
+
+        assert mock_run.call_count == 1, "schema inconclusive must not trigger retry"
+        assert result.inconclusive_reason is not None
+

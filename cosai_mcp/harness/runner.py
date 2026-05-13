@@ -169,6 +169,21 @@ def _is_auth_rejection(exc: Exception) -> bool:
     return any(kw in msg for kw in _AUTH_REJECT_KEYWORDS)
 
 
+def _is_transport_inconclusive(result: "ProbeResult") -> bool:
+    """Return True when *result* is inconclusive due to a transport failure
+    during the MCP initialize handshake (as opposed to a schema mismatch).
+
+    Transport inconclusives are candidates for retry-with-backoff because the
+    server may simply be rate-limiting new sessions; the probe payload itself
+    is not at fault.  Schema-mismatch inconclusives are handled separately by
+    adaptive synthesis.
+    """
+    return (
+        result.inconclusive_reason is not None
+        and "MCP handshake" in (result.inconclusive_reason or "")
+    )
+
+
 def _probe_subprocess_entry(
     result_queue: "multiprocessing.Queue[dict[str, Any]]",
     probe_dict: dict[str, Any],
@@ -394,39 +409,20 @@ class ProbeRunner:
         self._config = config
         self._target_url = target_url
 
-    def run_probe(
+    def _run_subprocess_once(
         self,
         probe: Probe,
         threat: ThreatDefinition,
-        variables: dict[str, str] | None = None,
-        timeout_seconds: float | None = None,
-        pass_on_auth_reject: bool = False,
-        discovered_tool: DiscoveredTool | None = None,
+        variables: dict[str, str] | None,
+        timeout: float,
+        pass_on_auth_reject: bool,
     ) -> ProbeResult:
-        """Execute a probe in an isolated subprocess and return the result.
+        """Spawn one isolated subprocess for *probe* and return the result.
 
-        If the subprocess times out, it is killed and a timeout ProbeResult
-        is returned (passed=False, error describes the timeout).
-
-        If the result is INCONCLUSIVE (schema mismatch) and ``discovered_tool``
-        is provided, the parent synthesizes an adapted payload and retries once.
-        Synthesis is pure (no I/O) and runs before the second fork.  If the
-        retry is also INCONCLUSIVE, returns that result with
-        ``synthesis_attempted=True``.
-
-        Parameters
-        ----------
-        pass_on_auth_reject:
-            Passed through to the subprocess.  Set *True* for T1 auth-
-            enforcement probes so that a server-side auth rejection at
-            initialize time is treated as a PASS rather than a scanner error.
-        discovered_tool:
-            Optional tool schema snapshot from pre-scan discovery.  When
-            provided and the first attempt is INCONCLUSIVE, enables one
-            adaptive retry with a synthesized payload.
+        This is the primitive used by ``run_probe`` for both the initial
+        attempt and transport-level retries.  It does not perform synthesis or
+        backoff — callers are responsible for those layers.
         """
-        timeout = timeout_seconds if timeout_seconds is not None else self._config.probe_timeout_seconds
-
         ctx: multiprocessing.context.BaseContext = multiprocessing.get_context("spawn")
         result_queue: multiprocessing.Queue[dict[str, Any]] = ctx.Queue()
 
@@ -486,14 +482,76 @@ class ProbeRunner:
                 error=f"Invalid subprocess result: {exc}",
                 duration_seconds=elapsed,
             )
-        first_result = _result_from_dict(validated)
+        return _result_from_dict(validated)
 
-        # --- Adaptive retry (P10) ---
-        # If first attempt was INCONCLUSIVE (schema mismatch) and a discovered
-        # tool is available, synthesize a schema-aware payload and retry once.
+    def run_probe(
+        self,
+        probe: Probe,
+        threat: ThreatDefinition,
+        variables: dict[str, str] | None = None,
+        timeout_seconds: float | None = None,
+        pass_on_auth_reject: bool = False,
+        discovered_tool: DiscoveredTool | None = None,
+    ) -> ProbeResult:
+        """Execute a probe in an isolated subprocess and return the result.
+
+        If the subprocess times out, it is killed and a timeout ProbeResult
+        is returned (passed=False, error describes the timeout).
+
+        If the result is INCONCLUSIVE due to a transport error during the MCP
+        initialize handshake (e.g. rate_limit_exceeded), the probe is retried
+        up to ``config.max_probe_retries`` times with exponential backoff
+        (``config.retry_backoff_seconds * 2^attempt``).
+
+        If after retries the result is still INCONCLUSIVE due to a schema
+        mismatch (server rejected the payload) and ``discovered_tool`` is
+        provided, the parent synthesizes an adapted payload and retries once.
+        Synthesis is pure (no I/O) and runs before the second fork.  If the
+        retry is also INCONCLUSIVE, returns that result with
+        ``synthesis_attempted=True``.
+
+        Parameters
+        ----------
+        pass_on_auth_reject:
+            Passed through to the subprocess.  Set *True* for T1 auth-
+            enforcement probes so that a server-side auth rejection at
+            initialize time is treated as a PASS rather than a scanner error.
+        discovered_tool:
+            Optional tool schema snapshot from pre-scan discovery.  When
+            provided and the first attempt is INCONCLUSIVE, enables one
+            adaptive retry with a synthesized payload.
+        """
+        timeout = timeout_seconds if timeout_seconds is not None else self._config.probe_timeout_seconds
+        result = self._run_subprocess_once(probe, threat, variables, timeout, pass_on_auth_reject)
+
+        # --- Transport-level retry with exponential backoff ---
+        # When the MCP initialize handshake is rejected (rate limit, transient
+        # server error), the probe never ran — no security verdict is possible.
+        # Retry up to max_probe_retries times; each attempt doubles the delay.
+        # This is distinct from adaptive synthesis: we are not changing the
+        # payload, just giving the server time to recover.
+        max_retries = self._config.max_probe_retries
+        if max_retries > 0 and _is_transport_inconclusive(result):
+            for attempt in range(max_retries):
+                backoff = self._config.retry_backoff_seconds * (2.0 ** attempt)
+                time.sleep(backoff)
+                retry = self._run_subprocess_once(
+                    probe, threat, variables, timeout, pass_on_auth_reject
+                )
+                if not _is_transport_inconclusive(retry):
+                    result = retry
+                    break
+            else:
+                # All retries exhausted — result stays transport-inconclusive.
+                pass
+
+        # --- Adaptive retry (P10) — schema-mismatch inconclusive ---
+        # If still INCONCLUSIVE (schema mismatch) and a discovered tool is
+        # available, synthesize a schema-aware payload and retry once.
         # Synthesis is pure (no I/O) — runs here in the parent before the fork.
         if (
-            first_result.inconclusive_reason is not None
+            result.inconclusive_reason is not None
+            and not _is_transport_inconclusive(result)
             and discovered_tool is not None
         ):
             adapted_probe = _synthesize_probe(probe, threat, discovered_tool)
@@ -515,9 +573,9 @@ class ProbeRunner:
             # Synthesis failed (ValueError / unexpected error) — fall through
             # and return original result with synthesis_attempted=True to signal
             # that we tried but could not synthesize a valid payload.
-            return dataclasses.replace(first_result, synthesis_attempted=True)
+            return dataclasses.replace(result, synthesis_attempted=True)
 
-        return first_result
+        return result
 
     def run_threat(
         self,

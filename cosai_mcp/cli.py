@@ -91,6 +91,19 @@ def main() -> None:
 @click.option("--probe-delay", type=float, default=0.0, show_default=True,
               help="Seconds to sleep between probes. Use when the target server "
                    "enforces rate limits on new MCP sessions.")
+@click.option("--max-probe-retries", type=int, default=2, show_default=True,
+              help="Maximum retries when a probe is inconclusive due to a transport "
+                   "error during the MCP initialize handshake (e.g. rate_limit_exceeded). "
+                   "Each retry waits --retry-backoff * 2^attempt seconds. Set to 0 to disable.")
+@click.option("--retry-backoff", type=float, default=1.5, show_default=True,
+              help="Initial backoff in seconds before the first retry on transport-level "
+                   "inconclusive results. Doubles on each subsequent attempt.")
+@click.option("--method-override", "method_overrides", multiple=True,
+              metavar="OLD=NEW",
+              help="Map a scenario placeholder tool name to a real tool name on the target "
+                   "server. Repeat for multiple mappings. Example: "
+                   "--method-override admin_delete=execute_task "
+                   "--method-override echo=log_freeform")
 @click.option("--allow-private-targets/--block-private-targets", default=True,
               help="Allow scanning RFC1918/loopback targets (default: allowed for dev use). "
                    "Use --block-private-targets in CI to enforce public-target-only policy.")
@@ -139,6 +152,9 @@ def scan(
     report_coverage: bool,
     probe_timeout: float,
     probe_delay: float,
+    max_probe_retries: int,
+    retry_backoff: float,
+    method_overrides: tuple[str, ...],
     allow_private_targets: bool,
     catalog_root: str | None,
     auth_token: str | None,
@@ -208,6 +224,15 @@ def scan(
             click.echo(f"[ERROR] Invalid target URL: {exc}", err=True)
             sys.exit(2)
 
+    # -- Parse --method-override KEY=VALUE pairs --
+    parsed_overrides: dict[str, str] = {}
+    for mapping in method_overrides:
+        if "=" not in mapping:
+            click.echo(f"[ERROR] --method-override must be in KEY=VALUE format: {mapping!r}", err=True)
+            sys.exit(2)
+        k, _, v = mapping.partition("=")
+        parsed_overrides[k.strip()] = v.strip()
+
     # -- Run scan (exit 2 on scanner internal error) --
     try:
         result = _run_scan(
@@ -225,6 +250,9 @@ def scan(
             profile=resolved_profile,
             adversarial_mode=adv_mode,
             probe_delay_seconds=probe_delay,
+            max_probe_retries=max_probe_retries,
+            retry_backoff_seconds=retry_backoff,
+            method_overrides=parsed_overrides,
         )
     except ValueError as exc:
         # Includes adversarial dual opt-in failures

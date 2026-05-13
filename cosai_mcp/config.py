@@ -49,3 +49,16 @@ class ScanConfig:
     extra_request_headers: dict[str, str] | None = None
     """Extra HTTP headers added to every request in this config context.
     Used by probe_headers to inject headers like Origin for CORS testing."""
+    max_probe_retries: int = 2
+    """Maximum number of retries when a probe is inconclusive due to a transport
+    error during the MCP initialize handshake (e.g. rate_limit_exceeded).
+    Each retry sleeps retry_backoff_seconds * 2^attempt before re-running the
+    probe subprocess. Set to 0 to disable retries."""
+    retry_backoff_seconds: float = 1.5
+    """Initial backoff in seconds before the first retry on transport-level
+    inconclusive results. Doubles on each subsequent attempt."""
+    method_overrides: dict[str, str] = field(default_factory=dict)
+    """Maps generic scenario tool names to real tool names on the target server.
+    Used by the stateful harness when a scenario references a placeholder tool
+    (e.g. 'admin_delete') that does not exist on the server. Example:
+    {'admin_delete': 'execute_task', 'echo': 'log_freeform'}"""

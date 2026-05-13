@@ -333,6 +333,9 @@ def _run_scan(
     profile: ServerProfile | None = None,
     adversarial_mode: AdversarialMode | None = None,
     probe_delay_seconds: float = 0.0,
+    max_probe_retries: int = 2,
+    retry_backoff_seconds: float = 1.5,
+    method_overrides: dict[str, str] | None = None,
 ) -> ScanResult:
     """Orchestrate a complete scan and return a ``ScanResult``.
 
@@ -368,6 +371,9 @@ def _run_scan(
         mcp_path=effective_mcp_path,
         auth_header=effective_auth_header,
         probe_delay_seconds=probe_delay_seconds,
+        max_probe_retries=max_probe_retries,
+        retry_backoff_seconds=retry_backoff_seconds,
+        method_overrides=method_overrides or {},
     )
 
     # Generate a unique scan ID for this run (used for canary traceability)
@@ -627,6 +633,9 @@ class Scanner:
         profile: ServerProfile | None = None,
         adversarial_mode: AdversarialMode | None = None,
         probe_delay_seconds: float = 0.0,
+        max_probe_retries: int = 2,
+        retry_backoff_seconds: float = 1.5,
+        method_overrides: dict[str, str] | None = None,
     ) -> None:
         self.target = target
         self.categories = categories
@@ -641,6 +650,9 @@ class Scanner:
         self.profile = profile
         self.adversarial_mode = adversarial_mode
         self.probe_delay_seconds = probe_delay_seconds
+        self.max_probe_retries = max_probe_retries
+        self.retry_backoff_seconds = retry_backoff_seconds
+        self.method_overrides = method_overrides
 
     def run(self, categories: list[str] | None = None) -> ScanResult:
         """Run a complete scan and return a :class:`ScanResult`.
@@ -669,6 +681,9 @@ class Scanner:
                 profile=self.profile,
                 adversarial_mode=self.adversarial_mode,
                 probe_delay_seconds=self.probe_delay_seconds,
+                max_probe_retries=self.max_probe_retries,
+                retry_backoff_seconds=self.retry_backoff_seconds,
+                method_overrides=self.method_overrides,
             )
         except (ValueError, TargetUnreachableError):
             raise  # let typed exceptions propagate as-is
