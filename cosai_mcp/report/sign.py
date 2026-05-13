@@ -1,10 +1,14 @@
-"""Report signing — per-installation Ed25519 key stored in OS keychain via keyring."""
+"""Report signing — per-installation Ed25519 key stored in OS keychain via keyring.
+
+Set ``COSAI_NO_SIGN=1`` to skip keychain access entirely (no signature written).
+"""
 from __future__ import annotations
 
 import base64
 import binascii
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -119,6 +123,8 @@ class ReportSigner:
 
     @staticmethod
     def _load_or_create_key() -> Ed25519PrivateKey:
+        if os.environ.get("COSAI_NO_SIGN", "").strip() not in ("", "0"):
+            raise RuntimeError("COSAI_NO_SIGN is set — keychain access skipped")
         if not _KEYRING_AVAILABLE:
             raise RuntimeError(
                 "keyring is required for report signing. "
