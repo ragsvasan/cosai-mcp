@@ -530,3 +530,60 @@ class TestSarifFrameworkMetadata:
         assert rule["properties"]["cwe"] == ["CWE-74"]
         assert rule["properties"]["owasp_ref"] == "MCP-Top10-A04"
         assert "AML.T0051" in rule["properties"]["atlas_techniques"]
+
+
+# ---------------------------------------------------------------------------
+# Regression: inconclusive probes must not appear in SARIF output
+# ---------------------------------------------------------------------------
+
+class TestSarifInconclusiveFilter:
+
+    def test_regression_inconclusive_probe_produces_no_sarif_result(self):
+        """Inconclusive probe (transport error / schema mismatch) must NOT produce a
+        SARIF result entry — it is not a security finding.
+
+        Regression for: scanner reporting rate_limit_exceeded initialize failures
+        as SARIF error-level findings.
+        """
+        result = make_probe_result(
+            probe_id="T05-001-p1",
+            threat_id="T05-001",
+            passed=False,
+            assertions=(),
+            error="Server rejected initialize: rate_limit_exceeded",
+            inconclusive_reason=(
+                "Scanner could not complete MCP handshake "
+                "(Server rejected initialize: rate_limit_exceeded) — "
+                "security property could not be verified"
+            ),
+        )
+        b = SarifBuilder(_context())
+        _add(b, result, rule_id="T05-001")
+        doc = b.build()
+        assert doc["runs"][0]["results"] == [], (
+            "Inconclusive probe must not appear in SARIF results"
+        )
+
+    def test_regression_mixed_inconclusive_and_failed_only_failed_in_sarif(self):
+        """When one probe is inconclusive and one fails, only the failed one appears."""
+        inconclusive = make_probe_result(
+            probe_id="T05-001-p1",
+            threat_id="T05-001",
+            passed=False,
+            assertions=(),
+            inconclusive_reason="Scanner could not complete MCP handshake — not verified",
+        )
+        failed = make_probe_result(
+            probe_id="T05-002-p1",
+            threat_id="T05-002",
+            passed=False,
+            assertions=(),
+            error="assertion failed",
+        )
+        b = SarifBuilder(_context())
+        _add(b, inconclusive, rule_id="T05-001")
+        _add(b, failed, rule_id="T05-002")
+        doc = b.build()
+        results = doc["runs"][0]["results"]
+        assert len(results) == 1
+        assert results[0]["ruleId"] == "T05-002"

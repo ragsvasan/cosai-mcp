@@ -270,3 +270,103 @@ class TestHtmlRegressions:
         b = _builder()
         report = b.build()
         assert "style-src 'self'" not in report
+
+
+# ---------------------------------------------------------------------------
+# Regression: all-inconclusive sections must show INCONCLUSIVE, not PASS
+# ---------------------------------------------------------------------------
+
+def _inconclusive_section(threat_id: str = "T05-001") -> HtmlReportSection:
+    """Section where every probe is inconclusive (transport error during initialize)."""
+    result = make_probe_result(
+        probe_id=f"{threat_id}-p1",
+        threat_id=threat_id,
+        passed=False,
+        assertions=(),
+        error="Server rejected initialize: rate_limit_exceeded",
+        inconclusive_reason=(
+            "Scanner could not complete MCP handshake "
+            "(Server rejected initialize: rate_limit_exceeded) — "
+            "security property could not be verified"
+        ),
+    )
+    return HtmlReportSection(
+        threat_id=threat_id,
+        category="T5",
+        severity=Severity.HIGH,
+        passed=False,
+        probe_results=[result],
+        remediation="Apply credential scrubbing.",
+        references=(),
+    )
+
+
+def _all_inconclusive_passed_section(threat_id: str = "T02-001") -> HtmlReportSection:
+    """Section where every probe has passed=True but inconclusive_reason set
+    (schema mismatch — assertion technically passed but security not verified)."""
+    result = make_probe_result(
+        probe_id=f"{threat_id}-p1",
+        threat_id=threat_id,
+        passed=True,
+        assertions=(),
+        inconclusive_reason=(
+            "Probe payload did not match the server's tool schema — "
+            "security property could not be verified"
+        ),
+    )
+    return HtmlReportSection(
+        threat_id=threat_id,
+        category="T2",
+        severity=Severity.HIGH,
+        passed=True,
+        probe_results=[result],
+        remediation="",
+        references=(),
+    )
+
+
+class TestHtmlInconclusiveSections:
+
+    def test_regression_all_inconclusive_section_shows_inconclusive_header(self):
+        """A section where all probes are inconclusive must show INCONCLUSIVE badge,
+        not PASS. Regression for: transport errors reported as PASS with buried notes.
+        """
+        b = _builder()
+        b.add_section(_inconclusive_section())
+        report = b.build()
+        assert "INCONCLUSIVE" in report
+        assert "st-inconclusive" in report
+
+    def test_regression_all_inconclusive_section_not_in_pass_group(self):
+        """All-inconclusive section must appear under 'Inconclusive' group heading,
+        not under 'Passed — No Vulnerabilities Detected'.
+        """
+        b = _builder()
+        b.add_section(_inconclusive_section())
+        report = b.build()
+        assert "Inconclusive — Security Property Not Verified" in report
+        assert "Passed — No Vulnerabilities Detected" not in report
+
+    def test_regression_all_inconclusive_not_counted_as_passed_threat(self):
+        """All-inconclusive sections must not increment the 'Categories passed' stat."""
+        b = _builder()
+        b.add_section(_inconclusive_section("T05-001"))
+        b.add_section(_section(threat_id="T01-001", passed=True))  # genuine pass
+        report = b.build()
+        # '1' Categories passed, not '2'
+        assert "num-pass'>1<" in report.replace(" ", "").replace("\n", "")
+
+    def test_regression_schema_mismatch_inconclusive_shows_inconclusive_not_pass(self):
+        """A section where probes passed=True but all have inconclusive_reason set
+        (schema mismatch) must show INCONCLUSIVE header, not PASS.
+        Regression for: T02/T03 categories incorrectly showing PASS when probe
+        arguments were rejected by the server's JSON schema, not security logic.
+        """
+        b = _builder()
+        b.add_section(_all_inconclusive_passed_section())
+        report = b.build()
+        assert "INCONCLUSIVE" in report
+        assert "st-inconclusive" in report
+        # Must NOT use section-pass div class (CSS definition always present, so
+        # check the rendered div attribute, not any substring occurrence)
+        assert "class='section section-pass'" not in report

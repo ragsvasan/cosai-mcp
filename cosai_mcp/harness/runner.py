@@ -271,7 +271,20 @@ def _probe_subprocess_entry(
                         error=None,
                         duration_seconds=0.0,
                     ).to_dict()
-                raise
+                # Transport failure during initialize — the probe never ran.
+                # This is a scanner infrastructure problem, not a security verdict.
+                return make_probe_result(
+                    probe_id=probe.id,
+                    threat_id=threat.id,
+                    passed=False,
+                    assertions=(),
+                    error=str(exc),
+                    duration_seconds=0.0,
+                    inconclusive_reason=(
+                        f"Scanner could not complete MCP handshake ({exc}) — "
+                        "security property could not be verified"
+                    ),
+                ).to_dict()
             ctx = ProbeContext(session, effective_config, target_url)
 
             # probe_count > 1: repeat the probe N times (rate-limit detection).

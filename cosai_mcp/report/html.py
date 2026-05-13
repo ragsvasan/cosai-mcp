@@ -401,8 +401,11 @@ class HtmlReportBuilder:
                 r.inconclusive_reason for r in s.probe_results
             )
 
+        def _all_inconclusive(s: HtmlReportSection) -> bool:
+            return bool(s.probe_results) and all(r.inconclusive_reason for r in s.probe_results)
+
         total_threats = len(self._sections)
-        passed_threats = sum(1 for s in self._sections if s.passed)
+        passed_threats = sum(1 for s in self._sections if s.passed and not _all_inconclusive(s))
         finding_threats = sum(1 for s in self._sections if _section_is_finding(s))
         inconclusive_count = (
             sum(1 for r in (
@@ -564,14 +567,22 @@ class HtmlReportBuilder:
     # ------------------------------------------------------------------
 
     def _render_sections(self) -> str:
-        finding_sections = [s for s in self._sections if not s.passed]
-        pass_sections = [s for s in self._sections if s.passed]
+        def _all_inconclusive(s: HtmlReportSection) -> bool:
+            return bool(s.probe_results) and all(r.inconclusive_reason for r in s.probe_results)
+
+        finding_sections = [s for s in self._sections if not s.passed and not _all_inconclusive(s)]
+        inconclusive_sections = [s for s in self._sections if _all_inconclusive(s)]
+        pass_sections = [s for s in self._sections if s.passed and not _all_inconclusive(s)]
 
         parts: list[str] = []
 
         if finding_sections:
             parts.append("<div class='section-group-title'>Findings — Action Required</div>\n")
             parts.extend(self._render_section(s) for s in finding_sections)
+
+        if inconclusive_sections:
+            parts.append("<div class='section-group-title'>Inconclusive — Security Property Not Verified</div>\n")
+            parts.extend(self._render_section(s) for s in inconclusive_sections)
 
         if pass_sections:
             parts.append("<div class='section-group-title'>Passed — No Vulnerabilities Detected</div>\n")
@@ -580,14 +591,24 @@ class HtmlReportBuilder:
         return "".join(parts)
 
     def _render_section(self, section: HtmlReportSection) -> str:
-        if not section.passed:
+        all_inconclusive = bool(section.probe_results) and all(
+            r.inconclusive_reason for r in section.probe_results
+        )
+
+        if all_inconclusive:
+            section_cls = "section section-incomplete"
+            st_cls = "st-inconclusive"
+            status_text = "INCONCLUSIVE"
+        elif not section.passed:
             section_cls = "section section-finding"
+            st_cls = "st-finding"
+            status_text = "FINDING"
         else:
             section_cls = "section section-pass"
+            st_cls = "st-pass"
+            status_text = "PASS"
 
         sev_cls = f"sev-{section.severity.value}"
-        st_cls = "st-pass" if section.passed else "st-finding"
-        status_text = "PASS" if section.passed else "FINDING"
         cat_name = _CATEGORY_NAMES.get(section.category, section.category)
 
         probes_html = "\n".join(
@@ -595,7 +616,9 @@ class HtmlReportBuilder:
             for i, r in enumerate(section.probe_results)
         )
 
-        if section.passed:
+        if all_inconclusive:
+            body = f"{probes_html}\n"
+        elif section.passed:
             body = (
                 f"<p class='pass-note'>✓ All probes passed — no {_h(cat_name)} vulnerabilities detected.</p>\n"
                 f"{probes_html}\n"

@@ -1282,3 +1282,62 @@ class TestNewCatalogEntriesLoad:
             for a in p.assertions
         ), "T07-001 must assert on a response.header.* target"
 
+
+# ===========================================================================
+# Regression: transport errors during initialize → inconclusive, not FINDING
+# ===========================================================================
+
+class TestInitializeTransportErrorIsInconclusive:
+    """ProbeRunner.run_probe must return inconclusive (not passed=False with no reason)
+    when the server rejects the MCP initialize handshake for any non-auth reason.
+
+    Regression for: rate_limit_exceeded / server errors at initialize time being
+    promoted to security FINDINGs in SARIF and HTML reports.
+    """
+
+    def test_regression_initialize_error_sets_inconclusive_reason(self):
+        """run_probe against a server that rejects initialize must set inconclusive_reason."""
+        with MockMCPServer(initialize_error="rate_limit_exceeded") as server:
+            server.wait_ready()
+            config = ScanConfig(
+                target_host="127.0.0.1",
+                target_port=server.port,
+                allow_private_targets=True,
+            )
+            runner = ProbeRunner(config, f"http://127.0.0.1:{server.port}")
+            probe = _make_probe(assertions=[_make_assertion("response.error", Operator.EQ, True)])
+            threat = _make_threat()
+            result = runner.run_probe(probe, threat)
+
+        assert result.inconclusive_reason is not None, (
+            "initialize failure must set inconclusive_reason — not a security verdict"
+        )
+        assert "rate_limit_exceeded" in result.inconclusive_reason or \
+               "MCP handshake" in result.inconclusive_reason, (
+            "inconclusive_reason must mention the handshake failure"
+        )
+
+    def test_regression_initialize_error_not_counted_as_finding(self):
+        """run_probe against a server that rejects initialize must not set passed=False
+        without inconclusive_reason — that would make it a FINDING in SARIF.
+        """
+        with MockMCPServer(initialize_error="internal_error") as server:
+            server.wait_ready()
+            config = ScanConfig(
+                target_host="127.0.0.1",
+                target_port=server.port,
+                allow_private_targets=True,
+            )
+            runner = ProbeRunner(config, f"http://127.0.0.1:{server.port}")
+            probe = _make_probe()
+            threat = _make_threat()
+            result = runner.run_probe(probe, threat)
+
+        # A probe with passed=False AND no inconclusive_reason is a FINDING.
+        # Either it passed (impossible here) or it must have inconclusive_reason.
+        if not result.passed:
+            assert result.inconclusive_reason is not None, (
+                "non-passed result without inconclusive_reason would appear as a "
+                "SARIF FINDING — transport failures must be inconclusive"
+            )
+

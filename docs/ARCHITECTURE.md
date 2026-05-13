@@ -157,6 +157,14 @@ If synthesis were applied to a T2 probe, it would replace the adversarial parame
 
 T2 INCONCLUSIVE results are expected and should be interpreted as: the server enforces schema validation. The confused-deputy test requires the middleware engine or manual testing with a server that exposes a permissive schema.
 
+**Transport errors during `initialize` (non-auth):**
+
+A third source of INCONCLUSIVE is a transport failure during the MCP handshake itself — e.g. the server returns `rate_limit_exceeded`, `internal_error`, or any other error on the `initialize` request. Because the probe never ran, no security verdict can be returned. These produce `inconclusive_reason` set to `"Scanner could not complete MCP handshake (...) — security property could not be verified"` and are classified as INCONCLUSIVE, not FINDING.
+
+The distinction from `scan-incomplete` is scope: `scan-incomplete` means the session setup failed so completely that no probes in the scan ran; INCONCLUSIVE means this specific probe's session failed while other probes may have succeeded.
+
+INCONCLUSIVE results are excluded from SARIF output (they do not appear as GitHub security findings) and do not trigger exit code 1. They appear in a separate "Inconclusive — Security Property Not Verified" section in the HTML report and are counted in the "Inconclusive" stat box. The recommended action is to re-run with `--probe-delay` to let the server recover between sessions.
+
 **`error_code_in` MCP-layer fallback:**
 
 The `error_code_in` assertion operator checks `response.error.code` (JSON-RPC protocol error) against an allowlist of expected codes. Some servers return errors via the MCP content layer (`result.isError: true`) instead of JSON-RPC protocol errors — in this case, `error.code` does not exist.
@@ -192,6 +200,9 @@ ProbeResult.evidence (escaped string)
 ProbeResult._raw_unsafe (internal, never serialized to output)
      │
      ├──▶ SARIF builder (structured, never string interpolation)
+     │      Passed probes → filtered out (no SARIF result entry)
+     │      Inconclusive probes → filtered out (not a security verdict)
+     │      Failed probes → result entry emitted
      │      message.text ← evidence (plain text, length-capped, control-char-stripped)
      │      ruleId ← scanner catalog ID only
      │      suppressions ← scanner-generated only
