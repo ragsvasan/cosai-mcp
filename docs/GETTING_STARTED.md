@@ -270,15 +270,26 @@ The scanner needs a valid token for session setup. Most auth systems have a serv
 
 **Rate-limited servers:**
 
-Some servers enforce per-session call budgets (e.g. one new MCP session per second). Because each probe spawns a fresh subprocess connection, rapid probing can trigger these limits. When the server rejects the MCP `initialize` handshake (e.g. `rate_limit_exceeded`), the affected probes are marked **INCONCLUSIVE** — they appear in a separate "Inconclusive — Security Property Not Verified" section in the HTML report and are omitted from SARIF output. They are not counted as security findings.
+Some servers enforce per-session call budgets (e.g. one new MCP session per second). Because each probe spawns a fresh subprocess connection, rapid probing can trigger these limits. When the server rejects the MCP `initialize` handshake (e.g. `rate_limit_exceeded`), the affected probes are automatically retried with exponential backoff before being marked **INCONCLUSIVE**.
 
-Use `--probe-delay` to add a sleep between probes so the server's session budget recovers:
+By default the scanner retries up to **2 times** with a **1.5 s × 2^n** backoff (1.5 s, then 3 s). If all attempts fail, the probe is marked INCONCLUSIVE — it appears in the "Inconclusive — Security Property Not Verified" section in the HTML report and is omitted from SARIF output. It is not counted as a security finding.
+
+Tune the retry behaviour with `--max-probe-retries` and `--retry-backoff`:
 
 ```bash
-cosai scan http://localhost:8080 --auth-token "$TOKEN" --probe-delay 2.5
+# More retries with a longer initial delay for aggressive rate limits
+cosai scan http://localhost:8080 --auth-token "$TOKEN" \
+  --max-probe-retries 4 --retry-backoff 3.0
 ```
 
-A delay of 1–3 seconds is usually sufficient. Start at 1 second and increase if you still see INCONCLUSIVE probes with "MCP handshake" in the reason text.
+Combine with `--probe-delay` (sleep between probes) to avoid triggering rate limits in the first place:
+
+```bash
+cosai scan http://localhost:8080 --auth-token "$TOKEN" \
+  --probe-delay 2.5 --max-probe-retries 3
+```
+
+A probe delay of 1–3 seconds is usually sufficient. Start at 1 second and increase if you still see INCONCLUSIVE probes with "MCP handshake" in the reason text.
 
 **Via the Python API:**
 
@@ -287,7 +298,28 @@ results = Scanner(
     "http://localhost:8080",
     auth_token="...",
     probe_delay_seconds=2.5,
+    max_probe_retries=3,
+    retry_backoff_seconds=2.0,
 ).run()
+```
+
+**Stateful scenarios with server-specific tool names:**
+
+Stateful scenarios (T2, T6, T7) use generic placeholder tool names (`admin_delete`, `read_file`, `echo`). If your server names its tools differently, use `--method-override` to map them:
+
+```bash
+cosai scan http://localhost:8080 --engine stateful \
+  --method-override admin_delete=execute_task \
+  --method-override echo=log_freeform
+```
+
+When a scenario is inconclusive due to a missing tool, the report includes the exact `--method-override` flags to add, with the closest available tool name suggested automatically. Via the Python API:
+
+```python
+results = Scanner(
+    "http://localhost:8080",
+    method_overrides={"admin_delete": "execute_task", "echo": "log_freeform"},
+).run(categories=["T2"])
 ```
 
 **Custom MCP endpoint path:**
@@ -393,7 +425,10 @@ Custom catalogs require `--allow-custom-catalog`. If your custom catalog uses `m
 A `matches_regex` pattern in your catalog was rejected by RE2 (likely catastrophic backtracking potential). Simplify the pattern or use `contains` instead.
 
 **Many probes show INCONCLUSIVE with "Scanner could not complete MCP handshake"**
-The target server is rejecting the `initialize` request (rate limit, session budget, or transient error) before any probe payload is sent. These are infrastructure failures, not security verdicts — they appear in the "Inconclusive" section of the HTML report and are omitted from SARIF. Add `--probe-delay 2.5` (or higher) to give the server time to recover between sessions. Re-run the scan once the delay is in place; previously inconclusive probes should then produce real PASS or FINDING results.
+The target server is rejecting the `initialize` request (rate limit, session budget, or transient error) before any probe payload is sent. The scanner automatically retries up to 2 times per probe with exponential backoff. If retries are exhausted, the probe is marked INCONCLUSIVE — an infrastructure failure, not a security verdict. To reduce the failure rate: add `--probe-delay 2.5` to slow probe throughput, or increase `--max-probe-retries 4 --retry-backoff 3.0` for servers with stricter rate limits. Re-run once tuned; previously inconclusive probes should produce real PASS or FINDING results.
+
+**Stateful scenarios show INCONCLUSIVE with "tool not present on this server"**
+The scenario uses a generic placeholder tool name (e.g. `admin_delete`) that does not exist on your server. The report includes the exact `--method-override` flag with the closest matching real tool name. Add it to your scan command and re-run.
 
 **T2 probes marked INCONCLUSIVE after synthesis**
 T2 (confused-deputy) probes intentionally use adversarial parameter names (e.g. `session_id`, `role`) that the server will reject. This INCONCLUSIVE result is expected — it means the server enforced its schema and rejected unknown parameters. Synthesis is deliberately suppressed for T2 to avoid replacing those adversarial names with the server's real parameters (which would produce a false positive by turning the security probe into a functional test call).

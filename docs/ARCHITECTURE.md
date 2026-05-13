@@ -163,7 +163,17 @@ A third source of INCONCLUSIVE is a transport failure during the MCP handshake i
 
 The distinction from `scan-incomplete` is scope: `scan-incomplete` means the session setup failed so completely that no probes in the scan ran; INCONCLUSIVE means this specific probe's session failed while other probes may have succeeded.
 
-INCONCLUSIVE results are excluded from SARIF output (they do not appear as GitHub security findings) and do not trigger exit code 1. They appear in a separate "Inconclusive — Security Property Not Verified" section in the HTML report and are counted in the "Inconclusive" stat box. The recommended action is to re-run with `--probe-delay` to let the server recover between sessions.
+Before marking a probe INCONCLUSIVE for a transport error, the scanner automatically retries with exponential backoff. By default: up to 2 retries, initial delay of `retry_backoff_seconds * 2^attempt` (1.5 s, 3 s). Only if all retries fail is the probe marked INCONCLUSIVE. Configurable via `--max-probe-retries` and `--retry-backoff` (or `ScanConfig.max_probe_retries` / `ScanConfig.retry_backoff_seconds`). Set `max_probe_retries=0` to disable.
+
+INCONCLUSIVE results are excluded from SARIF output (they do not appear as GitHub security findings) and do not trigger exit code 1. They appear in a separate "Inconclusive — Security Property Not Verified" section in the HTML report and are counted in the "Inconclusive" stat box. To reduce transport inconclusives: increase `--max-probe-retries`, add `--probe-delay`, or both.
+
+**Stateful harness: tool name remapping (`method_overrides`):**
+
+Stateful scenarios (T2, T6, T7) use generic placeholder tool names (`admin_delete`, `read_file`) that may not exist on the target server. `StatefulHarness` checks tool availability against `tools/list` before running steps. When a required tool is missing:
+
+1. The scanner computes the Levenshtein distance from each missing name to every available tool on the server.
+2. The `ScenarioResult.inconclusive_reason` includes `--method-override MISSING=CLOSEST` suggestions so the operator knows exactly what to configure.
+3. With `method_overrides` set (via `ScanConfig.method_overrides`, `--method-override`, or `Scanner(method_overrides=...)`), the harness applies the mapping both at the availability check and at the actual `tools/call` network request.
 
 **`error_code_in` MCP-layer fallback:**
 
