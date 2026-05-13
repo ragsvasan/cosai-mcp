@@ -274,7 +274,10 @@ def _determine_exit_code(
         return 2
 
     # Probe errors (scanner crash in subprocess) → exit 2
-    if any(r.error is not None for r in probe_results):
+    # Exclude transport-inconclusive probes: they set error (the exception string)
+    # AND inconclusive_reason — they are not scanner crashes, they are infrastructure
+    # failures that have already been classified and must not trigger exit 2.
+    if any(r.error is not None and r.inconclusive_reason is None for r in probe_results):
         return 2
 
     threshold = _SEVERITY_RANK.get(fail_on.lower(), _SEVERITY_RANK["critical"])

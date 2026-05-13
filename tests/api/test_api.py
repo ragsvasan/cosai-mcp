@@ -113,7 +113,13 @@ class TestCatalogHash:
 # ---------------------------------------------------------------------------
 
 class TestDetermineExitCode:
-    def _make_probe_result(self, *, passed: bool, error: str | None = None):
+    def _make_probe_result(
+        self,
+        *,
+        passed: bool,
+        error: str | None = None,
+        inconclusive_reason: str | None = None,
+    ):
         from cosai_mcp.harness.result import ProbeResult
         return ProbeResult(
             probe_id="T01-001-p1",
@@ -124,6 +130,7 @@ class TestDetermineExitCode:
             error=error,
             assertions=(),
             duration_seconds=0.1,
+            inconclusive_reason=inconclusive_reason,
         )
 
     def _make_scenario_result(self, *, passed: bool, status: str = "complete"):
@@ -159,6 +166,29 @@ class TestDetermineExitCode:
 
     def test_no_results_returns_0(self) -> None:
         assert _determine_exit_code([], [], "critical") == 0
+
+    def test_regression_transport_inconclusive_does_not_return_2(self) -> None:
+        """Transport-inconclusive probes set both error and inconclusive_reason.
+        They must NOT trigger exit code 2 — they are classified infrastructure
+        failures, not scanner crashes.
+
+        Regression for: rate_limit_exceeded during initialize → exit 2 → CLI
+        prints "[ERROR] Scan completed with internal errors" even when the scan
+        produced real findings.
+        """
+        r = self._make_probe_result(
+            passed=False,
+            error="rate_limit_exceeded",
+            inconclusive_reason=(
+                "Scanner could not complete MCP handshake (rate_limit_exceeded) — "
+                "security property could not be verified"
+            ),
+        )
+        code = _determine_exit_code([r], [], "critical")
+        assert code != 2, (
+            "transport-inconclusive probe (error + inconclusive_reason both set) "
+            "must not produce exit code 2"
+        )
 
 
 # ---------------------------------------------------------------------------
