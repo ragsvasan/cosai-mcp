@@ -88,7 +88,7 @@ cosai_mcp/transport/
   stdio.py             Subprocess-based for local servers
 ```
 
-**Streamable HTTP** (primary): single endpoint, returns direct JSON or `text/event-stream` depending on request. Handles `Mcp-Session-Id` header. Custom httpx transport enforces the network allowlist at socket connect time.
+**Streamable HTTP** (primary): single endpoint, returns direct JSON or `text/event-stream` depending on request. Handles `Mcp-Session-Id` header. A custom `httpcore.AsyncNetworkBackend` (`_PinnedNetworkBackend`) enforces the network allowlist at TCP connect time — routing sockets to the pre-resolved IP without altering the URL or TLS SNI hostname, so SNI-based virtual hosting (e.g. GCP, Cloudflare) is compatible.
 
 **LegacySSE**: HTTP POST to send + SSE stream to receive. Used only when server negotiates `2024-11-05`.
 
@@ -169,11 +169,12 @@ When `error_code_in` is evaluated and `response.error_code` is `None` but `respo
 
 The scanner must not be weaponized for SSRF. A malicious target returning a 302 to `169.254.169.254` (AWS IMDS) must not be followed.
 
-Controls enforced at socket connect time via custom httpx transport:
+Controls enforced at socket connect time via `_PinnedNetworkBackend` (a custom `httpcore.AsyncNetworkBackend`):
 
 - `follow_redirects=False` — hard-coded, non-overridable
 - `trust_env=False` — HTTP_PROXY injection blocked
-- Target IP resolved once at scan start; any subsequent connect to a different IP is rejected (defeats DNS rebinding)
+- Target IP resolved once at scan start; `_PinnedNetworkBackend.connect_tcp()` routes every socket to that IP directly, so the kernel never re-resolves the hostname. Any mid-session DNS change is caught by a re-resolution check in `_PinnedAsyncTransport.handle_async_request()` before each request.
+- IP routing happens at the TCP layer only — the URL and TLS SNI hostname are left unchanged, which is required for correct operation against SNI-based virtual hosting (GCP, Cloudflare, AWS ALB, etc.)
 - RFC1918, link-local, loopback, IPv6 ULA blocked by default
 - Docker path adds `--network=none` except for the explicit target IP
 

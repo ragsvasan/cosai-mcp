@@ -93,7 +93,7 @@ python -m cosai_mcp --help   # exits 0 (stub)
 **Delivers:**
 - `cosai_mcp/transport/base.py` — `Transport` ABC: `connect()`, `send(method, params)`, `recv()`, `close()`
 - `cosai_mcp/transport/streamable_http.py` — Streamable HTTP (MCP 2025-03-26 primary)
-  - Custom `httpx` transport: `follow_redirects=False`, `trust_env=False`, IP-pinned socket-level allowlist
+  - Custom `httpcore.AsyncNetworkBackend` (`_PinnedNetworkBackend`): routes TCP sockets to the pre-resolved IP without altering the URL or TLS SNI hostname; `follow_redirects=False`, `trust_env=False`
   - RFC1918 / link-local / loopback / IPv6 ULA rejection at connect time
   - Single endpoint, returns direct JSON or `text/event-stream`
   - `Mcp-Session-Id` header handling

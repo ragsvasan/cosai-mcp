@@ -23,7 +23,8 @@ Test: `test_regression_probe_state_isolation` — probe-1 sets a module-level se
 Component: Network allowlist
 Issue: httpx and websockets do not provide a network-layer allowlist hook. DNS rebinding bypasses a URL-level check. TLS SNI/IP mismatch enables redirect to a different host. Without OS-level iptables/pf rules or mandatory proxy, the allowlist is an assertion, not a control.
 Standard: Mandatory egress proxy with explicit allowlist (AWS CodeBuild, GitHub Actions sandbox, Snyk). Or: network namespace isolation (`unshare --net`).
-Fix: (a) `follow_redirects=False` hard-coded, non-overridable. (b) Resolve `target_host` to IP at scan start; reject any connection to a different IP. (c) Docker path adds `--network=none` except for explicit target IP. (d) Document that hard guarantee requires Docker.
+Fix: (a) `follow_redirects=False` hard-coded, non-overridable. (b) Resolve `target_host` to IP at scan start; `_PinnedNetworkBackend` (a custom `httpcore.AsyncNetworkBackend`) routes every TCP socket to that IP in `connect_tcp()` — URL and TLS SNI hostname are left unchanged so SNI-based virtual hosting (GCP, Cloudflare, AWS ALB) works correctly; a re-resolution check in `handle_async_request()` catches mid-session DNS changes. (c) Docker path adds `--network=none` except for explicit target IP. (d) Document that hard guarantee requires Docker.
+Note: earlier implementation replaced the URL host with the raw IP, which broke TLS SNI on GCP/Cloudflare-hosted servers. Fixed by routing at the TCP layer instead.
 Test: `test_regression_network_allowlist_no_redirect` — mock target returns 302 to evil.example.com; asserts harness does not follow it and flags SUSPICIOUS.
 
 **FINDING 3 — CORRECTNESS — HIGH**
