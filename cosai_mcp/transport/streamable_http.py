@@ -8,6 +8,7 @@ import socket
 from typing import Any
 from urllib.parse import urlparse
 
+import httpcore
 import httpx
 
 from cosai_mcp.config import ScanConfig
@@ -23,13 +24,59 @@ from cosai_mcp.transport.base import (
 # IP-pinning HTTPX transport
 # ---------------------------------------------------------------------------
 
+class _PinnedNetworkBackend(httpcore.AsyncNetworkBackend):
+    """Routes TCP connections to the pinned IP while preserving the original
+    hostname for TLS SNI.
+
+    Replacing the URL host with the raw IP (the previous approach) causes TLS
+    handshake failures on servers that use SNI-based virtual hosting (e.g. GCP
+    Cloud Run / Google Frontend) because the server sees an IP address in the
+    SNI extension instead of the expected hostname.  This backend keeps the
+    hostname in the SNI extension while routing the TCP socket to the
+    pre-resolved IP, preventing mid-session DNS rebinding without breaking TLS.
+    """
+
+    def __init__(self, pinned_ip: str) -> None:
+        self._pinned_ip = pinned_ip
+        self._default = httpcore.AnyIOBackend()
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Any = None,
+    ) -> httpcore.AsyncNetworkStream:
+        # Connect the TCP socket to the pinned IP; httpcore passes `host` as
+        # server_hostname to start_tls(), so TLS SNI stays correct.
+        return await self._default.connect_tcp(
+            self._pinned_ip,
+            port,
+            timeout=timeout,
+            local_address=local_address,
+            socket_options=socket_options,
+        )
+
+    async def connect_unix_domain_socket(
+        self,
+        path: str,
+        timeout: float | None = None,
+        socket_options: Any = None,
+    ) -> httpcore.AsyncNetworkStream:
+        raise NotImplementedError("Unix domain sockets are not used by the scanner")
+
+    async def sleep(self, seconds: float) -> None:
+        await asyncio.sleep(seconds)
+
+
 class _PinnedAsyncTransport(httpx.AsyncBaseTransport):
     """Custom HTTPX transport that enforces the pinned IP on every request.
 
-    Rewrites the request URL host to the pinned IP before forwarding to the
-    inner transport, so the kernel never re-resolves the hostname via DNS.
-    Also re-resolves to detect mid-session DNS rebinding and surfaces
-    redirect responses as SuspiciousRedirectError.
+    Uses _PinnedNetworkBackend to route TCP connections to the pre-resolved IP
+    without replacing the URL host, so TLS SNI contains the original hostname.
+    Also re-resolves on every request to detect mid-session DNS rebinding and
+    surfaces redirect responses as SuspiciousRedirectError.
     """
 
     def __init__(
@@ -37,11 +84,26 @@ class _PinnedAsyncTransport(httpx.AsyncBaseTransport):
         pinned_ip: str,
         config: ScanConfig,
         *,
-        inner: httpx.AsyncHTTPTransport | None = None,
+        inner: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._pinned_ip = pinned_ip
         self._config = config
-        self._inner = inner or httpx.AsyncHTTPTransport()
+        if inner is not None:
+            self._inner = inner
+        else:
+            # httpx.AsyncHTTPTransport doesn't expose network_backend in
+            # httpx 0.28.x, but its internal _pool is an
+            # httpcore.AsyncConnectionPool that does accept network_backend.
+            # We create the transport normally, then replace _pool with one
+            # backed by _PinnedNetworkBackend so TCP sockets route to the
+            # pinned IP without touching the URL or TLS SNI.
+            import ssl as _ssl
+            t = httpx.AsyncHTTPTransport()
+            t._pool = httpcore.AsyncConnectionPool(
+                ssl_context=_ssl.create_default_context(),
+                network_backend=_PinnedNetworkBackend(pinned_ip),
+            )
+            self._inner = t
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         host = request.url.host
@@ -56,18 +118,9 @@ class _PinnedAsyncTransport(httpx.AsyncBaseTransport):
             actual_ip = results[0][4][0]
             check_dns_rebinding(self._pinned_ip, actual_ip)
 
-        # FIX: substitute the pinned IP into the URL so the inner transport
-        # connects to the verified IP rather than re-resolving via kernel DNS.
-        # The Host header in request.headers retains the original hostname.
-        pinned_url = request.url.copy_with(host=self._pinned_ip)
-        pinned_request = httpx.Request(
-            method=request.method,
-            url=pinned_url,
-            headers=request.headers,
-            stream=request.stream,
-            extensions=request.extensions,
-        )
-        response = await self._inner.handle_async_request(pinned_request)
+        # Pass the original request unchanged — the pinned network backend
+        # handles IP routing at the TCP layer, leaving URL and SNI intact.
+        response = await self._inner.handle_async_request(request)
         check_redirect(response.status_code)
         return response
 

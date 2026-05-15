@@ -649,14 +649,16 @@ class TestMCPSession:
 class TestRegressionFindings:
 
     # -----------------------------------------------------------------------
-    # Fix 1: DNS rebinding — pinned IP substituted into forwarded URL
+    # Fix 1: DNS rebinding — IP routing at TCP layer, URL/SNI hostname unchanged
     # -----------------------------------------------------------------------
 
     @pytest.mark.asyncio
     async def test_regression_dns_rebinding_url_substituted(self):
-        """FIX 1: _PinnedAsyncTransport must rewrite the request URL host to the
-        pinned IP before forwarding so the kernel never re-resolves via DNS.
-        Asserts the inner transport receives a request with host == pinned IP."""
+        """FIX 1: _PinnedAsyncTransport must NOT rewrite the request URL host.
+        IP routing happens in _PinnedNetworkBackend at the TCP connect_tcp layer
+        so that TLS SNI retains the original hostname (required by SNI-based
+        virtual hosting, e.g. GCP).  The inner transport must see the original
+        hostname — the pinned IP must never appear in the forwarded URL."""
         config = _private_config(host="example.com")  # allow_private for test ease
         captured: list[httpx.Request] = []
 
@@ -675,8 +677,13 @@ class TestRegressionFindings:
             await pinned.handle_async_request(req)
 
         assert len(captured) == 1
-        assert captured[0].url.host == "93.184.216.34", (
-            "Inner transport must receive URL with pinned IP, not hostname"
+        assert captured[0].url.host == "example.com", (
+            "Inner transport must receive the original hostname, not the pinned IP. "
+            "IP routing is handled by _PinnedNetworkBackend at the TCP layer so "
+            "TLS SNI stays correct for SNI-based virtual hosting."
+        )
+        assert "93.184.216.34" not in str(captured[0].url), (
+            "Pinned IP must never appear in the forwarded URL"
         )
 
     # -----------------------------------------------------------------------
