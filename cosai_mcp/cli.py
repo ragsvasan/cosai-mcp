@@ -128,6 +128,7 @@ def main() -> None:
 @click.option(
     "--emit-to",
     default=None,
+    envvar="COSAI_EMIT_TO",
     help=(
         "SIEM/SOAR webhook URL.  When set, every probe result is emitted as an "
         "OCSF Detection Finding (class_uid 2004) to this endpoint via HTTP POST. "
@@ -157,6 +158,10 @@ def main() -> None:
     show_default=True,
     help="Max critical findings in the rolling window before a burst alert fires.",
 )
+@click.option("--contain-on-anomaly", is_flag=True, default=False,
+              help="Trigger IR containment automatically when anomaly thresholds are exceeded.")
+@click.option("--ir-report", type=click.Path(), default=None,
+              help="Write a JSON incident report to this path when findings are detected.")
 def scan(
     target: str,
     categories: str,
@@ -183,6 +188,8 @@ def scan(
     allow_stateful_adversarial: bool,
     report_adversarial_html: str | None,
     skip_reachability: bool,
+    contain_on_anomaly: bool,
+    ir_report: str | None,
     emit_to: str | None,
     emit_auth_header: str | None,
     anomaly_threshold: int,
@@ -337,6 +344,22 @@ def scan(
         except Exception as exc:  # noqa: BLE001
             click.echo(f"[ERROR] Failed to write adversarial HTML report: {exc}", err=True)
             sys.exit(2)
+
+    # -- IR containment (best-effort; must not change exit_code) --
+    if contain_on_anomaly or ir_report or emit_to:
+        try:
+            _run_ir_containment(
+                result=result,
+                target=target,
+                contain_on_anomaly=contain_on_anomaly,
+                ir_report_path=ir_report,
+                emit_to=emit_to,
+                emit_auth_header=emit_auth_header,
+                anomaly_threshold=anomaly_threshold,
+                critical_burst_threshold=critical_burst_threshold,
+            )
+        except Exception as exc:  # noqa: BLE001
+            click.echo(f"[IR] Containment error (scan result unchanged): {type(exc).__name__}", err=True)
 
     sys.exit(result.exit_code)
 
@@ -713,6 +736,244 @@ def _emit_scan_telemetry(
             f"Anomaly detection: {len(detector.alerts)} alert(s) fired.",
             err=True,
         )
+
+
+# ---------------------------------------------------------------------------
+# IR containment helper
+# ---------------------------------------------------------------------------
+
+def _run_ir_containment(
+    result: "ScanResult",
+    target: str,
+    contain_on_anomaly: bool,
+    ir_report_path: str | None,
+    emit_to: str | None,
+    emit_auth_header: str | None,
+    anomaly_threshold: int,
+    critical_burst_threshold: int,
+) -> None:
+    """Build an IncidentRecord from the scan result and run containment actions.
+
+    Fires when: (a) any findings exist AND ``--ir-report`` or ``--emit-to`` is set,
+    OR (b) ``--contain-on-anomaly`` is set and thresholds are exceeded.
+    Never raises — all errors are caught and logged to stderr.
+    """
+    from urllib.parse import urlparse, urlunparse
+
+    from cosai_mcp.ir.incident import build_incident, ContainmentAction
+    from cosai_mcp.ir.containment import perform_containment
+
+    # Build probe_id → severity string from the threat catalog on the result
+    probe_severity: dict[str, str] = {}
+    for threat in result.threats:
+        sev = threat.severity.value if hasattr(threat.severity, "value") else str(threat.severity)
+        for probe_def in threat.probes:
+            probe_severity[probe_def.id] = sev
+
+    # Collect non-passing probes as findings (error probes are inconclusive — skip)
+    findings = [
+        {
+            "probe_id": p.probe_id,
+            "threat_id": p.threat_id,
+            "severity": probe_severity.get(p.probe_id, "medium"),
+        }
+        for p in result.probe_results
+        if not p.passed and p.error is None
+    ]
+
+    if not findings:
+        return  # Nothing to report
+
+    # Determine if anomaly thresholds are exceeded
+    anomaly_rules: list[str] = []
+    if contain_on_anomaly:
+        if len(findings) > anomaly_threshold:
+            anomaly_rules.append("high_finding_rate")
+        critical_count = sum(1 for f in findings if f.get("severity") == "critical")
+        if critical_count > critical_burst_threshold:
+            anomaly_rules.append("critical_burst")
+
+        if not anomaly_rules:
+            # Thresholds not exceeded — only write report/emit if explicitly requested
+            if not ir_report_path and not emit_to:
+                return
+
+    incident = build_incident(
+        target_url=target,
+        scan_timestamp=result.scan_timestamp,
+        findings=findings,
+        anomaly_rules=anomaly_rules,
+        probe_severity=probe_severity,
+    )
+
+    # Determine which actions to run
+    actions: list[ContainmentAction] = []
+    if anomaly_rules and contain_on_anomaly:
+        # Full recommended containment on threshold breach
+        actions = list(incident.recommended_actions)
+    else:
+        # Non-anomaly path: only emit/report if explicitly configured
+        if emit_to:
+            actions.append(ContainmentAction.EMIT_INCIDENT)
+        if ir_report_path:
+            actions.append(ContainmentAction.QUARANTINE_REPORT)
+
+    if not actions:
+        return
+
+    from pathlib import Path as _Path
+
+    containment_results = perform_containment(
+        incident,
+        actions=actions,
+        emit_endpoint=emit_to,
+        emit_auth_header=emit_auth_header,
+        report_path=_Path(ir_report_path) if ir_report_path else None,
+    )
+
+    # Redact credentials from emit URL before printing
+    safe_emit = emit_to
+    if emit_to:
+        parsed = urlparse(emit_to)
+        safe_emit = urlunparse(parsed._replace(
+            netloc=parsed.hostname + (f":{parsed.port}" if parsed.port else "")
+        ))
+
+    click.echo(
+        f"[IR] Incident {incident.incident_id} "
+        f"severity={incident.severity.value} "
+        f"findings={len(findings)}"
+        + (f" anomalies={','.join(anomaly_rules)}" if anomaly_rules else "")
+    )
+    for cr in containment_results:
+        status = "ok" if cr.success else "FAILED"
+        first_line = cr.detail.splitlines()[0] if cr.detail else ""
+        click.echo(f"  [{status}] {cr.action.value}: {first_line}")
+        # Print block commands on subsequent lines (they're multi-line)
+        if cr.action.value == "block_egress" and cr.success:
+            for line in cr.detail.splitlines()[1:]:
+                click.echo(f"         {line}")
+
+
+# ---------------------------------------------------------------------------
+# cosai ir
+# ---------------------------------------------------------------------------
+
+@main.group()
+def ir() -> None:
+    """Incident response containment for compromised MCP servers."""
+
+
+@ir.command("contain")
+@click.argument("incident_file", type=click.Path(exists=True))
+@click.option("--emit-to", default=None, envvar="COSAI_EMIT_TO",
+              help="SIEM/SOAR webhook URL to emit OCSF Security Incident.")
+@click.option("--emit-auth-header", default=None, envvar="COSAI_EMIT_AUTH",
+              help="Authorization header value for the --emit-to endpoint.")
+@click.option("--block-egress", is_flag=True, default=False,
+              help="Generate firewall block commands for the incident target.")
+@click.option("--session-kill", "do_session_kill", is_flag=True, default=False,
+              help="Attempt a best-effort protocol-level close of the MCP connection.")
+@click.option("--all-actions", is_flag=True, default=False,
+              help="Execute all actions in the incident's recommended_actions list.")
+def ir_contain(
+    incident_file: str,
+    emit_to: str | None,
+    emit_auth_header: str | None,
+    block_egress: bool,
+    do_session_kill: bool,
+    all_actions: bool,
+) -> None:
+    """Execute IR containment actions from an incident JSON report.
+
+    INCIDENT_FILE is a JSON report produced by ``cosai scan --ir-report``.
+
+    Exit codes:
+        0  All requested actions succeeded.
+        1  One or more actions failed.
+        2  Invalid incident file.
+    """
+    import json as _json
+    from cosai_mcp.ir.incident import IncidentRecord, ContainmentAction
+    from cosai_mcp.ir.containment import perform_containment
+
+    try:
+        raw = _json.loads(Path(incident_file).read_text(encoding="utf-8"))
+        # Support both bare incident dict and the wrapped quarantine report format
+        incident_dict = raw.get("incident", raw)
+        incident = IncidentRecord.from_dict(incident_dict)
+    except (KeyError, ValueError, OSError) as exc:
+        click.echo(f"[ERROR] Invalid incident file: {exc}", err=True)
+        sys.exit(2)
+
+    if all_actions:
+        actions = list(incident.recommended_actions)
+    else:
+        actions = []
+        if emit_to:
+            actions.append(ContainmentAction.EMIT_INCIDENT)
+        if block_egress:
+            actions.append(ContainmentAction.BLOCK_EGRESS)
+        if do_session_kill:
+            actions.append(ContainmentAction.SESSION_KILL)
+        if not actions:
+            # Default: emit + quarantine report to current dir
+            if emit_to:
+                actions.append(ContainmentAction.EMIT_INCIDENT)
+            actions.append(ContainmentAction.QUARANTINE_REPORT)
+
+    results = perform_containment(
+        incident,
+        actions=actions,
+        emit_endpoint=emit_to,
+        emit_auth_header=emit_auth_header,
+    )
+
+    any_failure = False
+    for r in results:
+        status = "ok" if r.success else "FAILED"
+        click.echo(f"[{status}] {r.action.value}: {r.detail.splitlines()[0]}")
+        if r.action.value == "block_egress" and r.success:
+            for line in r.detail.splitlines()[1:]:
+                click.echo(f"       {line}")
+        if not r.success:
+            any_failure = True
+
+    sys.exit(1 if any_failure else 0)
+
+
+@ir.command("status")
+@click.argument("incident_file", type=click.Path(exists=True))
+def ir_status(incident_file: str) -> None:
+    """Print a human-readable summary of an incident JSON report.
+
+    Exit codes:
+        0  Valid incident file printed.
+        2  Invalid or unreadable incident file.
+    """
+    import json as _json
+    from cosai_mcp.ir.incident import IncidentRecord
+
+    try:
+        raw = _json.loads(Path(incident_file).read_text(encoding="utf-8"))
+        incident_dict = raw.get("incident", raw)
+        incident = IncidentRecord.from_dict(incident_dict)
+    except (KeyError, ValueError, OSError) as exc:
+        click.echo(f"[ERROR] Invalid incident file: {exc}", err=True)
+        sys.exit(2)
+
+    click.echo(f"Incident ID  : {incident.incident_id}")
+    click.echo(f"Target       : {incident.target_url}")
+    click.echo(f"Severity     : {incident.severity.value}")
+    click.echo(f"Timestamp    : {incident.scan_timestamp}")
+    click.echo(f"Findings     : {len(incident.findings)}")
+    if incident.anomaly_rules:
+        click.echo(f"Anomaly rules: {', '.join(incident.anomaly_rules)}")
+    click.echo(f"Rec. actions : {', '.join(a.value for a in incident.recommended_actions)}")
+    if incident.findings:
+        click.echo("\nFindings:")
+        for f in incident.findings:
+            click.echo(f"  [{f.severity}] {f.probe_id} / {f.threat_id}")
 
 
 # ---------------------------------------------------------------------------
