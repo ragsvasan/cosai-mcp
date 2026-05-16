@@ -6,7 +6,7 @@
 
 Open-source MCP security framework covering all 12 CoSAI threat categories (T1–T12).
 
-**Status:** Alpha — 885 tests passing, all T1–T12 categories implemented, Apache 2.0.
+**Status:** Alpha — 917 tests passing, all T1–T12 categories implemented, Apache 2.0.
 
 ```bash
 # Try without installing
@@ -67,11 +67,28 @@ cosai scan http://localhost:8000 --report-html report.html
 # SARIF output for GitHub security tab
 cosai scan http://localhost:8000 --report-sarif findings.sarif
 
+# Signed conformance scorecard (machine-verifiable by auditors)
+cosai scan http://localhost:8000 --scorecard scorecard.json
+cosai scorecard verify scorecard.json
+cosai scorecard show scorecard.json --verify
+
+# Stream findings to SIEM as OCSF Detection Finding events
+cosai scan http://localhost:8000 \
+  --emit-to https://siem.example.com/webhook/cosai \
+  --emit-auth-header "Bearer $SIEM_TOKEN"
+
+# Auto-quarantine on anomaly + IR containment
+cosai scan http://localhost:8000 \
+  --contain-on-anomaly --anomaly-threshold 3 \
+  --ir-report ./incident.json \
+  --emit-to https://siem.example.com/webhook
+
+# Tool inventory: capture a snapshot, diff for drift
+cosai inventory capture http://localhost:8000 -o baseline.json
+cosai inventory diff baseline.json current.json --fail-on-drift
+
 # Adversarial mode (read-only probes; own targets only)
 cosai scan http://localhost:8000 --adversarial --i-own-this-target=localhost
-
-# Enable stateful adversarial probes (higher risk; explicit opt-in)
-cosai scan http://localhost:8000 --adversarial --i-own-this-target=localhost --allow-stateful-adversarial
 
 # Use a built-in server profile
 cosai scan http://localhost:8000 --profile fastmcp
@@ -90,6 +107,7 @@ pytest --cosai-target=http://localhost:8000 --cosai-severity=critical
 
 | Document | Audience |
 |----------|----------|
+| [docs/PLATFORM_GUIDE.md](docs/PLATFORM_GUIDE.md) | Full operational pipeline: inventory → scan → SIEM → IR → scorecard |
 | [docs/VISION.md](docs/VISION.md) | Why this exists; use cases |
 | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | Installation, CLI, pytest plugin, GitHub Action |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Three-engine model, transport, probe isolation, report pipeline |
