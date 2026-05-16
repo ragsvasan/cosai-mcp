@@ -125,6 +125,10 @@ def main() -> None:
                    "(default: cosai-adversarial-report.html when --adversarial is set).")
 @click.option("--skip-reachability", is_flag=True, default=False, hidden=True,
               help="Skip the initial TCP reachability check (testing only).")
+@click.option("--scorecard", "scorecard_path", type=click.Path(), default=None,
+              help="Write a signed conformance scorecard JSON to this path.")
+@click.option("--no-sign-scorecard", is_flag=True, default=False,
+              help="Produce an unsigned scorecard (skip Ed25519 signing).")
 def scan(
     target: str,
     categories: str,
@@ -151,6 +155,8 @@ def scan(
     allow_stateful_adversarial: bool,
     report_adversarial_html: str | None,
     skip_reachability: bool,
+    scorecard_path: str | None,
+    no_sign_scorecard: bool,
 ) -> None:
     """Scan a target MCP server for CoSAI threat categories T1–T12.
 
@@ -291,7 +297,116 @@ def scan(
             click.echo(f"[ERROR] Failed to write adversarial HTML report: {exc}", err=True)
             sys.exit(2)
 
+    # -- Scorecard (best-effort; must not change exit_code) --
+    if scorecard_path:
+        try:
+            from cosai_mcp.scorecard.builder import build_scorecard
+            scorecard = build_scorecard(result, signed=not no_sign_scorecard)
+            Path(scorecard_path).write_text(
+                __import__("json").dumps(scorecard.to_dict(), indent=2),
+                encoding="utf-8",
+            )
+            signed_tag = "" if no_sign_scorecard else " (signed)"
+            click.echo(
+                f"Scorecard{signed_tag}: {scorecard.conformance_level.value} "
+                f"→ {scorecard_path}"
+            )
+        except Exception as exc:  # noqa: BLE001
+            click.echo(f"[ERROR] Failed to write scorecard: {exc}", err=True)
+            sys.exit(2)
+
     sys.exit(result.exit_code)
+
+
+# ---------------------------------------------------------------------------
+# cosai scorecard
+# ---------------------------------------------------------------------------
+
+@main.group()
+def scorecard() -> None:
+    """Verify and inspect signed conformance scorecards."""
+
+
+@scorecard.command("verify")
+@click.argument("scorecard_file", type=click.Path(exists=True))
+def scorecard_verify(scorecard_file: str) -> None:
+    """Verify the Ed25519 signature on a scorecard JSON file.
+
+    Exit codes:
+        0  Valid — signature verified against the trusted installation key.
+        1  Invalid — signature does not verify or public key mismatch.
+        2  File cannot be read or is not a valid scorecard.
+    """
+    import json as _json
+    from cosai_mcp.scorecard.models import Scorecard
+    from cosai_mcp.scorecard.signing import ScorecardVerificationError, verify_scorecard
+
+    try:
+        raw = _json.loads(Path(scorecard_file).read_text(encoding="utf-8"))
+        sc = Scorecard.from_dict(raw)
+    except (KeyError, ValueError, OSError) as exc:
+        click.echo(f"[ERROR] Cannot read scorecard: {exc}", err=True)
+        sys.exit(2)
+
+    try:
+        verify_scorecard(sc)
+        click.echo(f"[OK] Scorecard signature valid — conformance: {sc.conformance_level.value}")
+    except ScorecardVerificationError as exc:
+        click.echo(f"[INVALID] {exc}", err=True)
+        sys.exit(1)
+
+
+@scorecard.command("show")
+@click.argument("scorecard_file", type=click.Path(exists=True))
+@click.option("--verify", "do_verify", is_flag=True, default=False,
+              help="Verify signature before printing.")
+def scorecard_show(scorecard_file: str, do_verify: bool) -> None:
+    """Print a human-readable summary of a conformance scorecard.
+
+    Exit codes:
+        0  Scorecard printed (and verified if --verify was set).
+        1  Signature verification failed (only with --verify).
+        2  Invalid or unreadable scorecard file.
+    """
+    import json as _json
+    from cosai_mcp.scorecard.models import Grade, Scorecard
+    from cosai_mcp.scorecard.signing import ScorecardVerificationError, verify_scorecard
+
+    try:
+        raw = _json.loads(Path(scorecard_file).read_text(encoding="utf-8"))
+        sc = Scorecard.from_dict(raw)
+    except (KeyError, ValueError, OSError) as exc:
+        click.echo(f"[ERROR] Cannot read scorecard: {exc}", err=True)
+        sys.exit(2)
+
+    if do_verify:
+        try:
+            verify_scorecard(sc)
+        except ScorecardVerificationError as exc:
+            click.echo(f"[INVALID] Signature verification failed: {exc}", err=True)
+            sys.exit(1)
+
+    _GRADE_ICON = {
+        Grade.PASS: "✓",
+        Grade.WARN: "⚠",
+        Grade.FAIL: "✗",
+        Grade.NOT_TESTED: "–",
+    }
+
+    click.echo(f"\nConformance Scorecard")
+    click.echo(f"  Target     : {sc.target_url}")
+    click.echo(f"  Timestamp  : {sc.scan_timestamp}")
+    click.echo(f"  Conformance: {sc.conformance_level.value}")
+    click.echo(f"  Signed     : {'yes — ' + sc.public_key[:16] + '…' if sc.is_signed else 'no'}")
+    click.echo(f"\n  {'Category':<6} {'Grade':<6} {'Findings':<10} {'Critical':<10} Engine")
+    click.echo("  " + "-" * 60)
+    for cat in sc.categories:
+        icon = _GRADE_ICON.get(cat.grade, "?")
+        click.echo(
+            f"  {cat.category:<6} {icon} {cat.grade.value:<4}  "
+            f"{cat.finding_count:<10} {cat.critical_count:<10} {cat.coverage_engine}"
+        )
+    click.echo()
 
 
 # ---------------------------------------------------------------------------
