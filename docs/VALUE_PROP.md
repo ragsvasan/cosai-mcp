@@ -1,6 +1,6 @@
 # cosai-mcp — Value Proposition and Competitive Positioning
 
-*Last updated: 2026-04-27. Based on landscape survey conducted April 2026.*
+*Last updated: 2026-05-16. Based on landscape survey conducted April 2026; platform capabilities added May 2026.*
 
 ---
 
@@ -81,18 +81,19 @@ Every existing tool covers 1–3 threat categories. Snyk Agent Scan has the best
 
 ## Full Capability Matrix
 
-| Tool | Runtime black-box probing | Multi-turn stateful testing | All 12 CoSAI categories | CI/CD gate |
-|------|:-------------------------:|:---------------------------:|:-----------------------:|:----------:|
-| Cisco MCP Scanner | ❌ | ❌ | ❌ | ⚠️ |
-| Snyk Agent Scan | ❌ | ❌ | ❌ | ✅ |
-| Enkrypt AI | ❌ | ❌ | ❌ | ⚠️ |
-| MCPScan.ai | ❌ | ❌ | ❌ | ❌ |
-| Proximity | ❌ | ❌ | ❌ | ❌ |
-| MCPSafetyScanner | ⚠️ LLM-based | ⚠️ LLM-based | ⚠️ partial | ❌ |
-| MCP-Bastion | ❌ enforcement | ❌ | ❌ | ❌ |
-| MCPProxy-go | ❌ monitoring | ❌ | ❌ | ❌ |
-| CoSAI / OWASP / MSSS | ❌ docs | ❌ | ✅ defines | ❌ |
-| **cosai-mcp** | **✅** | **✅** | **✅** | **✅** |
+| Tool | Runtime black-box probing | Multi-turn stateful testing | All 12 CoSAI categories | CI/CD gate | Inventory + drift | SIEM / OCSF telemetry | Automated IR | Signed scorecard |
+|------|:-------------------------:|:---------------------------:|:-----------------------:|:----------:|:-----------------:|:---------------------:|:------------:|:----------------:|
+| Cisco MCP Scanner | ❌ | ❌ | ❌ | ⚠️ | ❌ | ❌ | ❌ | ❌ |
+| Snyk Agent Scan | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Enkrypt AI | ❌ | ❌ | ❌ | ⚠️ | ❌ | ❌ | ❌ | ❌ |
+| MCPScan.ai | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Proximity | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| MCPSafetyScanner | ⚠️ LLM-based | ⚠️ LLM-based | ⚠️ partial | ❌ | ❌ | ❌ | ❌ | ❌ |
+| MCP-Bastion | ❌ enforcement | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| MCPProxy-go | ❌ monitoring | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| CoSAI / OWASP / MSSS | ❌ docs | ❌ | ✅ defines | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **cosai-mcp v0.1** | **✅** | **✅** | **✅** | **✅** | ❌ | ❌ | ❌ | ❌ |
+| **cosai-mcp v0.2+** | **✅** | **✅** | **✅** | **✅** | **✅ Track A** | **✅ Track B** | **✅ Track D** | **✅ Track E** |
 
 ---
 
@@ -101,11 +102,14 @@ Every existing tool covers 1–3 threat categories. Snyk Agent Scan has the best
 **For security engineers:**
 Run `cosai scan https://my-mcp-server` and get a SARIF report in GitHub's native security tab — covering all 12 CoSAI categories — without reading any code or deploying any proxy.
 
-**For platform teams:**
-Drop `uses: cosai-mcp/scan-action@<SHA>` into CI. Exit code 1 = findings above threshold, exit code 2 = scanner error (treated as failure, never silent). The gate is fail-closed by design.
+**For SOC analysts:**
+Every probe result streams to your SIEM as a native OCSF Detection Finding (class_uid 2004). Anomaly rules fire on finding-rate spikes; a Security Incident (class_uid 2001) auto-triggers SOAR playbooks. No adapter, no ETL, no schema translation.
 
-**For compliance:**
-Every finding maps to ISO 27001:2022, NIST AI RMF 2026, and OWASP MCP Top 10 in the report. SARIF output integrates with GitHub Advanced Security, Semgrep, and any SIEM that ingests SARIF.
+**For platform teams:**
+Drop `uses: cosai-mcp/scan-action@<SHA>` into CI. Exit code 1 = findings above threshold, exit code 2 = scanner error (treated as failure, never silent). The gate is fail-closed by design. Tool inventory snapshots catch silent schema changes between deploys before they reach production.
+
+**For compliance / CISO:**
+A signed conformance scorecard (Ed25519, machine-verifiable offline) is produced after every scan. The scorecard provides per-category grades mapped to MSSS conformance levels and CSA AI Controls Matrix evidence requirements. Auditors can verify signatures without trusting the reporting party.
 
 **For MCP server authors:**
 The pytest plugin (`--cosai-target`, `--cosai-severity`) runs conformance checks as part of the normal test suite. No separate tool, no separate CI job.
@@ -123,6 +127,53 @@ Black-box probing is structurally wrong for three categories (T4 tool poisoning,
 | Middleware instrumentation | T4, T9, T12 | Must be in the call path; middleware IS the test |
 
 Existing tools have only one engine class (static or proxy). The three-engine split is what enables full CoSAI coverage.
+
+---
+
+## Platform Capabilities (v0.2+)
+
+Beyond the conformance scanner, cosai-mcp v0.2+ ships four operational capabilities that close the gap between "we found a finding" and "the incident is contained and auditable."
+
+See [PLATFORM_GUIDE.md](PLATFORM_GUIDE.md) for the full operational pipeline with CLI examples and a GitHub Actions reference.
+
+### Track A — Tool Inventory & Drift Detection
+
+Captures a signed Ed25519 snapshot of every tool a server exposes (name, description, input schema) and diffs snapshots between deploys. Tool poisoning (T6) and supply-chain attacks (T11) often arrive as a single parameter rename or schema field addition — invisible to code review but caught by inventory diff.
+
+```bash
+cosai inventory capture http://localhost:8000 -o baseline.json
+cosai inventory diff baseline.json current.json --fail-on-drift  # exits 1 on drift
+```
+
+### Track B — OCSF Telemetry to SIEM/SOAR
+
+After every scan, each probe result is serialised as an [OCSF Detection Finding](https://schema.ocsf.io/2.0.0/classes/detection_finding) (class_uid 2004) and POSTed to a configurable SIEM webhook. An in-process anomaly detector fires alerts on finding-rate spikes and critical bursts. Every commercial SIEM (Splunk, Elastic, Panther, Sentinel) natively ingests OCSF — no adapter required.
+
+```bash
+cosai scan http://localhost:8000 \
+  --emit-to https://siem.example.com/webhook/cosai \
+  --emit-auth-header "Bearer $SIEM_TOKEN" \
+  --anomaly-threshold 5
+```
+
+### Track D — Automated IR Containment
+
+When anomaly thresholds are exceeded, the scanner emits an [OCSF Security Incident](https://schema.ocsf.io/2.0.0/classes/security_incident) (class_uid 2001) to trigger SOAR playbooks, writes a signed quarantine report, and generates firewall block commands for operator review. Block commands are never auto-executed — SOAR automation owns that step.
+
+```bash
+cosai scan http://localhost:8000 \
+  --contain-on-anomaly --anomaly-threshold 3 \
+  --ir-report ./incident.json
+```
+
+### Track E — Signed Conformance Scorecard
+
+Produces a per-category conformance grade for all 12 CoSAI categories, signed with the per-installation Ed25519 key. Auditors can verify the signature offline without trusting the reporting party. Maps directly to MSSS conformance levels and CSA AI Controls Matrix evidence requirements.
+
+```bash
+cosai scan http://localhost:8000 --scorecard scorecard.json
+COSAI_SCORECARD_PUBKEY="<base64-pubkey>" cosai scorecard verify scorecard.json
+```
 
 ---
 
@@ -207,6 +258,8 @@ jobs:
 - **No production traffic monitoring.** Use MCPProxy-go or MCP-Bastion for runtime.
 - **No LLM-semantic judgment.** Probes are deterministic; they test protocol behavior, not content quality.
 - **No vulnerability in third-party MCP servers is exploited.** The scanner probes and reports; it does not weaponize.
+- **Firewall changes are never auto-applied.** IR containment generates `iptables`/`pfctl` commands for human approval; automated network changes belong in the SOAR playbook triggered by the OCSF Security Incident event.
+- **Session kill is best-effort.** MCP has no standard "kill session" method — hard isolation requires the firewall block.
 
 ---
 
