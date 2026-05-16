@@ -77,6 +77,35 @@ Every existing tool covers 1–3 threat categories. Snyk Agent Scan has the best
 | **CSA AI Controls Matrix** | 243 AI security controls across 17 domains. No automated enforcement tool. cosai-mcp provides runnable evidence for the tool-access and audit-logging control families. |
 | **MCP Server Security Standard (MSSS)** | 4 conformance levels with testable evidence requirements. No automated tool. |
 
+### Commercial Agentic-AI Security Platforms
+
+| Vendor | What it actually does | Coverage | Trust model |
+|--------|----------------------|----------|-------------|
+| **CrowdStrike Falcon AI Detection & Response** | Agent-side runtime detection/response, marketed via the *"90-Day Roadmap for Securing Agentic AI"* whitepaper | Broad agentic + MCP attack surface, SOC-oriented | Closed-source; vendor is the trust anchor; demo-by-request; not CI-native or developer-owned |
+| **Palo Alto / Prisma AIRS, Wiz AI-SPM, et al.** | Posture management + runtime AI threat detection | Cloud + model + agent posture | Closed-source platform; not MCP-protocol-conformance-specific |
+
+**Verdict:** These are commercial SOC/posture platforms. They describe the right attack surface (CrowdStrike's whitepaper is technically sound) but sell the implementation as a closed product. cosai-mcp + mcp-armor are the OSS, signature-anchored implementation of the same control set — verifiable without trusting a vendor, and CI-gateable rather than demo-gated.
+
+---
+
+## CrowdStrike 90-Day Roadmap Mapping
+
+CrowdStrike's whitepaper defines an 8-workstream "90-day roadmap." It maps cleanly onto the cosai-mcp (scanner, CI-time proof) + mcp-armor (middleware, runtime enforcement) split. Honest status — *shipped* vs *roadmap*:
+
+| # | CrowdStrike workstream | cosai-mcp + mcp-armor status |
+|---|------------------------|------------------------------|
+| 1 | Tool Inventory & Classification | **Partial (shipped):** runtime tool discovery + AG-MP.1 risk tiers. **Roadmap:** signed pre-deploy inventory artifact + owner registry. |
+| 2 | MCP Auth, Identity & Version Control | **Shipped — exceeds:** Ed25519-signed catalogs, DPoP (RFC 9449), JTI replay, signed reports, version-frozen catalog. |
+| 3 | Prompt-Layer & Tool-Execution Guardrails | **Shipped — exceeds:** RE2-only linear-time scanning, 24 OWASP injection patterns, strict schemas, SSRF allowlists, fail-closed. |
+| 4 | Observability for Planning & Tool Calls | **Partial (shipped):** hash-chained tamper-evident audit + DAG causal trace. **Roadmap:** SIEM/SOAR emitter + anomaly thresholds. |
+| 5 | Governance for Tool Updates & Capability Drift | **Partial (shipped):** mid-session drift/rug-pull + typosquat detection. **Roadmap:** approval-gate workflow, baseline registry, RACI, deprecation. |
+| 6 | Restrict Non-Human Identities & Permissions | **Partial (shipped):** per-tool RBAC, confused-deputy, scope enforcement tests. **Roadmap:** credential-rotation + NHI anomaly monitoring. |
+| 7 | Human-in-the-Loop for Sensitive Actions | **Partial (shipped):** destructive two-stage commit + detection of missing HITL gates. **Roadmap:** non-bypassable out-of-band approval (agent cannot resubmit its own token). |
+| 8 | Agent-Specific Incident Response | **Roadmap:** containment primitives exist (budget kill, tool blocking); orchestration (pause/quarantine/freeze/revoke), severity tiers, playbooks, tabletop pack. |
+| ★ | *Not in CrowdStrike* | **Roadmap differentiator:** signed **MCP Security Conformance Level** — SLSA-style tier tying scanner proof ↔ runtime enforcement ↔ audit chain into one verifiable, publishable artifact. Closed commercial platforms structurally cannot offer a vendor-independent conformance proof. |
+
+The strategic point: CrowdStrike's roadmap is a *sales narrative*. Closing workstreams 1/4/5/7/8 as OSS, signature-anchored controls converts that narrative into a verifiable feature list no closed platform can match on trust model.
+
 ---
 
 ## Full Capability Matrix
@@ -265,6 +294,7 @@ jobs:
 
 ## Sources
 
+- CrowdStrike — *AI Agent Security: Architecture, Attack Surface, and Defense — A Practical 90-Day Roadmap for Securing Agentic AI* (vendor whitepaper; analysed for the roadmap mapping above)
 - [CoSAI/OASIS MCP Security Whitepaper](https://www.oasis-open.org/2026/01/27/coalition-for-secure-ai-releases-extensive-taxonomy-for-model-context-protocol-security/) (Jan 2026)
 - [CoSAI ws4 GitHub — model-context-protocol-security.md](https://github.com/cosai-oasis/ws4-secure-design-agentic-systems/blob/main/model-context-protocol-security.md)
 - [CoSAI Practical MCP Security Guide](https://www.coalitionforsecureai.org/securing-the-ai-agent-revolution-a-practical-guide-to-mcp-security/)

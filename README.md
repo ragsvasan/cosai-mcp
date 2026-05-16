@@ -127,8 +127,22 @@ pytest --cosai-target=http://localhost:8000 --cosai-severity=critical
 | Cisco MCP Scanner / Snyk / Enkrypt | Static analysis only — tests source code, not the running server |
 | mcp-authx | T1 only |
 | OWASP MCP Top 10 | Document; no runnable code |
+| CrowdStrike Falcon AI Detection & Response | Closed commercial agent-side SOC; the "90-day roadmap" is sold, not shipped — demo-by-request, vendor-trust-anchored |
 
 cosai-mcp is the only tool that combines runtime black-box probing + stateful multi-turn conformance testing + all 12 CoSAI categories + CI/CD gate. Static analyzers and runtime proxies are complements — they test what you wrote and monitor production; cosai-mcp gates what ships.
+
+### vs. commercial agentic-AI platforms (CrowdStrike, et al.)
+
+CrowdStrike's *"AI Agent Security: A Practical 90-Day Roadmap for Securing Agentic AI"* is an accurate description of the MCP attack surface — and a checklist whose implementation it sells as a closed Falcon module. **cosai-mcp + [mcp-armor](https://github.com/cosai-oasis/mcp-armor) are the OSS, signature-anchored implementation of that same checklist:** the scanner *proves* conformance in CI, the middleware *enforces* it in the call path, and every artifact (signed catalog, hash-chained audit, signed report) is verifiable without trusting a vendor.
+
+Where this stack already exceeds the commercial framing today:
+
+- **Signed supply chain is shipped, not aspirational.** Their roadmap *recommends* signed tool manifests and version pinning; cosai-mcp ships Ed25519-signed threat catalogs, DPoP (RFC 9449) identity binding, and JTI replay defense as the default.
+- **In-call-path, not a sidecar SOC.** T4/T9/T12 are detected from inside the server (mcp-armor), not inferred by an external agent that has to be trusted and bought.
+- **Tamper-evident by construction.** Hash-chained audit log + per-installation signed reports — conformance you can verify, not a dashboard you have to believe.
+- **Honest mechanism classes.** Three engines, each the right tool for its category — versus a single commercial layer that markets full coverage it cannot structurally deliver.
+
+Roadmap (closing the remaining checklist workstreams as OSS — see [docs/VALUE_PROP.md](docs/VALUE_PROP.md#crowdstrike-90-day-roadmap-mapping)): pre-deploy tool inventory + governance gate (WS1/WS5), SIEM/SOAR emitter + anomaly thresholds (WS4), non-bypassable human-in-the-loop (WS7), agent incident-response containment (WS8), and a signed **MCP Security Conformance Level** scorecard tying scanner proof ↔ runtime enforcement ↔ audit chain into one verifiable artifact.
 
 ## FAQ
 
