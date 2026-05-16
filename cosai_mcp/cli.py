@@ -125,6 +125,38 @@ def main() -> None:
                    "(default: cosai-adversarial-report.html when --adversarial is set).")
 @click.option("--skip-reachability", is_flag=True, default=False, hidden=True,
               help="Skip the initial TCP reachability check (testing only).")
+@click.option(
+    "--emit-to",
+    default=None,
+    help=(
+        "SIEM/SOAR webhook URL.  When set, every probe result is emitted as an "
+        "OCSF Detection Finding (class_uid 2004) to this endpoint via HTTP POST. "
+        "Failures to deliver are logged as warnings but do not affect exit code."
+    ),
+)
+@click.option(
+    "--emit-auth-header",
+    default=None,
+    envvar="COSAI_EMIT_AUTH",
+    help=(
+        "Authorization header value for the SIEM webhook "
+        "(e.g. 'Bearer <token>'). Also read from COSAI_EMIT_AUTH env var."
+    ),
+)
+@click.option(
+    "--anomaly-threshold",
+    type=int,
+    default=10,
+    show_default=True,
+    help="Max findings in the rolling window before an anomaly alert is emitted.",
+)
+@click.option(
+    "--critical-burst-threshold",
+    type=int,
+    default=3,
+    show_default=True,
+    help="Max critical findings in the rolling window before a burst alert fires.",
+)
 def scan(
     target: str,
     categories: str,
@@ -151,6 +183,10 @@ def scan(
     allow_stateful_adversarial: bool,
     report_adversarial_html: str | None,
     skip_reachability: bool,
+    emit_to: str | None,
+    emit_auth_header: str | None,
+    anomaly_threshold: int,
+    critical_burst_threshold: int,
 ) -> None:
     """Scan a target MCP server for CoSAI threat categories T1–T12.
 
@@ -239,6 +275,17 @@ def scan(
 
     # -- Emit summary --
     _print_scan_summary(result, fail_on=fail_on)
+
+    # -- SIEM/SOAR telemetry emission --
+    if emit_to:
+        _emit_scan_telemetry(
+            result=result,
+            target=target,
+            emit_to=emit_to,
+            emit_auth_header=emit_auth_header,
+            anomaly_threshold=anomaly_threshold,
+            critical_burst_threshold=critical_burst_threshold,
+        )
 
     # -- Write reports — exit 2 on failure when path is explicitly provided (FIX [7]) --
     if report_sarif:
@@ -594,6 +641,78 @@ def inventory_diff(
 
     if fail_on_drift:
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Telemetry helper
+# ---------------------------------------------------------------------------
+
+def _emit_scan_telemetry(
+    result: "ScanResult",
+    target: str,
+    emit_to: str,
+    emit_auth_header: str | None,
+    anomaly_threshold: int,
+    critical_burst_threshold: int,
+) -> None:
+    """Emit all probe results as OCSF events and report anomalies to stderr."""
+    from urllib.parse import urlparse, urlunparse
+
+    from cosai_mcp.telemetry.emitter import HttpEmitter
+    from cosai_mcp.telemetry.ocsf import build_detection_finding
+    from cosai_mcp.telemetry.anomaly import AnomalyDetector
+
+    # Build probe_id → severity string from the threat catalog on the result
+    probe_severity: dict[str, str] = {}
+    for threat in result.threats:
+        sev_str = threat.severity.value if hasattr(threat.severity, "value") else str(threat.severity)
+        for probe_def in threat.probes:
+            probe_severity[probe_def.id] = sev_str
+
+    emitter = HttpEmitter(emit_to, auth_header=emit_auth_header)
+    detector = AnomalyDetector(
+        high_finding_rate_threshold=anomaly_threshold,
+        critical_burst_threshold=critical_burst_threshold,
+    )
+
+    emitted = 0
+    failed = 0
+    for probe in result.probe_results:
+        severity = probe_severity.get(probe.probe_id, "medium")
+        event = build_detection_finding(
+            probe_id=probe.probe_id,
+            threat_id=probe.threat_id,
+            passed=probe.passed,
+            target=target,
+            duration_seconds=probe.duration_seconds,
+            severity=severity,
+        ).to_dict()
+
+        emit_result = emitter.emit(event)
+        if emit_result.success:
+            emitted += 1
+        else:
+            failed += 1
+
+        alerts = detector.ingest(event)
+        for alert in alerts:
+            click.echo(f"[ANOMALY] {alert.rule.value}: {alert.message}", err=True)
+
+    # Redact any userinfo (credentials) from the URL before printing
+    parsed = urlparse(emit_to)
+    safe_emit = urlunparse(parsed._replace(
+        netloc=parsed.hostname + (f":{parsed.port}" if parsed.port else "")
+    ))
+    click.echo(
+        f"Telemetry: {emitted} event(s) emitted to {safe_emit}"
+        + (f", {failed} failed (see warnings)" if failed else "")
+    )
+
+    if detector.alerts:
+        click.echo(
+            f"Anomaly detection: {len(detector.alerts)} alert(s) fired.",
+            err=True,
+        )
 
 
 # ---------------------------------------------------------------------------
