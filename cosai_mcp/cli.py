@@ -409,6 +409,194 @@ def profile_validate(path: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# cosai inventory
+# ---------------------------------------------------------------------------
+
+@main.group()
+def inventory() -> None:
+    """Capture and compare MCP server tool inventories."""
+
+
+@inventory.command("capture")
+@click.argument("target")
+@click.option(
+    "--output",
+    "-o",
+    default=None,
+    help="Path to write the signed JSON artifact. Prints to stdout if omitted.",
+)
+@click.option(
+    "--no-sign",
+    is_flag=True,
+    default=False,
+    help="Skip signing and emit raw inventory JSON (not recommended for production).",
+)
+@click.option("--timeout", default=10.0, show_default=True, help="HTTP timeout in seconds.")
+@click.option(
+    "--allow-private",
+    is_flag=True,
+    default=False,
+    help="Allow capturing from RFC1918/loopback targets (for internal MCP servers).",
+)
+def inventory_capture(
+    target: str, output: str | None, no_sign: bool, timeout: float, allow_private: bool
+) -> None:
+    """Capture a tool manifest from TARGET and emit a signed inventory artifact.
+
+    TARGET is an MCP server URL (e.g. http://localhost:8000).
+
+    Exit codes:
+        0  Inventory captured (and signed, unless --no-sign).
+        2  Capture failed (unreachable server, handshake error, private target).
+    """
+    from cosai_mcp.inventory.snapshot import capture as _capture
+    from cosai_mcp.inventory.signing import sign_inventory
+
+    try:
+        inv = _capture(target, timeout=timeout, allow_private_targets=allow_private)
+    except Exception as exc:
+        click.echo(f"[ERROR] Inventory capture failed: {exc}", err=True)
+        sys.exit(2)
+
+    if no_sign:
+        payload = inv.to_dict()
+    else:
+        try:
+            payload = sign_inventory(inv)
+        except Exception as exc:
+            click.echo(f"[ERROR] Signing failed: {exc}", err=True)
+            sys.exit(2)
+
+    text = json.dumps(payload, indent=2)
+    if output:
+        Path(output).write_text(text, encoding="utf-8")
+        click.echo(
+            f"Inventory written to {output} "
+            f"({'unsigned' if no_sign else 'signed'}, "
+            f"{len(inv.tools)} tool(s), hash={inv.content_hash[:16]}...)"
+        )
+    else:
+        click.echo(text)
+
+
+@inventory.command("verify")
+@click.argument("artifact", type=click.Path(exists=True))
+def inventory_verify(artifact: str) -> None:
+    """Verify the Ed25519 signature on a signed inventory artifact.
+
+    ARTIFACT is a path to a file written by `cosai inventory capture`.
+
+    Exit codes:
+        0  Signature valid.
+        1  Signature invalid or artifact tampered.
+        2  File unreadable or malformed JSON.
+    """
+    from cosai_mcp.inventory.signing import verify_inventory
+    from cosai_mcp.exceptions import SignatureVerificationError
+
+    try:
+        data = json.loads(Path(artifact).read_text(encoding="utf-8"))
+    except Exception as exc:
+        click.echo(f"[ERROR] Cannot read artifact: {exc}", err=True)
+        sys.exit(2)
+
+    try:
+        inv = verify_inventory(data)
+        click.echo(
+            f"Signature VALID — {inv.server_name} {inv.server_version}, "
+            f"{len(inv.tools)} tool(s), captured {inv.captured_at}"
+        )
+    except SignatureVerificationError as exc:
+        click.echo(f"[FAIL] {exc}", err=True)
+        sys.exit(1)
+
+
+@inventory.command("diff")
+@click.argument("baseline", type=click.Path(exists=True))
+@click.argument("current", type=click.Path(exists=True))
+@click.option(
+    "--fail-on-drift",
+    is_flag=True,
+    default=False,
+    help="Exit 1 if any drift is detected (CI gate mode).",
+)
+@click.option(
+    "--skip-verify-signatures",
+    is_flag=True,
+    default=False,
+    help=(
+        "Skip Ed25519 signature verification on signed artifacts. "
+        "NOT recommended for production or CI drift gates."
+    ),
+)
+def inventory_diff(
+    baseline: str, current: str, fail_on_drift: bool, skip_verify_signatures: bool
+) -> None:
+    """Compare two inventory artifacts and report drift.
+
+    BASELINE and CURRENT are paths to JSON artifacts (signed or unsigned).
+    Signed artifacts (produced by `cosai inventory capture`) are verified by
+    default.  Use --skip-verify-signatures only if the signer and verifier
+    have different installation keys and COSAI_INVENTORY_PUBKEY is not set.
+
+    Exit codes:
+        0  No drift detected (or --fail-on-drift not set).
+        1  Drift detected and --fail-on-drift is set.
+        2  File unreadable, malformed JSON, or signature invalid.
+    """
+    from cosai_mcp.inventory.snapshot import ToolInventory
+    from cosai_mcp.inventory.signing import verify_inventory
+    from cosai_mcp.inventory.drift import detect_drift
+    from cosai_mcp.exceptions import SignatureVerificationError
+
+    def _load(path: str) -> ToolInventory:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        is_signed = "inventory" in data and "signature" in data
+        if is_signed:
+            if skip_verify_signatures:
+                click.echo(
+                    f"[WARN] {path}: signed artifact loaded without signature "
+                    "verification (--skip-verify-signatures). Integrity not guaranteed.",
+                    err=True,
+                )
+                return ToolInventory.from_dict(data["inventory"])
+            # Verify by default — signed artifact must pass trust-anchor check.
+            return verify_inventory(data)
+        return ToolInventory.from_dict(data)
+
+    try:
+        base_inv = _load(baseline)
+        curr_inv = _load(current)
+    except SignatureVerificationError as exc:
+        click.echo(f"[FAIL] Signature verification failed: {exc}", err=True)
+        sys.exit(2)
+    except Exception as exc:
+        click.echo(f"[ERROR] Cannot load artifact: {exc}", err=True)
+        sys.exit(2)
+
+    report = detect_drift(base_inv, curr_inv)
+
+    if not report.has_drift:
+        click.echo(f"No drift detected. ({len(base_inv.tools)} tool(s) unchanged)")
+        sys.exit(0)
+
+    click.echo(f"Drift detected: {report.summary()}")
+    for entry in report.entries:
+        kind = entry.kind.value.upper()
+        if entry.before is not None and entry.after is not None:
+            click.echo(f"  [{kind}] {entry.tool_name}")
+            click.echo(f"    before: {entry.before[:120]}")
+            click.echo(f"    after:  {entry.after[:120]}")
+        elif entry.after is not None:
+            click.echo(f"  [{kind}] {entry.tool_name}: {entry.after[:120]}")
+        else:
+            click.echo(f"  [{kind}] {entry.tool_name}: {entry.before[:120]}")
+
+    if fail_on_drift:
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # Output helpers
 # ---------------------------------------------------------------------------
 
