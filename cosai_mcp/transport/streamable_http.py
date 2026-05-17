@@ -59,13 +59,16 @@ class _PinnedAsyncTransport(httpx.AsyncBaseTransport):
         # FIX: substitute the pinned IP into the URL so the inner transport
         # connects to the verified IP rather than re-resolving via kernel DNS.
         # The Host header in request.headers retains the original hostname.
+        # sni_hostname preserves the original hostname for TLS SNI so SNI-gated
+        # servers (Cloud Run, Cloudflare) don't reject the handshake when the
+        # URL host is rewritten to a bare IP address.
         pinned_url = request.url.copy_with(host=self._pinned_ip)
         pinned_request = httpx.Request(
             method=request.method,
             url=pinned_url,
             headers=request.headers,
             stream=request.stream,
-            extensions=request.extensions,
+            extensions={**request.extensions, "sni_hostname": host.encode()},
         )
         response = await self._inner.handle_async_request(pinned_request)
         check_redirect(response.status_code)
