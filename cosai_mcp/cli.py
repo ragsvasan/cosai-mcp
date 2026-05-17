@@ -1193,6 +1193,9 @@ def _write_sarif_report(result: ScanResult, path: Path) -> None:
             rule_description=getattr(threat, "remediation", "")[:512],
             owasp_ref=threat.owasp_ref,
             cwe=threat.cwe,
+            confidence=getattr(threat, "confidence", None).value
+            if getattr(threat, "confidence", None) is not None
+            else "medium",
         )
 
     sarif_json = builder.build_json()

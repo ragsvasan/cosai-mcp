@@ -243,6 +243,9 @@ def _canonical_threat(t: ThreatDefinition) -> dict[str, Any]:
             "method": p.method,
             "payload": _plain(p.payload),
             "assertions": [_assertion(a) for a in p.assertions],
+            # Corroboration (schema 1.1) is security-relevant — it decides
+            # whether a signal becomes a finding — so it MUST bind the hash.
+            "corroboration": [_assertion(a) for a in p.corroboration],
             "probe_token": p.probe_token,
             "probe_count": p.probe_count,
             "probe_headers": _plain(p.probe_headers) if p.probe_headers else None,
@@ -261,6 +264,7 @@ def _canonical_threat(t: ThreatDefinition) -> dict[str, Any]:
         "references": list(t.references),
         "provenance": _plain(t.provenance),
         "mode": t.mode,
+        "confidence": _plain(t.confidence),
     }
 
 

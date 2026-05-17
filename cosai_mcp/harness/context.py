@@ -194,6 +194,35 @@ class ProbeContext:
         # match a server's tool schema.
         inconclusive_reason = _detect_schema_mismatch(response)
 
+        # Corroboration (schema 1.1): a probe whose primary assertions FAIL is
+        # only reported as a finding when ALL positive-evidence (corroboration)
+        # assertions hold.  Without that evidence the failure is treated as
+        # INCONCLUSIVE (uncorroborated) — it suppresses noise (e.g. an
+        # incidental "root:" substring, or a non-auth-class error) without ever
+        # converting a real finding into a pass.  Corroboration is only
+        # consulted when the probe would otherwise be a finding and the
+        # response was not already inconclusive for schema reasons.
+        if (
+            not passed
+            and probe.corroboration
+            and inconclusive_reason is None
+        ):
+            corro_results = tuple(
+                evaluate_assertion(a, response) for a in probe.corroboration
+            )
+            if not all(cr.passed for cr in corro_results):
+                missing = "; ".join(
+                    f"{cr.target} {cr.operator} {cr.expected}"
+                    for cr in corro_results
+                    if not cr.passed
+                )
+                inconclusive_reason = (
+                    "Primary assertion failed but corroborating positive "
+                    f"evidence was absent ({missing}). This test is "
+                    "INCONCLUSIVE: a single uncorroborated signal is not "
+                    "sufficient to report a finding."
+                )
+
         return make_probe_result(
             probe_id=probe.id,
             threat_id=threat.id,

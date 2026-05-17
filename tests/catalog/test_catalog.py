@@ -227,19 +227,28 @@ def test_schema_closed_operator_enum(
         loader.load_all()
 
 
-def test_schema_version_must_be_1_0(
+def test_schema_version_enum_1_0_and_1_1_only(
     tmp_path: Path,
     test_private_key: Ed25519PrivateKey,
     test_pubkey_b64: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """schema_version '2.0' raises SchemaValidationError."""
+    """schema_version is the closed enum {1.0, 1.1}; '2.0' still rejected, '1.1' accepted."""
     monkeypatch.setenv("COSAI_PUBKEY", test_pubkey_b64)
+
+    # '2.0' is outside the closed enum → rejected.
     bad = {**_BASE_THREAT, "schema_version": "2.0"}
     _write_official_file(tmp_path, test_private_key, data=bad)
-    loader = CatalogLoader(tmp_path)
     with pytest.raises(SchemaValidationError):
-        loader.load_all()
+        CatalogLoader(tmp_path).load_all()
+
+    # '1.1' is the WP1 additive bump → accepted (no confidence/corroboration
+    # required; both are optional).
+    good = {**_BASE_THREAT, "schema_version": "1.1"}
+    _write_official_file(tmp_path, test_private_key, data=good)
+    threats = CatalogLoader(tmp_path).load_all()
+    assert len(threats) == 1
+    assert threats[0].schema_version == "1.1"
 
 
 # ---------------------------------------------------------------------------

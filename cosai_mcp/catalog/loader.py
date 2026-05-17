@@ -23,6 +23,7 @@ except ImportError:  # pragma: no cover
 
 from cosai_mcp.catalog.models import (
     Assertion,
+    Confidence,
     Operator,
     Probe,
     Provenance,
@@ -118,6 +119,14 @@ def _parse_probe(
         payload = types.MappingProxyType({})
     raw_headers = raw.get("probe_headers")
     probe_headers = _make_mapping_proxy(raw_headers) if raw_headers else None
+    # Corroboration assertions (schema 1.1): parsed through the SAME path as
+    # primary assertions so the regex policy (RE2-only, custom-disabled) and
+    # operator allowlist apply identically — no weaker path for evidence rules.
+    raw_corro = raw.get("corroboration")
+    corroboration = tuple(
+        _parse_assertion(a, is_custom, allow_regex_in_custom)
+        for a in raw_corro
+    ) if raw_corro else ()
     return Probe(
         id=raw["id"],
         transport=raw["transport"],
@@ -127,6 +136,7 @@ def _parse_probe(
         probe_token=raw.get("probe_token"),
         probe_count=raw.get("probe_count", 1),
         probe_headers=probe_headers,
+        corroboration=corroboration,
     )
 
 
@@ -153,6 +163,7 @@ def _parse_threat(
         references=tuple(data["references"]),
         provenance=provenance,
         mode=data.get("mode", "read-only"),
+        confidence=Confidence(data.get("confidence", "medium")),
     )
     _assert_no_mutable_containers(threat, threat.id)
     return threat

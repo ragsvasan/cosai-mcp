@@ -97,6 +97,15 @@ def _probe_to_dict(probe: Probe) -> dict[str, Any]:
         d["probe_count"] = probe.probe_count
     if probe.probe_headers is not None:
         d["probe_headers"] = dict(probe.probe_headers)
+    if probe.corroboration:
+        d["corroboration"] = [
+            {
+                "target": a.target,
+                "operator": a.operator.value,
+                "value": list(a.value) if isinstance(a.value, tuple) else a.value,
+            }
+            for a in probe.corroboration
+        ]
     return d
 
 
@@ -119,6 +128,15 @@ def _probe_from_dict(d: dict[str, Any]) -> Probe:
         for a in d["assertions"]
     )
     raw_headers = d.get("probe_headers")
+    raw_corro = d.get("corroboration")
+    corroboration = tuple(
+        Assertion(
+            target=a["target"],
+            operator=Operator(a["operator"]),
+            value=tuple(a["value"]) if isinstance(a["value"], list) else a["value"],
+        )
+        for a in raw_corro
+    ) if raw_corro else ()
     return Probe(
         id=d["id"],
         transport=d["transport"],
@@ -128,6 +146,7 @@ def _probe_from_dict(d: dict[str, Any]) -> Probe:
         probe_token=d.get("probe_token"),
         probe_count=d.get("probe_count", 1),
         probe_headers=types.MappingProxyType(raw_headers) if raw_headers else None,
+        corroboration=corroboration,
     )
 
 
@@ -354,6 +373,11 @@ def _synthesize_probe(
             probe_token=probe.probe_token,
             probe_count=probe.probe_count,
             probe_headers=probe.probe_headers,
+            # WP1: a synthesized adaptive-retry probe MUST keep the original
+            # corroboration so the precision contract still holds on retry —
+            # without this a synthesized T3 probe reverts to noisy
+            # not_contains-only behaviour.
+            corroboration=probe.corroboration,
         )
     except ValueError:
         # Expected from template-escape guard or missing adversarial value (P2 fix)

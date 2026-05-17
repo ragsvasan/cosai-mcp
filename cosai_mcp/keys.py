@@ -14,11 +14,14 @@ from cryptography.exceptions import InvalidSignature
 
 from cosai_mcp.exceptions import SignatureVerificationError
 
-# Ed25519 public key (32 bytes, raw) — paired with catalog/.signing-key (gitignored)
-# Generated 2026-04-26; rotate via COSAI_PUBKEY env var for enterprise deployments.
+# Ed25519 public key (32 bytes, raw) — verification anchor for the official
+# catalog.  Paired with the project signing path in ``cosai_mcp.signing``
+# (deterministic dev/reference seed; org/shared key via COSAI_SIGNING_SEED).
+# Rotate via COSAI_PUBKEY env var for enterprise / org-shared deployments;
+# regenerate via scripts/sign_catalog.py after a signing-key change.
 _HARDCODED_PUBLIC_KEY: bytes = bytes.fromhex(
-    "617931990bebd8bf080fca0ced151096"
-    "3a88f7e65c893af0709c3eee2cbf06b2"
+    "cecf56fbd9744437e237cc50551e5574"
+    "0eae1a4ebc2ed54c0db101328f91d9ab"
 )
 
 

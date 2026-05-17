@@ -1,11 +1,12 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "id": "T01-003",
   "category": "T1",
   "severity": "high",
   "cosai_ref": "T1",
   "owasp_ref": "MCP-Top10-A01",
   "cwe": ["CWE-294", "CWE-384"],
+  "confidence": "medium",
   "probes": [
     {
       "id": "T01-003-p1",
@@ -20,6 +21,14 @@
           "target": "response.error",
           "operator": "eq",
           "value": true
+        }
+      ],
+      "corroboration": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": false,
+          "description": "Positive evidence the replayed/unauthenticated call was actually served, not merely an ambiguous transport/internal error."
         }
       ]
     },

@@ -1,11 +1,12 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "id": "T01-004",
   "category": "T1",
   "severity": "medium",
   "cosai_ref": "T1",
   "owasp_ref": "MCP-Top10-A01",
   "cwe": ["CWE-287"],
+  "confidence": "medium",
   "probes": [
     {
       "id": "T01-004-p1",
@@ -20,6 +21,14 @@
           "target": "response.error",
           "operator": "eq",
           "value": true
+        }
+      ],
+      "corroboration": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": false,
+          "description": "Positive evidence the malformed-auth call was actually served, not merely an ambiguous transport/internal error."
         }
       ]
     },

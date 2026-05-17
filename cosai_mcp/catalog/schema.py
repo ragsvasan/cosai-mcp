@@ -13,7 +13,9 @@ THREAT_META_SCHEMA: dict = {
     ],
     "additionalProperties": False,
     "properties": {
-        "schema_version": {"type": "string", "enum": ["1.0"]},
+        # 1.1 adds optional `confidence` (threat) + `corroboration` (probe).
+        # 1.0 files remain valid and load unchanged (additive bump).
+        "schema_version": {"type": "string", "enum": ["1.0", "1.1"]},
         # Standard threats: T##-###  (e.g. T01-001)
         # Adversarial threats: T##-ADV-### (e.g. T03-ADV-001)
         "id": {"type": "string", "pattern": "^T[0-9]{2}(-[A-Z]{2,5})?-[0-9]{3}$"},
@@ -32,6 +34,11 @@ THREAT_META_SCHEMA: dict = {
         },
         "remediation": {"type": "string"},
         "references": {"type": "array", "items": {"type": "string"}},
+        # Schema 1.1 additive: reporting-only confidence label (never gates).
+        "confidence": {
+            "type": "string",
+            "enum": ["low", "medium", "high"],
+        },
         # Adversarial-only optional fields
         "adversarial": {"type": "boolean"},
         "mode": {"type": "string", "enum": ["read-only", "stateful"]},
@@ -52,6 +59,15 @@ THREAT_META_SCHEMA: dict = {
                     "type": "array",
                     "items": {"$ref": "#/$defs/assertion"},
                     "minItems": 0,
+                },
+                # Schema 1.1 additive: positive-evidence assertions. When the
+                # primary assertions FAIL but these do NOT all hold, the probe
+                # is INCONCLUSIVE (uncorroborated) — not a finding. Suppresses
+                # noise from incidental matches. Empty/absent = pre-1.1 behaviour.
+                "corroboration": {
+                    "type": "array",
+                    "items": {"$ref": "#/$defs/assertion"},
+                    "minItems": 1,
                 },
                 # Adversarial probe optional fields
                 "description": {"type": "string"},

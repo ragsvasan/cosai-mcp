@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "id": "T01-002",
   "category": "T1",
   "severity": "critical",
@@ -8,6 +8,7 @@
   "cwe": [
     "CWE-306"
   ],
+  "confidence": "high",
   "probes": [
     {
       "id": "T01-002-p1",
@@ -51,6 +52,14 @@
           "target": "response.error",
           "operator": "eq",
           "value": true
+        }
+      ],
+      "corroboration": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": false,
+          "description": "Positive evidence the privileged unauthenticated action was actually served, not merely an ambiguous transport/internal error."
         }
       ]
     }

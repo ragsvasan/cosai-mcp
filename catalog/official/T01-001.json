@@ -1,11 +1,12 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "id": "T01-001",
   "category": "T1",
   "severity": "critical",
   "cosai_ref": "T1",
   "owasp_ref": "MCP-Top10-A01",
   "cwe": ["CWE-287"],
+  "confidence": "high",
   "probes": [
     {
       "id": "T01-001-p1",
@@ -21,9 +22,17 @@
           "operator": "eq",
           "value": true
         }
+      ],
+      "corroboration": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": false,
+          "description": "Positive evidence the unauthenticated call was actually served (a non-error response was returned), not merely an ambiguous transport/internal error. Without this, the probe is INCONCLUSIVE rather than a finding."
+        }
       ]
     }
   ],
-  "remediation": "Enforce authentication on all MCP endpoints.",
+  "remediation": "Enforce authentication on all MCP endpoints. Reject unauthenticated tool calls with a JSON-RPC auth error (e.g. -32001) or HTTP 401/403.",
   "references": ["https://cosai.org/T1"]
 }

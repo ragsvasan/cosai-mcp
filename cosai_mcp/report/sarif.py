@@ -111,6 +111,7 @@ class SarifBuilder:
         rule_description: str,
         owasp_ref: str = "",
         cwe: tuple = (),
+        confidence: str = "medium",
     ) -> None:
         """Register a probe result.
 
@@ -143,6 +144,12 @@ class SarifBuilder:
                 props["cwe"] = list(cwe)
             if owasp_ref:
                 props["owasp_ref"] = owasp_ref
+            # Confidence is scanner-controlled (from signed catalog) and is a
+            # reporting label only — it never affects level/gating. "medium" is
+            # the implicit default and is omitted so it does not synthesize an
+            # otherwise-empty properties dict (only low/high carry signal).
+            if confidence in ("low", "high"):
+                props["confidence"] = confidence
             # ATLAS techniques derived from category prefix of rule_id (e.g. T04 → T4)
             m = re.match(r"^T(\d+)", rule_id)
             if m:

@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "id": "T03-001",
   "category": "T3",
   "severity": "critical",
@@ -9,6 +9,7 @@
     "CWE-77",
     "CWE-78"
   ],
+  "confidence": "high",
   "probes": [
     {
       "id": "T03-001-p1",
@@ -31,6 +32,20 @@
           "target": "response.body",
           "operator": "not_contains",
           "value": "/bin/bash"
+        }
+      ],
+      "corroboration": [
+        {
+          "target": "response.body",
+          "operator": "contains",
+          "value": "root:",
+          "description": "Positive command-output evidence: the injected `cat /etc/passwd` actually executed and the canonical /etc/passwd record marker is present — not merely an incidental denylist substring."
+        },
+        {
+          "target": "response.body",
+          "operator": "contains",
+          "value": ":/",
+          "description": "Second independent /etc/passwd structural marker (home-dir path field), so a lone 'root:' token is insufficient to report a finding."
         }
       ]
     },
@@ -56,6 +71,20 @@
           "operator": "not_contains",
           "value": "gid="
         }
+      ],
+      "corroboration": [
+        {
+          "target": "response.body",
+          "operator": "contains",
+          "value": "uid=",
+          "description": "Positive command-output evidence: the injected `id` executed and emitted a uid= field."
+        },
+        {
+          "target": "response.body",
+          "operator": "contains",
+          "value": "gid=",
+          "description": "Second independent `id` output field, so a lone 'uid=' token is insufficient to report a finding."
+        }
       ]
     },
     {
@@ -79,6 +108,20 @@
           "target": "response.body",
           "operator": "not_contains",
           "value": "daemon:"
+        }
+      ],
+      "corroboration": [
+        {
+          "target": "response.body",
+          "operator": "contains",
+          "value": "root:",
+          "description": "Positive evidence the path-traversal read returned /etc/passwd content."
+        },
+        {
+          "target": "response.body",
+          "operator": "contains",
+          "value": "daemon:",
+          "description": "Second independent /etc/passwd account marker, so a lone 'root:' token is insufficient to report a finding."
         }
       ]
     }

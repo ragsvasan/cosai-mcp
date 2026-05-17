@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "id": "T03-002",
   "category": "T3",
   "severity": "high",
@@ -8,6 +8,7 @@
   "cwe": [
     "CWE-22"
   ],
+  "confidence": "high",
   "probes": [
     {
       "id": "T03-002-p1",
@@ -31,6 +32,20 @@
           "operator": "not_contains",
           "value": "127.0.0.1"
         }
+      ],
+      "corroboration": [
+        {
+          "target": "response.body",
+          "operator": "contains",
+          "value": "root:",
+          "description": "Positive evidence the traversal read returned /etc/passwd content, not merely an incidental denylist substring."
+        },
+        {
+          "target": "response.body",
+          "operator": "contains",
+          "value": ":/",
+          "description": "Second independent /etc/passwd structural marker, so a lone token is insufficient to report a finding."
+        }
       ]
     },
     {
@@ -48,6 +63,20 @@
           "target": "response.body",
           "operator": "not_contains",
           "value": "root:"
+        }
+      ],
+      "corroboration": [
+        {
+          "target": "response.body",
+          "operator": "contains",
+          "value": "root:",
+          "description": "Positive evidence the URL-encoded traversal read returned /etc/passwd content."
+        },
+        {
+          "target": "response.body",
+          "operator": "contains",
+          "value": ":/",
+          "description": "Second independent /etc/passwd structural marker, so a lone 'root:' token is insufficient to report a finding."
         }
       ]
     }

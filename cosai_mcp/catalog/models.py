@@ -19,6 +19,18 @@ class Severity(Enum):
     INFO = "info"
 
 
+class Confidence(Enum):
+    """How strongly a probe's signal corroborates a real finding.
+
+    Confidence is a *reporting label only* — it never suppresses gating.
+    A low-confidence finding still counts toward --fail-on / exit code 1
+    (fail-closed contract, locked by crucible).
+    """
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
 class Operator(Enum):
     EQ = "eq"
     NE = "ne"
@@ -47,6 +59,12 @@ class Probe:
     probe_token: str | None = None   # "read" → use config.read_token instead of auth_token
     probe_count: int = 1             # >1 → repeat N times; passes if any response satisfies assertions
     probe_headers: types.MappingProxyType | None = None  # extra HTTP headers added to the request
+    # Corroboration (schema 1.1, additive): positive-evidence assertions that
+    # must ALL hold for a failed primary assertion to be reported as a finding.
+    # When non-empty and the primary assertions FAIL but corroboration does NOT
+    # all hold, the probe is downgraded to INCONCLUSIVE (uncorroborated) rather
+    # than counted as a finding.  Empty tuple = pre-1.1 behaviour (no change).
+    corroboration: tuple = ()        # tuple[Assertion, ...]
 
 
 @dataclass(frozen=True)
@@ -63,3 +81,6 @@ class ThreatDefinition:
     references: tuple    # tuple[str, ...]
     provenance: Provenance
     mode: str = "read-only"  # adversarial-only: "read-only" | "stateful"
+    # Confidence (schema 1.1, additive): reporting label only — NEVER gates.
+    # Defaults to MEDIUM so pre-1.1 catalog files behave identically.
+    confidence: Confidence = Confidence.MEDIUM

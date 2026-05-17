@@ -1,11 +1,12 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "id": "T01-005",
   "category": "T1",
   "severity": "low",
   "cosai_ref": "T1",
   "owasp_ref": "MCP-Top10-A01",
   "cwe": ["CWE-703", "CWE-209"],
+  "confidence": "high",
   "probes": [
     {
       "id": "T01-005-p1",
