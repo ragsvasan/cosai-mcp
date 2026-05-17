@@ -109,7 +109,6 @@ cosai-mcp maps directly to their A01–A10 categories.
 **SARIF framework metadata:** ✅ Wired 2026-04-29
 - `rule.properties.cwe` — CWE tags from signed catalog
 - `rule.properties.owasp_ref` — OWASP MCP Top 10 reference
-- `rule.properties.atlas_techniques` — MITRE ATLAS technique IDs
 - `rule.helpUri` — points to OWASP MCP Top 10 project
 
 **A live demo target** (for the working group presentation):

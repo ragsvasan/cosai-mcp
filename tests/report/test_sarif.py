@@ -395,7 +395,7 @@ class TestSarifRegressions:
 
 
 # ---------------------------------------------------------------------------
-# Framework metadata — CWE, OWASP ref, ATLAS techniques
+# Framework metadata — CWE, OWASP ref (WP8: ATLAS removed; CoSAI + NIST only)
 # ---------------------------------------------------------------------------
 
 class TestSarifFrameworkMetadata:
@@ -444,17 +444,19 @@ class TestSarifFrameworkMetadata:
         assert "helpUri" in rule
         assert "owasp" in rule["helpUri"].lower()
 
-    def test_atlas_techniques_wired_for_t4(self):
-        """T4 rules must carry AML.T0051 (LLM Prompt Injection) in ATLAS properties."""
+    def test_no_atlas_techniques_for_t4(self):
+        """WP8: MITRE ATLAS mapping was removed — compliance is CoSAI + NIST
+        AI RMF only. A T4 rule must NOT carry atlas_techniques."""
         b = SarifBuilder(_context())
         self._add_with_metadata(b, _failed_result(probe_id="T04-001", threat_id="T4"),
                                  rule_id="T04-001")
         doc = b.build()
         rule = doc["runs"][0]["tool"]["driver"]["rules"][0]
-        assert "AML.T0051" in rule["properties"]["atlas_techniques"]
+        assert "atlas_techniques" not in rule.get("properties", {})
 
-    def test_atlas_techniques_wired_for_t8(self):
-        """T8 rules must carry both AML.T0013 and AML.T0024."""
+    def test_no_atlas_techniques_for_t8(self):
+        """WP8: T8 (previously mapped to AML.T0013/AML.T0024) must no longer
+        emit any ATLAS technique IDs."""
         b = SarifBuilder(_context())
         b.add_result(
             _failed_result(probe_id="T08-001", threat_id="T8"),
@@ -467,25 +469,32 @@ class TestSarifFrameworkMetadata:
         )
         doc = b.build()
         rule = doc["runs"][0]["tool"]["driver"]["rules"][0]
-        atlas = rule["properties"]["atlas_techniques"]
-        assert "AML.T0013" in atlas
-        assert "AML.T0024" in atlas
+        props = rule.get("properties", {})
+        assert "atlas_techniques" not in props
+        # Kept frameworks must still be present.
+        assert props["cwe"] == ["CWE-918"]
+        assert props["owasp_ref"] == "MCP-Top10-A08"
 
-    def test_no_atlas_for_categories_without_mapping(self):
-        """T1 has no ATLAS mapping — properties must not contain atlas_techniques."""
+    def test_no_atlas_any_category_serialised_doc(self):
+        """Defence-in-depth: the rendered SARIF JSON string must not contain
+        any AML.* ATLAS technique id for any category."""
+        import json as _json
+
         b = SarifBuilder(_context())
-        b.add_result(
-            _failed_result(probe_id="T01-001", threat_id="T1"),
-            severity=Severity.CRITICAL,
-            rule_id="T01-001",
-            rule_name="Improper Authentication",
-            rule_description="Missing auth.",
-            owasp_ref="MCP-Top10-A01",
-            cwe=("CWE-287",),
-        )
-        doc = b.build()
-        rule = doc["runs"][0]["tool"]["driver"]["rules"][0]
-        assert "atlas_techniques" not in rule.get("properties", {})
+        for cat, pid in (("T4", "T04-001"), ("T8", "T08-001"),
+                         ("T9", "T09-001"), ("T11", "T11-001")):
+            b.add_result(
+                _failed_result(probe_id=pid, threat_id=cat),
+                severity=Severity.HIGH,
+                rule_id=pid,
+                rule_name=cat,
+                rule_description="x",
+                owasp_ref=None,
+                cwe=(),
+            )
+        blob = _json.dumps(b.build())
+        assert "AML.T0" not in blob
+        assert "atlas_techniques" not in blob
 
     def test_framework_metadata_not_populated_from_response(self):
         """CWE and OWASP ref in rule properties must be scanner-provided, not derived
@@ -529,4 +538,6 @@ class TestSarifFrameworkMetadata:
         rule = doc["runs"][0]["tool"]["driver"]["rules"][0]
         assert rule["properties"]["cwe"] == ["CWE-74"]
         assert rule["properties"]["owasp_ref"] == "MCP-Top10-A04"
-        assert "AML.T0051" in rule["properties"]["atlas_techniques"]
+        # WP8: ATLAS mapping removed — must not survive serialisation.
+        assert "atlas_techniques" not in rule["properties"]
+        assert "AML.T0" not in sarif_json

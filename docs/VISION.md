@@ -71,7 +71,7 @@ License: Apache 2.0.
 
 **Who:** Enterprise security teams evaluating vendor or marketplace MCP servers before connecting them to internal agents.
 
-**What:** Run the scanner against the vendor's staging endpoint. The report maps findings to CoSAI T-categories, OWASP MCP Top 10, ISO 27001 controls, and NIST AI RMF subcategories. Hand the report to procurement.
+**What:** Run the scanner against the vendor's staging endpoint. The report maps findings to CoSAI T-categories, OWASP MCP Top 10, and NIST AI RMF subcategories. Hand the report to procurement.
 
 ```bash
 cosai-mcp scan https://vendor.example.com/mcp \
@@ -120,7 +120,7 @@ app.add_middleware(CoSAIStack, config=CoSAIConfig(
 
 **What:** Scheduled weekly scans produce signed reports. The report embeds the catalog hash, scan timestamp, and a public key fingerprint. Reports cannot be retroactively altered.
 
-**Value:** Audit-ready evidence of continuous MCP security assessment. Maps directly to ISO 27001:2022 Annex A controls and NIST AI RMF subcategories — the exact frameworks enterprise customers ask about.
+**Value:** Audit-ready evidence of continuous MCP security assessment. Maps directly to CoSAI T1–T12 and NIST AI RMF subcategories — the frameworks enterprise customers ask about.
 
 ---
 

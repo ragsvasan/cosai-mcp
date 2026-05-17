@@ -23,16 +23,8 @@ _MAX_MESSAGE_CHARS = 4096
 # Valid ruleIds: standard (T01-001 … T12-999) and adversarial (T03-ADV-001 etc.)
 _RULE_ID_RE = re.compile(r"^T\d{2}(-[A-Z]{2,5})?-\d{3}$")
 
-# MITRE ATLAS technique IDs by CoSAI threat category (scanner-controlled, from THREAT_MAPPING.md)
-# All values are static constants — never derived from response content.
-_ATLAS_BY_CATEGORY: dict[str, list[str]] = {
-    "T4":  ["AML.T0051"],          # LLM Prompt Injection
-    "T5":  ["AML.T0024"],          # Exfiltration via ML Inference API
-    "T6":  ["AML.T0048"],          # Erode ML Model Integrity
-    "T8":  ["AML.T0013", "AML.T0024"],  # Discover ML Model Ontology + Exfiltration
-    "T9":  ["AML.T0054"],          # LLM Jailbreak
-    "T11": ["AML.T0010"],          # Create Proxy ML Model (supply chain)
-}
+# WP8: compliance mapping is trimmed to CoSAI + NIST AI RMF only. The former
+# MITRE ATLAS technique mapping was removed here and from the docs.
 
 
 def _strip_control_chars(s: str) -> str:
@@ -150,12 +142,6 @@ class SarifBuilder:
             # otherwise-empty properties dict (only low/high carry signal).
             if confidence in ("low", "high"):
                 props["confidence"] = confidence
-            # ATLAS techniques derived from category prefix of rule_id (e.g. T04 → T4)
-            m = re.match(r"^T(\d+)", rule_id)
-            if m:
-                atlas = _ATLAS_BY_CATEGORY.get(f"T{int(m.group(1))}")
-                if atlas:
-                    props["atlas_techniques"] = atlas
             if props:
                 rule_dict["properties"] = props
             # helpUri — standard SARIF field, points to OWASP MCP Top 10 project

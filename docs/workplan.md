@@ -487,7 +487,7 @@ pytest tests/ -v   # full regression
   - **Framework metadata wiring** — each SARIF rule definition carries:
     - `tags`: CWE IDs from catalog (e.g., `["CWE-287", "CWE-306"]`)
     - `helpUri`: OWASP MCP Top 10 reference URL from catalog `owasp_ref` field
-    - `properties`: ISO 27001:2022 Annex A controls + NIST AI RMF 2026 function IDs from `docs/THREAT_MAPPING.md` mappings
+    - `properties`: NIST AI RMF 2026 function IDs from `docs/THREAT_MAPPING.md` mappings (compliance scope: CoSAI + NIST AI RMF)
     - Currently the catalog model has `owasp_ref` and `cwe` fields populated but they are NOT wired into SARIF rule output — this is the gap to close
   - **`resources/read` audit log** — middleware logs `resources/read` invocations with resource URI hash + result hash, so the middle segment of the DAG causal chain (context retrieval) is captured alongside tool invocations (see T12 scope note in THREAT_CATALOG.md)
 - `cosai_mcp/report/html.py` — HTML report builder:
@@ -508,7 +508,7 @@ pytest tests/ -v   # full regression
 - `test_sarif_partial_scan_execution_unsuccessful` — exit code 2; asserts `executionSuccessful: false`
 - `test_sarif_rule_cwe_tags` — catalog entry with `cwe: ["CWE-287"]`; SARIF rule `tags` contains `"CWE-287"`
 - `test_sarif_rule_owasp_helpUri` — catalog entry with `owasp_ref: "MCP-Top10-A01"`; SARIF rule `helpUri` is set
-- `test_sarif_rule_framework_properties` — rule `properties` contains ISO 27001 and NIST AI RMF keys matching THREAT_MAPPING entries
+- `test_sarif_rule_framework_properties` — rule `properties` contains OWASP MCP Top 10 + CWE keys matching THREAT_MAPPING entries (compliance scope: CoSAI + NIST AI RMF)
 - `test_sarif_framework_metadata_not_from_response` — response body containing fake `"CWE-9999"` tag; does not appear in SARIF rule tags
 - `test_html_csp_default_src_none` — asserts CSP header in HTML report
 - `test_html_references_text_only` — `references: ["javascript:alert(1)"]`; asserts rendered as text not link
@@ -672,7 +672,7 @@ python -c "from cosai_mcp import Scanner; print('ok')"
 - `Dockerfile` — `--network=none` except explicit target IP rule; minimal base image
 - `pyproject.toml` — `[tool.cosai.publish]` Sigstore/PEP 740 attestation config
 - `SLSA.md` — provenance declaration, build reproducibility instructions
-- `docs/threat-mapping.md` — CoSAI T1–T12 ↔ ISO 27001:2022 ↔ NIST AI RMF 2026 ↔ OWASP MCP Top 10
+- `docs/threat-mapping.md` — CoSAI T1–T12 ↔ NIST AI RMF 2026 ↔ OWASP MCP Top 10 ↔ CWE
 - `docs/coverage-matrix.md` — definitive table: which engine covers which category, what is not covered
 
 **Tests (`tests/ci/`):**

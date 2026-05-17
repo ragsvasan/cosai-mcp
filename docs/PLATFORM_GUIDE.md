@@ -176,7 +176,7 @@ When `--contain-on-anomaly` is set and anomaly thresholds are exceeded, the scan
 
 ### Why it matters
 
-The gap between "alert fired" and "server contained" is where attackers operate. By emitting a structured OCSF Security Incident, cosai-mcp triggers the same SOAR playbooks that respond to CrowdStrike alerts — without requiring a CrowdStrike agent on an MCP server.
+The gap between "alert fired" and "server contained" is where attackers operate. By emitting a structured OCSF Security Incident, cosai-mcp triggers existing SOAR playbooks — without requiring any vendor agent on an MCP server.
 
 ### Usage
 
@@ -237,7 +237,7 @@ After every scan, produces a per-category conformance grade for all 12 CoSAI cat
 
 Compliance audits require *evidence*, not just reports. A signed scorecard is an attestation — the scanner cryptographically asserts that a specific server, at a specific time, with a specific threat catalog, achieved a specific conformance level. Auditors can verify the signature offline without trusting the reporting party.
 
-This maps directly to MCP Server Security Standard (MSSS) conformance levels and CSA AI Controls Matrix evidence requirements.
+This maps directly to CoSAI T1–T12 conformance and the NIST AI RMF (2026 Critical Infrastructure Profile).
 
 ### Usage
 

@@ -12,7 +12,7 @@ The source material is the **CoSAI/OASIS January 2026 whitepaper** — "Security
 
 - A 12-category threat taxonomy (T1–T12) covering every meaningful attack surface of an MCP server: authentication, access control, input validation, data/control boundary violations, data protection, integrity/supply chain, session security, network binding, LLM trust boundary failures, resource management, supply chain lifecycle, and audit logging.
 - For each category: a threat description, attack pattern examples, and a list of mitigations.
-- Cross-references to OWASP MCP Top 10, OWASP ASI Top 10, MITRE ATLAS, ISO 27001:2022, NIST AI RMF 2026, and CSA AI Controls Matrix.
+- Cross-references to OWASP MCP Top 10, OWASP ASI Top 10, NIST AI RMF 2026, and CWE.
 - Zero runnable code. The whitepaper is a specification document, not an implementation.
 
 **What the whitepaper does NOT contain:**
@@ -60,7 +60,7 @@ We surveyed the full landscape of MCP security tooling in April 2026. The findin
 
 ### Standards (no code)
 
-CoSAI whitepaper, OWASP MCP Top 10, OWASP ASI Top 10, MITRE ATLAS, CSA AI Controls Matrix, MSSS — all documents, no scanners.
+CoSAI whitepaper, OWASP MCP Top 10, OWASP ASI Top 10, NIST AI RMF — all documents, no scanners.
 
 ### The structural gap (three things nobody had together)
 
@@ -126,7 +126,7 @@ The anomaly detection layer (HIGH_FINDING_RATE, CRITICAL_BURST, SEVERITY_ESCALAT
 
 **Why we built it:**
 
-The gap between "alert fired" and "server contained" is where attackers operate. By emitting an OCSF Security Incident event, cosai-mcp triggers the same SOAR playbooks that respond to CrowdStrike alerts — without requiring a CrowdStrike agent on an MCP server. The structured event format means Splunk SOAR, Palo Alto XSOAR, and similar systems receive actionable context, not a raw string alert.
+The gap between "alert fired" and "server contained" is where attackers operate. By emitting a standard OCSF Security Incident event, cosai-mcp triggers existing SOAR playbooks — without requiring any vendor agent on an MCP server. The structured event format means Splunk SOAR, Palo Alto XSOAR, and similar systems receive actionable context, not a raw string alert.
 
 Firewall commands are intentionally never auto-executed. Automatic network changes in production are a blast-radius risk. The SOAR playbook (triggered by the OCSF event) owns automation beyond the scanner's boundary.
 
@@ -147,9 +147,8 @@ Firewall commands are intentionally never auto-executed. Automatic network chang
 Compliance audits require *evidence*, not just reports. A signed scorecard is an attestation — the scanner cryptographically asserts that a specific server, at a specific time, with a specific threat catalog, achieved a specific conformance level. Auditors can verify the signature offline without trusting the reporting party.
 
 This maps directly to:
-- **MSSS conformance levels** (full_conformance / partial_conformance / non_conformant / insufficient_coverage)
-- **CSA AI Controls Matrix** evidence requirements for the tool-access and audit-logging control families
-- **ISO 27001:2022** Statement of Applicability evidence
+- **CoSAI T1–T12 conformance levels** (full_conformance / partial_conformance / non_conformant / insufficient_coverage)
+- **NIST AI RMF (2026 Critical Infrastructure Profile)** subcategory evidence (GOVERN / MAP / MEASURE / MANAGE, AG-MP.1)
 
 **Technical architecture:**
 

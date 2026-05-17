@@ -1,6 +1,6 @@
 # Threat Category Mapping
 
-Cross-reference of CoSAI T1–T12 against ISO 27001:2022, NIST AI RMF (2026 Critical Infrastructure Profile), OWASP MCP Top 10, and CWE.
+Cross-reference of CoSAI T1–T12 against NIST AI RMF (2026 Critical Infrastructure Profile), OWASP MCP Top 10, and CWE. Compliance mapping is scoped to **CoSAI + NIST AI RMF** as the primary frameworks; OWASP MCP Top 10 and CWE are retained because they are carried directly in the signed threat catalog.
 
 Use this table for compliance evidence, vendor questionnaires, and procurement assessments.
 
@@ -8,20 +8,20 @@ Use this table for compliance evidence, vendor questionnaires, and procurement a
 
 ## Cross-Reference Table
 
-| CoSAI | Category Name | ISO 27001:2022 Annex A | NIST AI RMF (2026) | NIST AG-MP.1 Tool Class | OWASP MCP Top 10 | CWE | CoSAI Risk Map |
-|-------|--------------|----------------------|-------------------|------------------------|-----------------|-----|---------------|
-| **T1** | Improper Authentication | A.5.15 Access Control, A.5.17 Authentication | MANAGE 1.1 Risk Response, GOVERN 6.2 Accountability | All classes (identity gate) | A01: Broken Authentication | CWE-287, CWE-306, CWE-384 | Critical: Contextualized |
-| **T2** | Missing Access Control | A.5.15 Access Control, A.5.18 Access Rights | MANAGE 1.1 Risk Response, MAP 1.1 System Context | Execute-class (HITL required) | A02: Broken Access Control | CWE-285, CWE-732, CWE-269 | Critical: Contextualized |
-| **T3** | Input Validation Failures | A.8.25 Secure Development, A.8.29 Security Testing | GOVERN 1.2 Accountability, MEASURE 2.1 Assessment | Write + Execute classes | A03: Injection Attacks | CWE-78, CWE-22, CWE-89, CWE-943 | High: Traditional Amplified |
-| **T4** | Data/Control Boundary | A.8.25 Secure Development, A.8.29 Security Testing | GOVERN 1.2, MAP 1.1 System Context | All classes (data ingestion) | A04: Prompt Injection | CWE-74, CWE-77, CWE-116 | High: Novel Vector |
-| **T5** | Inadequate Data Protection | A.8.10 Information Deletion, A.8.11 Data Masking | MAP 1.1, MEASURE 2.6 Data Quality | Read + Write classes | A05: Sensitive Data Exposure | CWE-200, CWE-312, CWE-311 | High: Traditional Amplified |
-| **T6** | Integrity/Verification | A.8.25 Secure Development, A.5.21 ICT Supply Chain | MAP 4.1 Third-party Risks, MANAGE 2.2 | All classes (manifest trust) | A06: Integrity Failures | CWE-345, CWE-494, CWE-1357 | Critical: Supply Chain |
-| **T7** | Session Security Failures | A.8.10 Information Isolation, A.5.15 Access Control | MAP 1.1 System Context, MANAGE 1.1 | All classes (session binding) | A07: Session Management | CWE-384, CWE-287, CWE-295 | Medium: Protocol Gap |
-| **T8** | Network Binding Failures | A.8.1 User Endpoint Devices, A.8.22 Network Segregation | MEASURE 2.1 Security Assessment | Read class (network reach) | A08: Network Exposure | CWE-668, CWE-441, CWE-918 | High: Traditional Amplified |
-| **T9** | Trust Boundary Failures | A.8.25 Secure Development, A.5.36 Compliance | GOVERN 1.2, MAP 1.1 | Execute-class (HITL gate) | A09: Overreliance on AI | CWE-602, CWE-807 | High: Novel Vector |
-| **T10** | Resource Management | A.8.6 Capacity Management | MEASURE 2.1, MANAGE 2.4 | Execute-class (cost amplification) | A10: Resource Exhaustion | CWE-400, CWE-770, CWE-834 | High: Traditional Amplified |
-| **T11** | Supply Chain/Lifecycle | A.5.21 ICT Supply Chain, A.8.30 Outsourced Dev | MAP 4.1 Third-party Risks | All classes (installation time) | A11: Supply Chain | CWE-494, CWE-1357, CWE-693 | Critical: Supply Chain |
-| **T12** | Insufficient Logging | A.8.15 Logging, A.8.16 Monitoring | MEASURE 1.1 Performance Monitoring | Execute-class (accountability) | A12: Insufficient Logging | CWE-778, CWE-223, CWE-532 | High: Visibility Gap |
+| CoSAI | Category Name | NIST AI RMF (2026) | NIST AG-MP.1 Tool Class | OWASP MCP Top 10 | CWE | CoSAI Risk Map |
+|-------|--------------|-------------------|------------------------|-----------------|-----|---------------|
+| **T1** | Improper Authentication | MANAGE 1.1 Risk Response, GOVERN 6.2 Accountability | All classes (identity gate) | A01: Broken Authentication | CWE-287, CWE-306, CWE-384 | Critical: Contextualized |
+| **T2** | Missing Access Control | MANAGE 1.1 Risk Response, MAP 1.1 System Context | Execute-class (HITL required) | A02: Broken Access Control | CWE-285, CWE-732, CWE-269 | Critical: Contextualized |
+| **T3** | Input Validation Failures | GOVERN 1.2 Accountability, MEASURE 2.1 Assessment | Write + Execute classes | A03: Injection Attacks | CWE-78, CWE-22, CWE-89, CWE-943 | High: Traditional Amplified |
+| **T4** | Data/Control Boundary | GOVERN 1.2, MAP 1.1 System Context | All classes (data ingestion) | A04: Prompt Injection | CWE-74, CWE-77, CWE-116 | High: Novel Vector |
+| **T5** | Inadequate Data Protection | MAP 1.1, MEASURE 2.6 Data Quality | Read + Write classes | A05: Sensitive Data Exposure | CWE-200, CWE-312, CWE-311 | High: Traditional Amplified |
+| **T6** | Integrity/Verification | MAP 4.1 Third-party Risks, MANAGE 2.2 | All classes (manifest trust) | A06: Integrity Failures | CWE-345, CWE-494, CWE-1357 | Critical: Supply Chain |
+| **T7** | Session Security Failures | MAP 1.1 System Context, MANAGE 1.1 | All classes (session binding) | A07: Session Management | CWE-384, CWE-287, CWE-295 | Medium: Protocol Gap |
+| **T8** | Network Binding Failures | MEASURE 2.1 Security Assessment | Read class (network reach) | A08: Network Exposure | CWE-668, CWE-441, CWE-918 | High: Traditional Amplified |
+| **T9** | Trust Boundary Failures | GOVERN 1.2, MAP 1.1 | Execute-class (HITL gate) | A09: Overreliance on AI | CWE-602, CWE-807 | High: Novel Vector |
+| **T10** | Resource Management | MEASURE 2.1, MANAGE 2.4 | Execute-class (cost amplification) | A10: Resource Exhaustion | CWE-400, CWE-770, CWE-834 | High: Traditional Amplified |
+| **T11** | Supply Chain/Lifecycle | MAP 4.1 Third-party Risks | All classes (installation time) | A11: Supply Chain | CWE-494, CWE-1357, CWE-693 | Critical: Supply Chain |
+| **T12** | Insufficient Logging | MEASURE 1.1 Performance Monitoring | Execute-class (accountability) | A12: Insufficient Logging | CWE-778, CWE-223, CWE-532 | High: Visibility Gap |
 
 ---
 
@@ -36,28 +36,6 @@ The **AG-MP.1** subcategory (Agent Tool Risk Classification) is the 2026 NIST AI
 | **Execute** | `run_command`, `send_email`, `delete_record`, `deploy` | High | T2 RBAC + HITL gate; T9 deterministic validation (not LLM judgment); T12 audit trace |
 
 **HITL requirement for Execute-class tools:** AG-MP.1 mandates human-in-the-loop approval for high-consequence Execute-class actions. cosai-mcp's T9 middleware enforces that this gate is deterministic (schema-based), not model-delegated. The T2 stateful harness tests that a server correctly enforces the Execute-class boundary across a multi-turn session.
-
----
-
-## ISO 27001:2022 Control Mapping Detail
-
-For each ISO 27001 control referenced above, how cosai-mcp addresses it:
-
-| ISO 27001 Control | cosai-mcp Coverage |
-|------------------|--------------------|
-| **A.5.15** Access Control | T1 probes test authentication enforcement; T2 stateful harness tests authorization per tool call |
-| **A.5.17** Authentication Information | T1 probes test token replay, cross-session reuse, DPoP binding |
-| **A.5.18** Access Rights | T2 confused deputy detection; middleware RBAC enforcement |
-| **A.5.21** ICT Supply Chain | T11 probes: typosquatting detection, unsigned tool definitions; Ed25519 signing of catalog |
-| **A.8.1** User Endpoint Devices | T8 probes: bind address detection, shadow server detection |
-| **A.8.6** Capacity Management | T10 probes: rate limit testing, response size limits, heartbeat detection |
-| **A.8.10** Information Isolation | T7 stateful harness: session isolation, context-bleed detection |
-| **A.8.11** Data Masking | T5 middleware: PII scrubbing, credential pattern detection |
-| **A.8.15** Logging | T12 middleware: hash-chained execution trace, `cosai audit verify` |
-| **A.8.16** Monitoring | T12 middleware: real-time boundary violation alerting |
-| **A.8.22** Network Segregation | T8 probes: SSRF detection; scanner network allowlist (defense-in-depth) |
-| **A.8.25** Secure Development | T3 probes: injection testing; T4 boundary enforcement; SARIF output validation |
-| **A.8.29** Security Testing | Full test suite; SARIF output for integration with security tooling |
 
 ---
 
@@ -126,23 +104,6 @@ The OWASP ASI Top 10 covers risks specific to agentic AI systems — broader tha
 | ASI10 | Insufficient Logging and Monitoring | T12 | Middleware instrumentation |
 
 Note: ASI04 (memory poisoning via multi-agent feedback loops) is partially out of scope for MCP middleware — cross-agent state poisoning requires host-level instrumentation beyond what the MCP transport layer can observe.
-
----
-
-## MITRE ATLAS Alignment
-
-[MITRE ATLAS](https://atlas.mitre.org) (Adversarial Threat Landscape for AI Systems) catalogs real-world adversarial ML attacks. cosai-mcp's probe suite covers the MCP-specific manifestations of the highest-impact ATLAS tactics:
-
-| ATLAS Tactic | ATLAS Technique (example) | cosai-mcp coverage |
-|--------------|--------------------------|-------------------|
-| AML.TA0001 — Reconnaissance | AML.T0013 Discover ML Model Ontology | T8 black-box: method enumeration, server fingerprinting |
-| AML.TA0002 — Resource Development | AML.T0010 Create Proxy ML Model | T11: supply chain, registry integrity |
-| AML.TA0005 — Execution | AML.T0051 LLM Prompt Injection | T4 middleware: data/control boundary |
-| AML.TA0006 — Persistence | AML.T0054 LLM Jailbreak | T9 middleware: trust boundary enforcement |
-| AML.TA0009 — Impact | AML.T0048 Erode ML Model Integrity | T6: tool shadowing, manifest drift detection |
-| AML.TA0010 — Exfiltration | AML.T0024 Exfiltration via ML Inference API | T5 middleware + T8: data protection + network isolation |
-
-SARIF output carries ATLAS technique IDs in `rule.properties.atlas_techniques` (e.g. `["AML.T0051"]` for T4, `["AML.T0013","AML.T0024"]` for T8), enabling ingestion into ATLAS Navigator overlays. CWE tags and OWASP MCP Top 10 references are also present in `rule.properties`.
 
 ---
 

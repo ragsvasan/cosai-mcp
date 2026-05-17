@@ -28,7 +28,7 @@ These categories are observable only from inside the call path. A black-box scan
 
 ## T1 — Improper Authentication
 
-**CoSAI ref:** T1 | **OWASP MCP Top 10:** A01 | **ISO 27001:** A.5.15 | **CWE:** CWE-287, CWE-306
+**CoSAI ref:** T1 | **OWASP MCP Top 10:** A01 | **CWE:** CWE-287, CWE-306
 
 ### What it is
 Insufficient verification of identity across agent chains. MCP servers must validate that every request carries a legitimate, correctly scoped credential — not just that a credential exists.
@@ -57,7 +57,7 @@ Insufficient verification of identity across agent chains. MCP servers must vali
 
 ## T2 — Missing Access Control
 
-**CoSAI ref:** T2 | **OWASP MCP Top 10:** A02 | **ISO 27001:** A.5.15 | **CWE:** CWE-285, CWE-732
+**CoSAI ref:** T2 | **OWASP MCP Top 10:** A02 | **CWE:** CWE-285, CWE-732
 
 ### What it is
 Insufficient authorization checks for autonomous tool calls. The "confused deputy" problem: the MCP server executes a request using its own elevated privileges rather than verifying the calling user has the right to perform that action.
@@ -86,7 +86,7 @@ Insufficient authorization checks for autonomous tool calls. The "confused deput
 
 ## T3 — Input Validation Failures
 
-**CoSAI ref:** T3 | **OWASP MCP Top 10:** A03 | **ISO 27001:** A.8.25 | **CWE:** CWE-78, CWE-22, CWE-89
+**CoSAI ref:** T3 | **OWASP MCP Top 10:** A03 | **CWE:** CWE-78, CWE-22, CWE-89
 
 ### What it is
 Treating LLM-generated tool arguments as trusted input. The LLM constructs `arguments` for `tools/call` — these arguments must be validated by the MCP server with the same rigor as any user-supplied input.
@@ -119,7 +119,7 @@ All probes assert `response.error.code` is in the invalid-params range (`-32602`
 
 ## T4 — Data/Control Boundary Violations
 
-**CoSAI ref:** T4 | **OWASP MCP Top 10:** A04 | **ISO 27001:** A.8.25 | **CWE:** CWE-74, CWE-77
+**CoSAI ref:** T4 | **OWASP MCP Top 10:** A04 | **CWE:** CWE-74, CWE-77
 
 ### What it is
 The inability to distinguish between instructions and data in the LLM's context window. An attacker who can write content that the agent reads (a document, a database record, a web page) can inject instructions that redirect the agent's behavior.
@@ -147,7 +147,7 @@ T4 requires being in the call path. The middleware detects:
 
 ## T5 — Inadequate Data Protection
 
-**CoSAI ref:** T5 | **OWASP MCP Top 10:** A05 | **ISO 27001:** A.8.10, A.8.11 | **CWE:** CWE-200, CWE-312
+**CoSAI ref:** T5 | **OWASP MCP Top 10:** A05 | **CWE:** CWE-200, CWE-312
 
 ### What it is
 Sensitive data leaking through the MCP context: tool responses containing PII, secrets, or proprietary data being logged in plaintext, passed to unauthorized agents, or included in LLM context that flows to third-party model APIs.
@@ -172,7 +172,7 @@ Sensitive data leaking through the MCP context: tool responses containing PII, s
 
 ## T6 — Integrity and Verification Failures
 
-**CoSAI ref:** T6 | **OWASP MCP Top 10:** A06 | **ISO 27001:** A.5.21 | **CWE:** CWE-345, CWE-494
+**CoSAI ref:** T6 | **OWASP MCP Top 10:** A06 | **CWE:** CWE-345, CWE-494
 
 ### What it is
 Lack of cryptographic verification for MCP server definitions and tool schemas. Attackers can substitute a tool definition with one that routes data to a malicious endpoint, or shadow a trusted tool name with a malicious implementation.
@@ -196,7 +196,7 @@ Lack of cryptographic verification for MCP server definitions and tool schemas. 
 
 ## T7 — Session Security Failures
 
-**CoSAI ref:** T7 | **OWASP MCP Top 10:** A07 | **ISO 27001:** A.8.10 | **CWE:** CWE-384, CWE-287
+**CoSAI ref:** T7 | **OWASP MCP Top 10:** A07 | **CWE:** CWE-384, CWE-287
 
 ### What it is
 Weak binding of MCP sessions to user identity. Session tokens that can be fixed by the client, replayed across transport switches, or shared across users enable session hijacking and context-bleed attacks.
@@ -228,7 +228,7 @@ Weak binding of MCP sessions to user identity. Session tokens that can be fixed 
 
 ## T8 — Network Binding Failures
 
-**CoSAI ref:** T8 | **OWASP MCP Top 10:** A08 | **ISO 27001:** A.8.1 | **CWE:** CWE-668, CWE-441
+**CoSAI ref:** T8 | **OWASP MCP Top 10:** A08 | **CWE:** CWE-668, CWE-441
 
 ### What it is
 MCP endpoints exposed beyond their intended network boundary. A local MCP server bound to `0.0.0.0` is reachable from the network, not just localhost. Poorly isolated multi-tenant environments expose one tenant's MCP server to another.
@@ -253,7 +253,7 @@ MCP endpoints exposed beyond their intended network boundary. A local MCP server
 
 ## T9 — Trust Boundary Failures
 
-**CoSAI ref:** T9 | **OWASP MCP Top 10:** A09 | **ISO 27001:** A.8.25 | **CWE:** CWE-602, CWE-807
+**CoSAI ref:** T9 | **OWASP MCP Top 10:** A09 | **CWE:** CWE-602, CWE-807
 
 ### What it is
 Delegating security-critical validation to the LLM's judgment. A model may be deceived into approving actions it should reject, treating attacker-controlled content as trusted instructions, or failing to apply security checks consistently.
@@ -279,7 +279,7 @@ T9 requires observing the agent's decision-making. The middleware instruments:
 
 ## T10 — Resource Management Failures
 
-**CoSAI ref:** T10 | **OWASP MCP Top 10:** A10 | **ISO 27001:** A.8.6 | **CWE:** CWE-400, CWE-770
+**CoSAI ref:** T10 | **OWASP MCP Top 10:** A10 | **CWE:** CWE-400, CWE-770
 
 ### What it is
 Unbounded resource consumption by agentic workflows. Infinite reasoning loops, recursive tool calls, or unbounded API calls incur extreme costs ("Denial of Wallet") or exhaust system resources.
@@ -307,7 +307,7 @@ Unbounded resource consumption by agentic workflows. Infinite reasoning loops, r
 
 ## T11 — Supply Chain and Lifecycle
 
-**CoSAI ref:** T11 | **OWASP MCP Top 10:** A11 | **ISO 27001:** A.5.21 | **CWE:** CWE-494, CWE-1357
+**CoSAI ref:** T11 | **OWASP MCP Top 10:** A11 | **CWE:** CWE-494, CWE-1357
 
 ### What it is
 Malicious or compromised MCP server packages distributed via agent marketplaces or package registries. The MCP ecosystem's nascent marketplace ("skills", "plugins") creates a supply chain analogous to npm or PyPI but with fewer established security practices.
@@ -338,7 +338,7 @@ Full supply chain verification (provenance, dependency graph analysis) requires 
 
 ## T12 — Insufficient Logging
 
-**CoSAI ref:** T12 | **OWASP MCP Top 10:** A12 | **ISO 27001:** A.8.15 | **CWE:** CWE-778, CWE-223
+**CoSAI ref:** T12 | **OWASP MCP Top 10:** A12 | **CWE:** CWE-778, CWE-223
 
 ### What it is
 Lack of immutable, causally-linked execution traces for agentic workflows. Traditional event logging records what happened; agentic systems require execution traces that record why it happened — the causal chain from user prompt through LLM reasoning to tool invocation.

@@ -51,7 +51,6 @@ Every finding is a structured SARIF result with:
 - `ruleId` — the catalog threat-definition ID (e.g. `T03-001`)
 - `rule.properties.cwe` — CWE tag(s) from the signed catalog
 - `rule.properties.owasp_ref` — OWASP MCP Top 10 reference
-- `rule.properties.atlas_techniques` — MITRE ATLAS technique IDs where applicable
 - `message.text` — the only field that can contain attacker bytes; sanitized and length-capped
 
 SARIF integrates natively with GitHub's security findings tab (same pipeline as CodeQL and Dependabot). No extra tooling required.
@@ -85,8 +84,6 @@ Concretely, we propose:
 | CoSAI/OASIS T1–T12 | Full — all twelve categories, three engines |
 | OWASP MCP Top 10 (A01–A10) | Full — catalog carries `owasp_ref` per threat |
 | OWASP Agentic Security Initiative (ASI01–ASI10) | Partial — T4/T9 middleware covers ASI02/ASI03/ASI07 |
-| MITRE ATLAS | T4/T5/T6/T8/T9/T11 — ATLAS technique IDs in SARIF output |
-| ISO 27001:2022 | Controls A.8.8, A.8.25, A.8.26, A.8.28 |
 | NIST AI RMF 2026 | GOVERN 1.7, MAP 5.1, MEASURE 2.5 |
 | SOC 2 Type II | CC6.1, CC6.6, CC7.1 |
 
