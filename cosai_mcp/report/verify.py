@@ -24,13 +24,19 @@ class VerifyResult:
     broken_at_line: int | None = None
 
 
-def verify_audit_log(log_path: Path | str) -> VerifyResult:
+def verify_audit_log(
+    log_path: Path | str, expected_head: str | None = None
+) -> VerifyResult:
     """Verify the integrity of a hash-chained audit log file.
 
     Parameters
     ----------
     log_path:
         Path to the JSON Lines audit log written by AuditLogger.
+    expected_head:
+        Optional externally-anchored tip hash.  When provided, a wholesale
+        rewrite of the log (rebuilt consistently from genesis) is detected
+        because the final chain_hash must equal this anchor (L-2).
 
     Returns
     -------
@@ -56,7 +62,7 @@ def verify_audit_log(log_path: Path | str) -> VerifyResult:
 
     logger = AuditLogger(path)
     try:
-        count = logger.verify_chain()
+        count = logger.verify_chain(expected_head=expected_head)
     except AuditChainError as exc:
         return VerifyResult(
             status=VerifyStatus.CHAIN_BROKEN,

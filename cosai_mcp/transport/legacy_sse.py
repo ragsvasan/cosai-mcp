@@ -34,6 +34,12 @@ class LegacySSETransport(Transport):
     shared queue never needs to be scanned for matching IDs.
     """
 
+    # Defensive cap on the background SSE listener so a hostile server cannot
+    # drive unbounded CPU/memory by trickling lines forever.  The send() path
+    # is independently bounded by asyncio.wait_for on the response future, so
+    # this is belt-and-suspenders (M-3 sibling).
+    _SSE_MAX_LINES = 100_000
+
     def __init__(self, base_url: str, config: ScanConfig) -> None:
         self._base_url = base_url.rstrip("/")
         self._config = config
@@ -93,7 +99,14 @@ class LegacySSETransport(Transport):
             async with self._client.stream("GET", url) as response:
                 check_redirect(response.status_code)
                 event_data: str | None = None
+                line_count = 0
                 async for line in response.aiter_lines():
+                    line_count += 1
+                    if line_count > self._SSE_MAX_LINES:
+                        # Hostile/oversized stream — stop draining; pending
+                        # futures are already independently time-bounded by
+                        # the send() wait_for (M-3 sibling hardening).
+                        break
                     line = line.strip()
                     if line.startswith("data:"):
                         event_data = line[len("data:"):].strip()

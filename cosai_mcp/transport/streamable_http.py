@@ -215,22 +215,46 @@ class StreamableHTTPTransport(Transport):
         except Exception:
             pass  # notifications are fire-and-forget
 
-    async def _consume_sse_response(self, response: httpx.Response) -> dict[str, Any]:
-        """Drain an SSE stream and return the first data event as a dict."""
-        event_data: str | None = None
-        async for line in response.aiter_lines():
-            line = line.strip()
-            if line.startswith("data:"):
-                event_data = line[len("data:"):].strip()
-            elif line == "" and event_data is not None:
-                parsed: dict[str, Any] = json.loads(event_data)
-                try:
-                    self._recv_queue.put_nowait(parsed)
-                except asyncio.QueueFull:
-                    pass
-                event_data = None
+    # Hard caps so a hostile server cannot inflate scan wall-time by holding
+    # an SSE stream open or dribbling keepalive bytes forever (M-3).  These
+    # are independent of the per-probe multiprocessing OS-kill — that is the
+    # outer backstop; this is the in-band defence.
+    _SSE_MAX_LINES = 10_000
 
-        return await self._recv_queue.get()
+    async def _consume_sse_response(self, response: httpx.Response) -> dict[str, Any]:
+        """Return the first complete JSON-RPC SSE event as a dict.
+
+        Returns as soon as the first ``data:`` event is parsed — the whole
+        stream is *not* drained.  An explicit read deadline (the configured
+        probe timeout) bounds how long a slow/trickling server can stall this
+        coroutine, and a hard line cap bounds memory/CPU.  A hostile target
+        can therefore no longer hold a process slot for the full probe
+        timeout per probe by never closing the stream.
+        """
+        deadline = self._config.probe_timeout_seconds
+
+        async def _read_first() -> dict[str, Any]:
+            event_data: str | None = None
+            line_count = 0
+            async for line in response.aiter_lines():
+                line_count += 1
+                if line_count > self._SSE_MAX_LINES:
+                    raise TimeoutError(
+                        "SSE stream exceeded line cap without a complete "
+                        "JSON-RPC message — treating hostile/oversized stream "
+                        "as a failed probe."
+                    )
+                line = line.strip()
+                if line.startswith("data:"):
+                    event_data = line[len("data:"):].strip()
+                elif line == "" and event_data is not None:
+                    parsed: dict[str, Any] = json.loads(event_data)
+                    return parsed
+            raise TimeoutError(
+                "SSE stream ended without a complete JSON-RPC message."
+            )
+
+        return await asyncio.wait_for(_read_first(), timeout=deadline)
 
     async def recv(self) -> dict[str, Any]:
         """Return the next queued server-sent message."""

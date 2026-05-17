@@ -53,13 +53,28 @@ def _get_or_create_private_key() -> Ed25519PrivateKey:
 
 
 def _get_trusted_public_key_bytes() -> bytes | None:
-    """Return trusted public key bytes from env var or local keyring, or None."""
+    """Return trusted public key bytes from env var or local keyring, or None.
+
+    Raises ScorecardVerificationError if ``COSAI_SCORECARD_PUBKEY`` is
+    explicitly set but is not a valid base64-encoded raw 32-byte Ed25519
+    key — an explicitly-pinned trust anchor must fail closed, never silently
+    downgrade to signature-only acceptance (see L-1 / H-1).
+    """
     env_val = os.environ.get("COSAI_SCORECARD_PUBKEY", "")
     if env_val:
         try:
-            return base64.b64decode(env_val)
-        except Exception:
-            return None
+            raw = base64.b64decode(env_val, validate=True)
+        except Exception as exc:
+            raise ScorecardVerificationError(
+                "COSAI_SCORECARD_PUBKEY is set but is not valid base64. "
+                "It must be a base64-encoded raw 32-byte Ed25519 public key."
+            ) from exc
+        if len(raw) != 32:
+            raise ScorecardVerificationError(
+                f"COSAI_SCORECARD_PUBKEY decodes to {len(raw)} bytes; "
+                "a raw Ed25519 public key must be exactly 32 bytes."
+            )
+        return raw
     try:
         priv = _get_or_create_private_key()
         return priv.public_key().public_bytes_raw()
@@ -116,9 +131,20 @@ def verify_scorecard(scorecard: Scorecard) -> None:
     except (ValueError, AttributeError) as exc:
         raise ScorecardVerificationError(f"Malformed public_key or signature field: {exc}") from exc
 
-    # Trust anchor check — reject scorecards signed by unknown keys
+    # Trust anchor check — fail CLOSED: signature-only mode authenticates
+    # nothing because the scorecard carries its own public key (H-1).
     trusted = _get_trusted_public_key_bytes()
-    if trusted is not None and artifact_pub_bytes != trusted:
+    if trusted is None:
+        raise ScorecardVerificationError(
+            "No trust anchor available to authenticate this scorecard. "
+            "Set the COSAI_SCORECARD_PUBKEY environment variable to the "
+            "expected key (base64-encoded raw 32-byte Ed25519 public key), or "
+            "run on a machine where the per-installation keyring key is "
+            "available. Signature-only verification is refused because the "
+            "scorecard carries its own public key and proves nothing about "
+            "authenticity."
+        )
+    if artifact_pub_bytes != trusted:
         raise ScorecardVerificationError(
             "Scorecard public key does not match the trusted installation key. "
             "Set COSAI_SCORECARD_PUBKEY env var for cross-machine verification."

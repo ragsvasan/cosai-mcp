@@ -363,6 +363,7 @@ def scan(
                 emit_auth_header=emit_auth_header,
                 anomaly_threshold=anomaly_threshold,
                 critical_burst_threshold=critical_burst_threshold,
+                allow_private=allow_private_targets,
             )
         except Exception as exc:  # noqa: BLE001
             click.echo(f"[IR] Containment error (scan result unchanged): {type(exc).__name__}", err=True)
@@ -490,7 +491,11 @@ def audit() -> None:
 
 @audit.command("verify")
 @click.argument("report", type=click.Path())
-def audit_verify(report: str) -> None:
+@click.option("--expected-head", default=None, envvar="COSAI_AUDIT_HEAD",
+              help="Externally-anchored tip chain_hash. Without it, a "
+                   "wholesale rewrite of the log from genesis cannot be "
+                   "detected — only mid-file edits and reordering are caught.")
+def audit_verify(report: str, expected_head: str | None) -> None:
     """Verify the hash-chained integrity of an audit log.
 
     REPORT is the path to the JSON Lines audit log written by a previous scan.
@@ -500,7 +505,14 @@ def audit_verify(report: str) -> None:
         1  Chain broken (tamper detected).
         2  File not found or empty log.
     """
-    result = verify_audit_log(report)
+    result = verify_audit_log(report, expected_head=expected_head)
+    if expected_head is None and result.status == VerifyStatus.OK:
+        click.echo(
+            "[WARN] No --expected-head anchor supplied — a wholesale rewrite "
+            "of the log from genesis would NOT be detected. Persist and pass "
+            "the last known chain head for full tamper-evidence.",
+            err=True,
+        )
 
     if result.status == VerifyStatus.OK:
         click.echo(f"Audit log OK — {result.entries_verified} entries verified.")
@@ -866,6 +878,7 @@ def _run_ir_containment(
     emit_auth_header: str | None,
     anomaly_threshold: int,
     critical_burst_threshold: int,
+    allow_private: bool = False,
 ) -> None:
     """Build an IncidentRecord from the scan result and run containment actions.
 
@@ -944,6 +957,7 @@ def _run_ir_containment(
         emit_endpoint=emit_to,
         emit_auth_header=emit_auth_header,
         report_path=_Path(ir_report_path) if ir_report_path else None,
+        allow_private=allow_private,
     )
 
     # Redact credentials from emit URL before printing
@@ -991,6 +1005,11 @@ def ir() -> None:
               help="Attempt a best-effort protocol-level close of the MCP connection.")
 @click.option("--all-actions", is_flag=True, default=False,
               help="Execute all actions in the incident's recommended_actions list.")
+@click.option("--allow-private", is_flag=True, default=False,
+              help="Permit containment HTTP to private/loopback/link-local "
+                   "addresses (internal MCP servers). Off by default — "
+                   "containment to non-public targets is rejected to prevent "
+                   "SSRF via a crafted incident artifact.")
 def ir_contain(
     incident_file: str,
     emit_to: str | None,
@@ -998,6 +1017,7 @@ def ir_contain(
     block_egress: bool,
     do_session_kill: bool,
     all_actions: bool,
+    allow_private: bool,
 ) -> None:
     """Execute IR containment actions from an incident JSON report.
 
@@ -1042,6 +1062,7 @@ def ir_contain(
         actions=actions,
         emit_endpoint=emit_to,
         emit_auth_header=emit_auth_header,
+        allow_private=allow_private,
     )
 
     any_failure = False

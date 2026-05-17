@@ -390,6 +390,98 @@ class TestAuditLogger:
         path.touch()
         assert logger.verify_chain() == 0
 
+    def test_regression_l2_wholesale_rewrite_detected_with_anchor(self):
+        """L-2: an attacker rebuilding an internally-consistent chain from
+        genesis (dropping incriminating entries) passes the un-anchored
+        check but MUST be rejected when an external tip anchor is supplied.
+        """
+        from cosai_mcp.middleware.audit import _compute_chain_hash
+
+        logger, path = self._logger()
+        logger.log(method="tools/list", session_id="s")
+        logger.log(method="tools/call", session_id="s")
+        logger.log(method="exfiltrate/secrets", session_id="s")  # incriminating
+        logger.log(method="tools/call", session_id="s")
+        legit_head = logger._prev_hash  # operator persists this out of band
+
+        # Attacker rewrites the whole file, dropping the bad entry, rebuilding
+        # prev_hash/chain_hash from genesis with the public algorithm.
+        entries = [
+            json.loads(l) for l in path.read_text().splitlines() if l.strip()
+        ]
+        kept = [e for e in entries if e["method"] != "exfiltrate/secrets"]
+        prev = AuditLogger._GENESIS_HASH
+        rebuilt = []
+        for e in kept:
+            partial = {k: v for k, v in e.items() if k != "chain_hash"}
+            partial["prev_hash"] = prev
+            ch = _compute_chain_hash(partial)
+            partial["chain_hash"] = ch
+            rebuilt.append(
+                json.dumps(partial, sort_keys=True, separators=(",", ":"))
+            )
+            prev = ch
+        path.write_text("\n".join(rebuilt) + "\n")
+
+        verifier = AuditLogger(path)
+        # Un-anchored: legacy behaviour still passes (documented limitation).
+        assert verifier.verify_chain() == 3
+        # Anchored: wholesale rewrite is now detected.
+        with pytest.raises(AuditChainError, match="wholesale|anchor|head"):
+            AuditLogger(path).verify_chain(expected_head=legit_head)
+
+    def test_regression_l2_correct_anchor_passes(self):
+        """L-2: an untampered log verifies cleanly against its true head —
+        the anchor check must not produce false positives.
+        """
+        logger, path = self._logger()
+        for i in range(4):
+            logger.log(method="tools/call", session_id="s", params={"i": i})
+        head = logger._prev_hash
+        assert AuditLogger(path).verify_chain(expected_head=head) == 4
+
+    def test_regression_l2_deleted_log_with_anchor_detected(self):
+        """L-2: a deleted/absent log while a non-genesis anchor is expected
+        must be flagged (truncation-to-empty attack).
+        """
+        logger, path = self._logger()
+        logger.log(method="tools/call", session_id="s")
+        head = logger._prev_hash
+        path.unlink()
+        with pytest.raises(AuditChainError):
+            AuditLogger(path).verify_chain(expected_head=head)
+
+    def test_regression_l2_cli_audit_verify_warns_without_anchor(self, tmp_path):
+        """L-2 at the CLI entry point: `cosai audit verify` without
+        --expected-head must WARN that wholesale rewrite is undetectable,
+        and accept --expected-head to detect it.
+        """
+        from click.testing import CliRunner
+        from cosai_mcp.cli import main
+
+        log_path = tmp_path / "audit.jsonl"
+        logger = AuditLogger(log_path)
+        logger.log(method="tools/call", session_id="s")
+        head = logger._prev_hash
+
+        runner = CliRunner()
+        # No anchor → OK but with explicit WARN about the limitation.
+        r1 = runner.invoke(main, ["audit", "verify", str(log_path)])
+        assert r1.exit_code == 0, r1.output
+        assert "expected-head" in r1.output or "rewrite" in r1.output.lower()
+
+        # Correct anchor → still OK.
+        r2 = runner.invoke(
+            main, ["audit", "verify", str(log_path), "--expected-head", head]
+        )
+        assert r2.exit_code == 0, r2.output
+
+        # Wrong anchor → tamper detected, exit 1.
+        r3 = runner.invoke(
+            main, ["audit", "verify", str(log_path), "--expected-head", "0" * 64]
+        )
+        assert r3.exit_code == 1, r3.output
+
     def test_params_stored_as_digest_not_raw(self):
         """Sensitive params must not appear in plain text in the log."""
         logger, path = self._logger()

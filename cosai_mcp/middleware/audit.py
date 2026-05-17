@@ -186,12 +186,24 @@ class AuditLogger:
 
         return entry_id
 
-    def verify_chain(self) -> int:
+    def verify_chain(self, expected_head: str | None = None) -> int:
         """Verify the integrity of the entire audit log.
 
         Reads the log from the beginning and recomputes each chain_hash,
         verifying it matches the stored value and that prev_hash links
         correctly to the previous entry.
+
+        Parameters
+        ----------
+        expected_head:
+            Optional externally-anchored tip hash (the ``chain_hash`` of the
+            last entry, persisted out of band).  When supplied, the final
+            recomputed hash must equal it — this is what makes a *wholesale
+            rewrite* detectable.  Genesis-anchoring alone cannot detect an
+            attacker who rebuilds an internally-consistent chain from genesis
+            after dropping incriminating entries (L-2).  When ``None`` the
+            check degrades to internal-consistency only (mid-file edits,
+            reordering) and that limitation is the caller's to surface.
 
         Returns
         -------
@@ -201,9 +213,16 @@ class AuditLogger:
         Raises
         ------
         AuditChainError
-            If any hash is missing, mismatched, or the chain is broken.
+            If any hash is missing, mismatched, the chain is broken, or the
+            final hash does not match ``expected_head``.
         """
         if not self._path.exists():
+            if expected_head is not None and expected_head != self._GENESIS_HASH:
+                raise AuditChainError(
+                    "Audit log is empty/absent but a non-genesis anchor head "
+                    "was expected — log may have been deleted or truncated.",
+                    lineno=0,
+                )
             return 0
 
         prev_hash = self._GENESIS_HASH
@@ -244,6 +263,14 @@ class AuditLogger:
 
                 prev_hash = stored_hash
                 count += 1
+
+        if expected_head is not None and prev_hash != expected_head:
+            raise AuditChainError(
+                "Audit log final chain_hash does not match the expected "
+                "externally-anchored head — the log may have been wholesale "
+                f"rewritten (expected tip {expected_head!r}, got {prev_hash!r}).",
+                lineno=count,
+            )
 
         return count
 

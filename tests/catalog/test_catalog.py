@@ -260,6 +260,79 @@ def test_path_traversal_dotdot_rejected(tmp_path: Path) -> None:
         loader.load_file(Path("../../etc/passwd"))
 
 
+def test_regression_m2_custom_symlink_escape_rejected(
+    tmp_path: Path,
+) -> None:
+    """M-2: a symlink in catalog/custom/ pointing OUTSIDE the catalog tree
+    must be rejected by load_all() (the public scan entry point calls
+    load_all()) — the loader must NOT read the symlink target.
+    """
+    secret = tmp_path / "secret.txt"
+    secret.write_text("SECRET_CANARY: not threat json", encoding="utf-8")
+
+    custom_dir = tmp_path / "custom"
+    custom_dir.mkdir(parents=True, exist_ok=True)
+    link = custom_dir / "evil.json"
+    link.symlink_to(secret)
+
+    loader = CatalogLoader(tmp_path, allow_custom=True)
+    with pytest.raises(PathTraversalError, match="[Ss]ymlink"):
+        loader.load_all()
+
+
+def test_regression_m2_official_symlink_escape_rejected(
+    tmp_path: Path,
+) -> None:
+    """M-2 sibling: the official/ glob must also reject symlinks (the bug
+    was that only the adversarial branch routed through _resolve_safe).
+    """
+    secret = tmp_path / "secret.json"
+    secret.write_text('{"not": "a threat"}', encoding="utf-8")
+
+    official_dir = tmp_path / "official"
+    official_dir.mkdir(parents=True, exist_ok=True)
+    link = official_dir / "T01-001.json"
+    link.symlink_to(secret)
+
+    loader = CatalogLoader(tmp_path)
+    with pytest.raises(PathTraversalError, match="[Ss]ymlink"):
+        loader.load_all()
+
+
+def test_regression_m2_custom_symlink_inside_tree_also_rejected(
+    tmp_path: Path,
+) -> None:
+    """M-2: even a symlink whose target resolves back INSIDE catalog/ is
+    rejected — the contract is 'no symlinks', uniform and auditable.
+    """
+    custom_dir = tmp_path / "custom"
+    custom_dir.mkdir(parents=True, exist_ok=True)
+    real = custom_dir / "real.json"
+    real.write_text('{"id": "T99-001"}', encoding="utf-8")
+    link = custom_dir / "link.json"
+    link.symlink_to(real)
+
+    loader = CatalogLoader(tmp_path, allow_custom=True)
+    with pytest.raises(PathTraversalError, match="[Ss]ymlink"):
+        loader.load_all()
+
+
+def test_regression_m2_non_symlink_official_still_loads(
+    tmp_path: Path,
+    test_private_key: Ed25519PrivateKey,
+    test_pubkey_b64: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M-2 must not regress the happy path: a normal (non-symlink) signed
+    official file still loads through the now-_resolve_safe-routed glob.
+    """
+    monkeypatch.setenv("COSAI_PUBKEY", test_pubkey_b64)
+    _write_official_file(tmp_path, test_private_key)
+    loader = CatalogLoader(tmp_path)
+    threats = loader.load_all()
+    assert len(threats) == 1
+
+
 # ---------------------------------------------------------------------------
 # Custom catalog gating tests
 # ---------------------------------------------------------------------------

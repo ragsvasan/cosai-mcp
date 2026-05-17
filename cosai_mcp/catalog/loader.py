@@ -162,15 +162,37 @@ def _resolve_safe(path: Path, catalog_root: Path) -> Path:
     """Resolve path and verify it is within catalog_root.
 
     Raises PathTraversalError for absolute paths, ``..`` escapes, or symlinks
-    that escape the catalog directory.
+    that escape the catalog directory.  In addition, *any* symlink component
+    inside the catalog tree is rejected outright (M-2): a symlink whose target
+    happens to resolve back inside ``catalog/`` is still an unexpected
+    indirection and is not how official/custom catalog files are distributed.
     """
     if path.is_absolute():
         raise PathTraversalError(
             f"Absolute catalog paths are rejected: {path}"
         )
     try:
-        resolved = (catalog_root / path).resolve()
+        candidate = catalog_root / path
+        resolved = candidate.resolve()
         catalog_resolved = catalog_root.resolve()
+    except OSError as exc:
+        raise PathTraversalError(f"Cannot resolve path {path}: {exc}") from exc
+
+    # Reject symlinks anywhere from catalog_root down to the target.  resolve()
+    # follows symlinks so the is_relative_to check below catches *escaping*
+    # symlinks, but a symlink that points back inside the tree would slip
+    # through — reject all of them for a uniform, auditable contract.
+    try:
+        probe = candidate
+        root_resolved = catalog_resolved
+        while True:
+            if probe.is_symlink():
+                raise PathTraversalError(
+                    f"Symlinked catalog path is rejected: {path}"
+                )
+            if probe.resolve() == root_resolved or probe.parent == probe:
+                break
+            probe = probe.parent
     except OSError as exc:
         raise PathTraversalError(f"Cannot resolve path {path}: {exc}") from exc
 
@@ -222,7 +244,10 @@ class CatalogLoader:
         official_dir = self._root / "official"
         if official_dir.is_dir():
             for json_file in sorted(official_dir.glob("*.json")):
-                threats.append(self._load_official(json_file))
+                resolved = _resolve_safe(
+                    json_file.relative_to(self._root), self._root
+                )
+                threats.append(self._load_official(resolved))
 
         if self._allow_adversarial:
             adv_dir = self._root / "official" / "adversarial"
@@ -235,7 +260,10 @@ class CatalogLoader:
             custom_dir = self._root / "custom"
             if custom_dir.is_dir():
                 for json_file in sorted(custom_dir.glob("*.json")):
-                    threats.append(self._load_custom(json_file))
+                    resolved = _resolve_safe(
+                        json_file.relative_to(self._root), self._root
+                    )
+                    threats.append(self._load_custom(resolved))
 
         return threats
 

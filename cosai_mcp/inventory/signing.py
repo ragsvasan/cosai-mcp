@@ -27,7 +27,9 @@ expected public key from the following sources (checked in order):
    — use this for local single-machine workflows.
 
 If neither source is available (keyring package missing and env var unset),
-verification falls through to signature-only mode with a warning.
+``verify_inventory()`` fails closed and raises ``SignatureVerificationError``.
+Signature-only mode is never used: the artifact carries its own public key,
+so verifying it against that embedded key authenticates nothing.
 """
 from __future__ import annotations
 
@@ -104,15 +106,32 @@ def _get_trusted_public_key_bytes() -> bytes | None:
     Checks (in order):
     1. ``COSAI_INVENTORY_PUBKEY`` env var (base64-encoded, 32 bytes raw Ed25519).
     2. The per-installation keyring key (same key used by ``sign_inventory``).
+
+    Raises
+    ------
+    SignatureVerificationError
+        If ``COSAI_INVENTORY_PUBKEY`` is explicitly set but cannot be decoded
+        as a 32-byte raw Ed25519 key.  An explicitly-pinned trust anchor that
+        is malformed must fail closed — never silently downgrade to
+        signature-only acceptance (see L-1 / H-1).
     """
     import base64
 
     env_val = os.environ.get("COSAI_INVENTORY_PUBKEY", "")
     if env_val:
         try:
-            return base64.b64decode(env_val)
-        except Exception:
-            return None
+            raw = base64.b64decode(env_val, validate=True)
+        except Exception as exc:
+            raise SignatureVerificationError(
+                "COSAI_INVENTORY_PUBKEY is set but is not valid base64. "
+                "It must be a base64-encoded raw 32-byte Ed25519 public key."
+            ) from exc
+        if len(raw) != 32:
+            raise SignatureVerificationError(
+                f"COSAI_INVENTORY_PUBKEY decodes to {len(raw)} bytes; "
+                "a raw Ed25519 public key must be exactly 32 bytes."
+            )
+        return raw
 
     try:
         priv = _get_or_create_private_key()
@@ -147,21 +166,33 @@ def verify_inventory(artifact: dict[str, Any]) -> ToolInventory:
         ) from exc
 
     # --- Trust anchor: validate the artifact's public key before use --------
+    # Fail CLOSED: signature-only mode authenticates nothing because the
+    # artifact carries its own public key — an attacker can re-sign tampered
+    # content with a fresh keypair.  If no out-of-band trust anchor is
+    # resolvable we must refuse, not proceed (H-1).
     trusted_pub = _get_trusted_public_key_bytes()
-    if trusted_pub is not None:
-        try:
-            artifact_pub_bytes = bytes.fromhex(pub_hex)
-        except ValueError as exc:
-            raise SignatureVerificationError(
-                "Inventory artifact has malformed public_key field."
-            ) from exc
-        if artifact_pub_bytes != trusted_pub:
-            raise SignatureVerificationError(
-                "Inventory public key does not match the trusted installation key. "
-                "If this artifact was produced on another machine, set the "
-                "COSAI_INVENTORY_PUBKEY environment variable to the expected key "
-                "(base64-encoded raw 32-byte Ed25519 public key)."
-            )
+    if trusted_pub is None:
+        raise SignatureVerificationError(
+            "No trust anchor available to authenticate this inventory artifact. "
+            "Set the COSAI_INVENTORY_PUBKEY environment variable to the expected "
+            "key (base64-encoded raw 32-byte Ed25519 public key), or run on a "
+            "machine where the per-installation keyring key is available. "
+            "Signature-only verification is refused because the artifact carries "
+            "its own public key and proves nothing about authenticity."
+        )
+    try:
+        artifact_pub_bytes = bytes.fromhex(pub_hex)
+    except ValueError as exc:
+        raise SignatureVerificationError(
+            "Inventory artifact has malformed public_key field."
+        ) from exc
+    if artifact_pub_bytes != trusted_pub:
+        raise SignatureVerificationError(
+            "Inventory public key does not match the trusted installation key. "
+            "If this artifact was produced on another machine, set the "
+            "COSAI_INVENTORY_PUBKEY environment variable to the expected key "
+            "(base64-encoded raw 32-byte Ed25519 public key)."
+        )
 
     # --- Ed25519 signature verification ------------------------------------
     try:

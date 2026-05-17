@@ -235,6 +235,7 @@ class TestContainment:
                 inc,
                 actions=[ContainmentAction.EMIT_INCIDENT],
                 emit_endpoint=f"http://127.0.0.1:{port}/webhook",
+                allow_private=True,  # internal SIEM — explicit operator opt-in
             )
             assert results[0].success
             assert len(srv.received) == 1
@@ -255,6 +256,7 @@ class TestContainment:
             inc,
             actions=[ContainmentAction.EMIT_INCIDENT],
             emit_endpoint="http://127.0.0.1:1/",  # always refused
+            allow_private=True,
         )
         assert not results[0].success
         assert results[0].error if hasattr(results[0], "error") else True  # failure recorded
@@ -271,24 +273,125 @@ class TestContainment:
         assert "victim.example.com" in text or "Block" in text
 
     def test_session_kill_returns_success(self) -> None:
-        # SESSION_KILL is best-effort — always returns success even if refused
-        inc = _make_incident()
+        # SESSION_KILL is best-effort — always returns success even if refused,
+        # once the target has passed the network allowlist (M-1).
+        inc = build_incident(
+            target_url="http://127.0.0.1:1/",  # loopback, refused
+            scan_timestamp="2026-05-15T12:00:00Z",
+            findings=[{"probe_id": "T01-001-p1", "threat_id": "T01-001",
+                       "severity": "high"}],
+        )
         results = perform_containment(
             inc,
             actions=[ContainmentAction.SESSION_KILL],
+            allow_private=True,  # internal MCP server — operator opt-in
         )
         assert results[0].action == ContainmentAction.SESSION_KILL
         assert results[0].success  # best-effort: always succeeds
+
+    def test_regression_m1_session_kill_blocked_without_allow_private(self) -> None:
+        """M-1: a crafted incident pointing at loopback/internal must be
+        REJECTED by default (fail closed) — no DELETE leaves the host.
+        """
+        inc = build_incident(
+            target_url="http://127.0.0.1:1/",
+            scan_timestamp="2026-05-15T12:00:00Z",
+            findings=[{"probe_id": "T01-001-p1", "threat_id": "T01-001",
+                       "severity": "high"}],
+        )
+        results = perform_containment(
+            inc, actions=[ContainmentAction.SESSION_KILL]
+        )  # allow_private defaults to False
+        assert not results[0].success
+        assert "allowlist" in results[0].detail.lower()
+
+    def test_regression_m1_emit_blocked_without_allow_private(self) -> None:
+        """M-1 sibling: EMIT_INCIDENT to a private/loopback SIEM is blocked
+        by default — no request reaches the listener.
+        """
+        srv = _RecordingServer()
+        port = srv.start()
+        inc = _make_incident()
+        try:
+            results = perform_containment(
+                inc,
+                actions=[ContainmentAction.EMIT_INCIDENT],
+                emit_endpoint=f"http://127.0.0.1:{port}/webhook",
+            )  # allow_private defaults to False
+            assert not results[0].success
+            assert "allowlist" in results[0].detail.lower()
+            assert srv.received == []  # nothing reached the internal listener
+        finally:
+            srv.stop()
+
+    def test_regression_m1_session_kill_rejects_metadata_ip(self) -> None:
+        """M-1: cloud-metadata link-local target is always blocked even
+        with allow_private (link-local is in the always-private set; only
+        explicit opt-in to private permits it, never silent).
+        """
+        inc = build_incident(
+            target_url="http://169.254.169.254/latest/meta-data/",
+            scan_timestamp="2026-05-15T12:00:00Z",
+            findings=[{"probe_id": "T01-001-p1", "threat_id": "T01-001",
+                       "severity": "high"}],
+        )
+        results = perform_containment(
+            inc, actions=[ContainmentAction.SESSION_KILL]
+        )
+        assert not results[0].success
+        assert "allowlist" in results[0].detail.lower()
+
+    def test_regression_m1_non_http_scheme_rejected(self) -> None:
+        """M-1: a non-http(s) scheme in target_url must be rejected."""
+        inc = build_incident(
+            target_url="file:///etc/passwd",
+            scan_timestamp="2026-05-15T12:00:00Z",
+            findings=[{"probe_id": "T01-001-p1", "threat_id": "T01-001",
+                       "severity": "high"}],
+        )
+        results = perform_containment(
+            inc, actions=[ContainmentAction.SESSION_KILL], allow_private=True
+        )
+        assert not results[0].success
+        assert "allowlist" in results[0].detail.lower()
+
+    def test_regression_m1_cli_ir_contain_session_kill_blocked(
+        self, tmp_path: Path
+    ) -> None:
+        """M-1 at the CLI entry point: `cosai ir contain --session-kill`
+        with a crafted loopback incident must be blocked by default.
+        """
+        inc = build_incident(
+            target_url="http://127.0.0.1:6379/",  # blind SSRF to redis
+            scan_timestamp="2026-05-15T12:00:00Z",
+            findings=[{"probe_id": "T01-001-p1", "threat_id": "T01-001",
+                       "severity": "critical"}],
+        )
+        path = tmp_path / "evil_incident.json"
+        path.write_text(
+            json.dumps({"cosai_ir_version": "1.0", "incident": inc.to_dict()}),
+            encoding="utf-8",
+        )
+        result = CliRunner().invoke(
+            main, ["ir", "contain", str(path), "--session-kill"]
+        )
+        # Action failed (blocked) → CLI exits 1; the detail must mention the
+        # allowlist, proving no DELETE was issued.
+        assert result.exit_code == 1, result.output
+        assert "allowlist" in result.output.lower()
 
     def test_regression_emit_uses_trust_env_false(self) -> None:
         """emit_incident must not pick up HTTP_PROXY from environment."""
         inc = _make_incident()
         with patch.dict("os.environ", {"HTTP_PROXY": "http://evil.proxy:3128"}):
-            # Should connect directly to port 1 (refused) — not through proxy
+            # Should connect directly to port 1 (refused) — not through proxy.
+            # allow_private=True so the request passes the allowlist and we
+            # actually exercise the trust_env=False path (M-1 interaction).
             results = perform_containment(
                 inc,
                 actions=[ContainmentAction.EMIT_INCIDENT],
                 emit_endpoint="http://127.0.0.1:1/",
+                allow_private=True,
             )
         # If trust_env=False works correctly, we get a connection error, not a proxy error
         assert not results[0].success
@@ -342,7 +445,8 @@ class TestIrCLI:
             runner = CliRunner()
             result = runner.invoke(
                 main,
-                ["ir", "contain", str(incident_file), "--emit-to", f"http://127.0.0.1:{port}/"],
+                ["ir", "contain", str(incident_file), "--emit-to",
+                 f"http://127.0.0.1:{port}/", "--allow-private"],
             )
             assert result.exit_code == 0, result.output
             assert len(srv.received) >= 1

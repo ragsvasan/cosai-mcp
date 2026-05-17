@@ -107,6 +107,114 @@ class TestCatalogHash:
         h = _catalog_hash([])
         assert len(h) == 64
 
+    def test_regression_h2_assertion_change_changes_hash(self) -> None:
+        """H-2: a sabotaged assertion (probe suppressed) with an UNCHANGED
+        threat id must produce a DIFFERENT catalog_hash. Hashing only ids
+        let an attacker swap assertion logic and keep a valid report sig.
+        """
+        from cosai_mcp.catalog.models import (
+            Assertion, Operator, Probe, Provenance, Severity, ThreatDefinition,
+        )
+
+        def _mk(assertion_value: str) -> ThreatDefinition:
+            probe = Probe(
+                id="T03-001-p1",
+                transport="http",
+                method="tools/call",
+                payload=MappingProxyType({"name": "x", "arguments": {}}),
+                assertions=(
+                    Assertion(
+                        target="response.body",
+                        operator=Operator.NOT_CONTAINS,
+                        value=assertion_value,
+                        compiled_pattern=None,
+                    ),
+                ),
+                probe_token=None,
+                probe_count=1,
+                probe_headers=None,
+            )
+            return ThreatDefinition(
+                schema_version="1.0",
+                id="T03-001",  # IDENTICAL id for both variants
+                category="T3",
+                severity=Severity.CRITICAL,
+                cosai_ref="T3",
+                owasp_ref="MCP-Top10-A03",
+                cwe=("CWE-74",),
+                probes=(probe,),
+                remediation="Enforce strict JSON schema.",
+                references=("https://cosai.org/T3",),
+                provenance=Provenance.OFFICIAL,
+                mode="read-only",
+            )
+
+        clean = _mk("root:")       # detects /etc/passwd disclosure
+        sabotaged = _mk("zzzzz")   # assertion can never fire -> finding hidden
+        assert _catalog_hash([clean]) != _catalog_hash([sabotaged])
+
+    def test_regression_h2_severity_change_changes_hash(self) -> None:
+        """H-2: downgrading a threat's severity (id unchanged) must change
+        the hash — severity drives the CI fail-on gate.
+        """
+        from cosai_mcp.catalog.models import (
+            Provenance, Severity, ThreatDefinition,
+        )
+
+        def _mk(sev: Severity) -> ThreatDefinition:
+            return ThreatDefinition(
+                schema_version="1.0",
+                id="T01-001",
+                category="T1",
+                severity=sev,
+                cosai_ref="T1",
+                owasp_ref="MCP-A1",
+                cwe=("CWE-287",),
+                probes=(),
+                remediation="Fix it.",
+                references=(),
+                provenance=Provenance.OFFICIAL,
+            )
+
+        assert _catalog_hash([_mk(Severity.CRITICAL)]) != _catalog_hash(
+            [_mk(Severity.LOW)]
+        )
+
+    def test_regression_h2_payload_change_changes_hash(self) -> None:
+        """H-2: altering a probe payload (id unchanged) must change the hash."""
+        from cosai_mcp.catalog.models import (
+            Probe, Provenance, Severity, ThreatDefinition,
+        )
+
+        def _mk(arg: str) -> ThreatDefinition:
+            probe = Probe(
+                id="T04-001-p1",
+                transport="http",
+                method="tools/call",
+                payload=MappingProxyType({"name": "x", "arguments": {"cmd": arg}}),
+                assertions=(),
+                probe_token=None,
+                probe_count=1,
+                probe_headers=None,
+            )
+            return ThreatDefinition(
+                schema_version="1.0",
+                id="T04-001",
+                category="T4",
+                severity=Severity.CRITICAL,
+                cosai_ref="T4",
+                owasp_ref="MCP-A4",
+                cwe=("CWE-74",),
+                probes=(probe,),
+                remediation="x",
+                references=(),
+                provenance=Provenance.OFFICIAL,
+            )
+
+        assert _catalog_hash([_mk("; cat /etc/passwd")]) != _catalog_hash(
+            [_mk("harmless")]
+        )
+
 
 # ---------------------------------------------------------------------------
 # _determine_exit_code

@@ -1051,3 +1051,94 @@ class TestMnemoScanRegressions:
         assert not transport._endpoint.endswith("/")
 
 
+# ---------------------------------------------------------------------------
+# M-3 — SSE never-terminated stream / scan-time amplification
+# ---------------------------------------------------------------------------
+
+class TestSSEStreamHardening:
+    """A hostile MCP server must not be able to hold an SSE probe open past
+    the probe timeout by trickling keepalive bytes forever (M-3).
+    """
+
+    class _TricklingResponse:
+        """One complete JSON-RPC event, then an infinite slow keepalive."""
+
+        def __init__(self) -> None:
+            self.status_code = 200
+            self.headers = {"content-type": "text/event-stream"}
+
+        async def aiter_lines(self):
+            yield 'data: {"jsonrpc":"2.0","id":1,"result":{"ok":true}}'
+            yield ""
+            while True:
+                await asyncio.sleep(0.02)
+                yield ": keepalive"
+
+    class _NeverCompletesResponse:
+        """data: lines that never get the terminating blank line."""
+
+        def __init__(self) -> None:
+            self.status_code = 200
+            self.headers = {"content-type": "text/event-stream"}
+
+        async def aiter_lines(self):
+            while True:
+                await asyncio.sleep(0.005)
+                yield "data: partial"
+
+    def _transport(self, timeout: float) -> StreamableHTTPTransport:
+        t = StreamableHTTPTransport.__new__(StreamableHTTPTransport)
+        t._recv_queue = asyncio.Queue(maxsize=64)
+        t._config = ScanConfig(
+            target_host="example.com",
+            target_port=8000,
+            probe_timeout_seconds=timeout,
+        )
+        return t
+
+    @pytest.mark.asyncio
+    async def test_regression_m3_returns_first_message_without_draining(self):
+        """Returns the first complete JSON-RPC message promptly even though
+        the stream never ends — must NOT wait for stream end.
+        """
+        t = self._transport(timeout=10.0)
+        resp = self._TricklingResponse()
+        result = await asyncio.wait_for(
+            t._consume_sse_response(resp), timeout=2.0
+        )
+        assert result["result"]["ok"] is True
+
+    @pytest.mark.asyncio
+    async def test_regression_m3_idle_timeout_bounds_trickling_stream(self):
+        """If no complete message ever arrives, the explicit read deadline
+        (probe timeout) raises rather than hanging until the OS kill.
+        """
+        t = self._transport(timeout=0.3)
+        resp = self._NeverCompletesResponse()
+        with pytest.raises((asyncio.TimeoutError, TimeoutError)):
+            await asyncio.wait_for(
+                t._consume_sse_response(resp), timeout=3.0
+            )
+
+    @pytest.mark.asyncio
+    async def test_regression_m3_line_cap_bounds_hostile_stream(self):
+        """A stream that emits an unbounded number of non-terminating lines
+        is cut off by the hard line cap (CPU/memory bound).
+        """
+        t = self._transport(timeout=30.0)
+        t._SSE_MAX_LINES = 50  # shrink for the test
+
+        class _Flood:
+            status_code = 200
+            headers = {"content-type": "text/event-stream"}
+
+            async def aiter_lines(self):
+                while True:
+                    yield "data: x"  # never a terminating blank line
+
+        with pytest.raises((asyncio.TimeoutError, TimeoutError)):
+            await asyncio.wait_for(
+                t._consume_sse_response(_Flood()), timeout=3.0
+            )
+
+

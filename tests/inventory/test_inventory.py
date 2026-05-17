@@ -243,6 +243,122 @@ class TestSigning:
         with pytest.raises(SignatureVerificationError, match="trusted"):
             verify_inventory(forged_artifact)
 
+    def test_regression_h1_fail_closed_when_no_trust_anchor(
+        self, monkeypatch
+    ) -> None:
+        """H-1: with keyring unavailable AND no env pubkey, verify_inventory
+        must FAIL CLOSED — a fresh-keypair forgery must NOT pass.
+        """
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PrivateKey as _Priv,
+        )
+
+        monkeypatch.delenv("COSAI_INVENTORY_PUBKEY", raising=False)
+        # Simulate keyring-less environment (CI/minimal container): the
+        # keyring-backed installation key is unavailable.
+        monkeypatch.setattr(
+            "cosai_mcp.inventory.signing._get_or_create_private_key",
+            create_autospec(
+                lambda: None,
+                side_effect=RuntimeError("keyring unavailable"),
+            ),
+        )
+        inv = _make_inventory()
+        attacker = _Priv.generate()
+        inv_dict = inv.to_dict()
+        sig = attacker.sign(_canonical_bytes(inv_dict))
+        forged = {
+            "inventory": inv_dict,
+            "signature": sig.hex(),
+            "public_key": attacker.public_key().public_bytes_raw().hex(),
+        }
+        with pytest.raises(SignatureVerificationError, match="No trust anchor"):
+            verify_inventory(forged)
+
+    def test_regression_l1_malformed_env_pubkey_fails_closed(
+        self, monkeypatch
+    ) -> None:
+        """L-1: an explicitly-set but malformed COSAI_INVENTORY_PUBKEY must
+        raise a config error — never silently downgrade to fail-open (H-1).
+        """
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PrivateKey as _Priv,
+        )
+
+        # Typo'd / non-base64 value.
+        monkeypatch.setenv("COSAI_INVENTORY_PUBKEY", "!!!not-base64!!!")
+        inv = _make_inventory()
+        attacker = _Priv.generate()
+        inv_dict = inv.to_dict()
+        sig = attacker.sign(_canonical_bytes(inv_dict))
+        forged = {
+            "inventory": inv_dict,
+            "signature": sig.hex(),
+            "public_key": attacker.public_key().public_bytes_raw().hex(),
+        }
+        with pytest.raises(SignatureVerificationError, match="not valid base64"):
+            verify_inventory(forged)
+
+    def test_regression_l1_wrong_length_env_pubkey_fails_closed(
+        self, monkeypatch
+    ) -> None:
+        """L-1: a base64-valid but wrong-length env pubkey must fail closed."""
+        import base64 as _b64
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PrivateKey as _Priv,
+        )
+
+        monkeypatch.setenv(
+            "COSAI_INVENTORY_PUBKEY", _b64.b64encode(b"too-short").decode()
+        )
+        inv = _make_inventory()
+        attacker = _Priv.generate()
+        inv_dict = inv.to_dict()
+        sig = attacker.sign(_canonical_bytes(inv_dict))
+        forged = {
+            "inventory": inv_dict,
+            "signature": sig.hex(),
+            "public_key": attacker.public_key().public_bytes_raw().hex(),
+        }
+        with pytest.raises(SignatureVerificationError, match="32 bytes"):
+            verify_inventory(forged)
+
+    def test_regression_h1_cli_verify_fails_closed_no_anchor(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """H-1 at the CLI entry point: `cosai inventory verify` must exit
+        non-zero on a fresh-keypair forgery when no trust anchor exists.
+        """
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PrivateKey as _Priv,
+        )
+
+        monkeypatch.delenv("COSAI_INVENTORY_PUBKEY", raising=False)
+        monkeypatch.setattr(
+            "cosai_mcp.inventory.signing._get_or_create_private_key",
+            create_autospec(
+                lambda: None,
+                side_effect=RuntimeError("keyring unavailable"),
+            ),
+        )
+        inv = _make_inventory()
+        attacker = _Priv.generate()
+        inv_dict = inv.to_dict()
+        sig = attacker.sign(_canonical_bytes(inv_dict))
+        forged = {
+            "inventory": inv_dict,
+            "signature": sig.hex(),
+            "public_key": attacker.public_key().public_bytes_raw().hex(),
+        }
+        artifact_path = tmp_path / "forged.json"
+        artifact_path.write_text(json.dumps(forged), encoding="utf-8")
+
+        result = CliRunner().invoke(
+            main, ["inventory", "verify", str(artifact_path)]
+        )
+        assert result.exit_code == 1, result.output
+        assert "Signature VALID" not in result.output
+
 
 # ---------------------------------------------------------------------------
 # Drift detection

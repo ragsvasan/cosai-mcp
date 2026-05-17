@@ -205,10 +205,83 @@ def check_reachable(host: str, port: int, timeout: float = 5.0) -> None:
 CATALOG_ROOT: Path = Path(__file__).parent.parent / "catalog"
 
 
+def _canonical_threat(t: ThreatDefinition) -> dict[str, Any]:
+    """Return a JSON-serialisable canonical view of a ThreatDefinition.
+
+    Covers *every* security-relevant field — payloads, assertions, severity,
+    remediation, provenance, mode — not just the id.  This is what binds a
+    signed report to the exact catalog content that produced it (H-2): any
+    modification to an assertion, payload, or severity changes the hash even
+    when the threat id string is unchanged.
+    """
+    import types as _types
+    from enum import Enum as _Enum
+
+    def _plain(v: Any) -> Any:
+        # Normalise frozen containers / enums into deterministic plain types.
+        if isinstance(v, (_types.MappingProxyType, dict)):
+            return {str(k): _plain(val) for k, val in sorted(v.items())}
+        if isinstance(v, (tuple, list)):
+            return [_plain(x) for x in v]
+        if isinstance(v, _Enum):
+            return v.value
+        return v
+
+    def _assertion(a: Any) -> dict[str, Any]:
+        # compiled_pattern is a derived re2 object — `value` already captures
+        # the pattern source, so hashing `value` covers regex tampering.
+        return {
+            "target": a.target,
+            "operator": _plain(a.operator),
+            "value": _plain(a.value),
+        }
+
+    def _probe(p: Any) -> dict[str, Any]:
+        return {
+            "id": p.id,
+            "transport": p.transport,
+            "method": p.method,
+            "payload": _plain(p.payload),
+            "assertions": [_assertion(a) for a in p.assertions],
+            "probe_token": p.probe_token,
+            "probe_count": p.probe_count,
+            "probe_headers": _plain(p.probe_headers) if p.probe_headers else None,
+        }
+
+    return {
+        "schema_version": t.schema_version,
+        "id": t.id,
+        "category": t.category,
+        "severity": _plain(t.severity),
+        "cosai_ref": t.cosai_ref,
+        "owasp_ref": t.owasp_ref,
+        "cwe": list(t.cwe),
+        "probes": [_probe(p) for p in t.probes],
+        "remediation": t.remediation,
+        "references": list(t.references),
+        "provenance": _plain(t.provenance),
+        "mode": t.mode,
+    }
+
+
 def _catalog_hash(threats: list[ThreatDefinition]) -> str:
-    """SHA-256 fingerprint of the loaded threat IDs (sorted for determinism)."""
-    ids = sorted(t.id for t in threats)
-    return hashlib.sha256("|".join(ids).encode()).hexdigest()
+    """SHA-256 over the canonical content of every loaded threat definition.
+
+    Binds a signed report to the exact catalog content (payloads, assertions,
+    severities, remediation, provenance, mode) — not merely the set of threat
+    ids.  A sabotaged catalog whose ids are unchanged now produces a *different*
+    hash, restoring the tamper-evidence contract locked in CLAUDE.md (H-2).
+    """
+    import json as _json
+
+    canonical = sorted(
+        (_canonical_threat(t) for t in threats),
+        key=lambda d: (d["id"], d["provenance"]),
+    )
+    blob = _json.dumps(
+        canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode()
+    return hashlib.sha256(blob).hexdigest()
 
 
 # ---------------------------------------------------------------------------

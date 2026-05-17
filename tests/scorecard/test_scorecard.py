@@ -261,6 +261,86 @@ class TestSigning:
             with pytest.raises(ScorecardVerificationError, match="trusted"):
                 verify_scorecard(forged)
 
+    def test_regression_h1_fail_closed_when_no_trust_anchor(self) -> None:
+        """H-1 sibling: scorecard verify must FAIL CLOSED when neither the
+        keyring key nor COSAI_SCORECARD_PUBKEY is available — a fresh-keypair
+        forgery must NOT pass.
+        """
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PrivateKey,
+        )
+        from cosai_mcp.scorecard.signing import _canonical_bytes, _signable_dict
+
+        attacker = Ed25519PrivateKey.generate()
+        sc_base = _make_scorecard()
+        payload = _canonical_bytes(_signable_dict(sc_base))
+        forged = Scorecard.from_dict({
+            **sc_base.to_dict(),
+            "public_key": attacker.public_key().public_bytes_raw().hex(),
+            "signature": attacker.sign(payload).hex(),
+        })
+        with patch(
+            "cosai_mcp.scorecard.signing._get_trusted_public_key_bytes",
+            return_value=None,
+        ):
+            with pytest.raises(ScorecardVerificationError, match="No trust anchor"):
+                verify_scorecard(forged)
+
+    def test_regression_l1_malformed_env_pubkey_fails_closed(
+        self, monkeypatch
+    ) -> None:
+        """L-1 sibling: malformed COSAI_SCORECARD_PUBKEY must raise a config
+        error, never silently downgrade to fail-open.
+        """
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PrivateKey,
+        )
+        from cosai_mcp.scorecard.signing import _canonical_bytes, _signable_dict
+
+        monkeypatch.setenv("COSAI_SCORECARD_PUBKEY", "!!!not-base64!!!")
+        attacker = Ed25519PrivateKey.generate()
+        sc_base = _make_scorecard()
+        payload = _canonical_bytes(_signable_dict(sc_base))
+        forged = Scorecard.from_dict({
+            **sc_base.to_dict(),
+            "public_key": attacker.public_key().public_bytes_raw().hex(),
+            "signature": attacker.sign(payload).hex(),
+        })
+        with pytest.raises(ScorecardVerificationError, match="not valid base64"):
+            verify_scorecard(forged)
+
+    def test_regression_h1_cli_verify_fails_closed_no_anchor(
+        self, tmp_path
+    ) -> None:
+        """H-1 at the CLI entry point: `cosai scorecard verify` must exit
+        non-zero on a fresh-keypair forgery when no trust anchor exists.
+        """
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PrivateKey,
+        )
+        from cosai_mcp.scorecard.signing import _canonical_bytes, _signable_dict
+
+        attacker = Ed25519PrivateKey.generate()
+        sc_base = _make_scorecard()
+        payload = _canonical_bytes(_signable_dict(sc_base))
+        forged = Scorecard.from_dict({
+            **sc_base.to_dict(),
+            "public_key": attacker.public_key().public_bytes_raw().hex(),
+            "signature": attacker.sign(payload).hex(),
+        })
+        sc_path = tmp_path / "forged_scorecard.json"
+        sc_path.write_text(json.dumps(forged.to_dict()), encoding="utf-8")
+
+        with patch(
+            "cosai_mcp.scorecard.signing._get_trusted_public_key_bytes",
+            return_value=None,
+        ):
+            result = CliRunner().invoke(
+                main, ["scorecard", "verify", str(sc_path)]
+            )
+        assert result.exit_code == 1, result.output
+        assert "signature valid" not in result.output.lower()
+
     def test_regression_scorecard_tampered_then_resigned_rejected(self) -> None:
         """Re-signing a tampered scorecard with a different key must be rejected."""
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
