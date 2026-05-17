@@ -312,7 +312,15 @@ class ScanResult:
 
     @property
     def has_findings(self) -> bool:
-        failed_probes = any(not r.passed for r in self.probe_results if r.error is None)
+        # WP2: a baseline-accepted (suppressed) finding is, by definition,
+        # known and accepted — it must not drive report-trigger / IR decisions
+        # any more than it drives the exit code.  It is still present in
+        # probe_results so report builders that iterate directly still list it.
+        failed_probes = any(
+            not r.passed and not r.suppressed
+            for r in self.probe_results
+            if r.error is None
+        )
         failed_scenarios = any(
             not r.passed and r.status == "complete" for r in self.scenario_results
         )
@@ -367,6 +375,7 @@ def _determine_exit_code(
             not r.passed
             and r.error is None
             and r.inconclusive_reason is None  # inconclusive ≠ finding
+            and not r.suppressed              # WP2: baseline-accepted ≠ gating
             and _above_threshold(r)
             for r in probe_results
         )
@@ -375,6 +384,7 @@ def _determine_exit_code(
             not r.passed
             and r.error is None
             and r.inconclusive_reason is None  # inconclusive ≠ finding
+            and not r.suppressed              # WP2: baseline-accepted ≠ gating
             for r in probe_results
         )
 
@@ -410,6 +420,7 @@ def _run_scan(
     profile: ServerProfile | None = None,
     adversarial_mode: AdversarialMode | None = None,
     probe_delay_seconds: float = 0.0,
+    baseline_path: Path | None = None,
 ) -> ScanResult:
     """Orchestrate a complete scan and return a ``ScanResult``.
 
@@ -602,6 +613,18 @@ def _run_scan(
                 result = harness.run_scenario(scenario, target_url)
                 scenario_results.append(result)
 
+    # --- WP2: apply .cosai-baseline suppression (inside the scan path) ---
+    # Loaded fail-closed: a malformed baseline raises ValueError, which the
+    # CLI/Scanner map to exit code 2 — a broken baseline must NEVER be silently
+    # treated as "suppress nothing" or "suppress everything".  Suppressed
+    # findings remain in probe_results (flagged) so reports still list them;
+    # only the exit-code computation excludes them.
+    if baseline_path is not None:
+        from cosai_mcp.baseline import Baseline, apply_baseline
+
+        baseline = Baseline.load(baseline_path)
+        probe_results = apply_baseline(probe_results, baseline)
+
     return ScanResult(
         target_url=target_url,
         threats=tuple(threats),
@@ -704,6 +727,7 @@ class Scanner:
         profile: ServerProfile | None = None,
         adversarial_mode: AdversarialMode | None = None,
         probe_delay_seconds: float = 0.0,
+        baseline_path: Path | None = None,
     ) -> None:
         self.target = target
         self.categories = categories
@@ -718,6 +742,7 @@ class Scanner:
         self.profile = profile
         self.adversarial_mode = adversarial_mode
         self.probe_delay_seconds = probe_delay_seconds
+        self.baseline_path = baseline_path
 
     def run(self, categories: list[str] | None = None) -> ScanResult:
         """Run a complete scan and return a :class:`ScanResult`.
@@ -746,6 +771,7 @@ class Scanner:
                 profile=self.profile,
                 adversarial_mode=self.adversarial_mode,
                 probe_delay_seconds=self.probe_delay_seconds,
+                baseline_path=self.baseline_path,
             )
         except (ValueError, TargetUnreachableError):
             raise  # let typed exceptions propagate as-is

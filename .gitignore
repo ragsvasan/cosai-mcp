@@ -24,3 +24,4 @@ scan-reports/
 catalog/.signing-key
 docs/P10-P12-CONTEXT.md
 cosai-mnemo-report.csv
+cosai-incident-*.json

@@ -60,6 +60,8 @@ class ProbeResult:
     inconclusive_reason: str | None = None  # HTML-escaped
     synthesis_attempted: bool = False  # True when adaptive retry was attempted
     canary_detected: bool = False  # True when canary string was found in response (adversarial mode)
+    suppressed: bool = False  # True when matched by a .cosai-baseline entry —
+    # excluded from exit-code computation but STILL listed in the report.
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +76,7 @@ class ProbeResult:
             "inconclusive_reason": self.inconclusive_reason,
             "synthesis_attempted": self.synthesis_attempted,
             "canary_detected": self.canary_detected,
+            "suppressed": self.suppressed,
         }
 
 

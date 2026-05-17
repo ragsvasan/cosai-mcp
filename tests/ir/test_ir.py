@@ -548,3 +548,82 @@ class TestScanIRWiring:
             )
         # IR failure must not produce exit code 3 (reachability fail)
         assert result.exit_code != 3, result.output
+
+
+# ---------------------------------------------------------------------------
+# WP2 regression — baseline-suppressed findings must NOT drive IR containment
+# ---------------------------------------------------------------------------
+
+class TestSuppressedFindingDoesNotTriggerIR:
+    """A baseline-accepted (suppressed) finding is known/accepted — it must not
+    trigger automated containment or `cosai-incident-*.json` emission, exactly
+    as it does not drive the exit code or ScanResult.has_findings."""
+
+    def _scan_result(self, *, suppressed: bool):
+        from cosai_mcp.api import ScanResult
+        from cosai_mcp.harness.result import ProbeResult
+
+        pr = ProbeResult(
+            probe_id="T01-001-p1",
+            threat_id="T01-001",
+            passed=False,
+            status_code=400,
+            response_body="",
+            error=None,
+            assertions=(),
+            duration_seconds=0.1,
+            suppressed=suppressed,
+        )
+        return ScanResult(
+            target_url="http://victim.example.com:8000",
+            threats=(),
+            probe_results=(pr,),
+            scenario_results=(),
+            scan_timestamp="2026-05-17T00:00:00Z",
+            catalog_hash="abc",
+            exit_code=0 if suppressed else 1,
+        )
+
+    def test_suppressed_finding_writes_no_incident_report(
+        self, tmp_path: Path
+    ) -> None:
+        from cosai_mcp.cli import _run_ir_containment
+
+        ir_file = tmp_path / "incident.json"
+        _run_ir_containment(
+            result=self._scan_result(suppressed=True),
+            target="http://victim.example.com:8000",
+            contain_on_anomaly=False,
+            ir_report_path=str(ir_file),
+            emit_to=None,
+            emit_auth_header=None,
+            anomaly_threshold=5,
+            critical_burst_threshold=2,
+            allow_private=True,
+        )
+        # Suppressed-only scan ⇒ no findings ⇒ early return ⇒ no incident file.
+        assert not ir_file.exists()
+
+    def test_unsuppressed_finding_still_writes_incident_report(
+        self, tmp_path: Path
+    ) -> None:
+        """Control: an identical but NON-suppressed finding still produces the
+        incident report — proving the gate is the suppressed flag, not a
+        broken IR path."""
+        from cosai_mcp.cli import _run_ir_containment
+
+        ir_file = tmp_path / "incident.json"
+        _run_ir_containment(
+            result=self._scan_result(suppressed=False),
+            target="http://victim.example.com:8000",
+            contain_on_anomaly=False,
+            ir_report_path=str(ir_file),
+            emit_to=None,
+            emit_auth_header=None,
+            anomaly_threshold=5,
+            critical_burst_threshold=2,
+            allow_private=True,
+        )
+        assert ir_file.exists()
+        data = json.loads(ir_file.read_text())
+        assert "cosai_ir_version" in data

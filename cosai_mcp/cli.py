@@ -60,6 +60,12 @@ def main() -> None:
     show_default=True,
     help="Minimum severity that causes exit code 1.",
 )
+@click.option("--baseline", "baseline_path", type=click.Path(exists=True, dir_okay=False),
+              default=None,
+              help="Path to a .cosai-baseline file of accepted-finding "
+                   "fingerprints. Matched findings are excluded from the exit "
+                   "code but still listed in every report. A malformed baseline "
+                   "fails the scan (exit 2) — never silently ignored.")
 @click.option("--allow-custom-catalog", is_flag=True, default=False,
               help="Load threat definitions from catalog/custom/ in addition to official/.")
 @click.option("--report-sarif", type=click.Path(), default=None,
@@ -171,6 +177,7 @@ def scan(
     categories: str,
     engine: str,
     fail_on: str,
+    baseline_path: str | None,
     allow_custom_catalog: bool,
     report_sarif: str | None,
     report_html: str | None,
@@ -274,9 +281,11 @@ def scan(
             profile=resolved_profile,
             adversarial_mode=adv_mode,
             probe_delay_seconds=probe_delay,
+            baseline_path=Path(baseline_path) if baseline_path else None,
         )
     except ValueError as exc:
-        # Includes adversarial dual opt-in failures
+        # Includes adversarial dual opt-in failures AND a malformed
+        # .cosai-baseline (fail-closed: a broken baseline must not be ignored).
         click.echo(f"[ERROR] {exc}", err=True)
         sys.exit(2)
     except TargetUnreachableError as exc:
@@ -898,7 +907,10 @@ def _run_ir_containment(
         for probe_def in threat.probes:
             probe_severity[probe_def.id] = sev
 
-    # Collect non-passing probes as findings (error probes are inconclusive — skip)
+    # Collect non-passing probes as findings (error probes are inconclusive — skip).
+    # WP2: a baseline-accepted (suppressed) finding is, by definition, known and
+    # accepted — it must not drive automated IR containment / incident emission
+    # any more than it drives the exit code or ScanResult.has_findings.
     findings = [
         {
             "probe_id": p.probe_id,
@@ -906,7 +918,7 @@ def _run_ir_containment(
             "severity": probe_severity.get(p.probe_id, "medium"),
         }
         for p in result.probe_results
-        if not p.passed and p.error is None
+        if not p.passed and p.error is None and not p.suppressed
     ]
 
     if not findings:
@@ -1143,13 +1155,19 @@ def _print_scan_summary(result: ScanResult, fail_on: str = "critical") -> None:
     )
 
     total_non_inconclusive_findings = (
-        sum(1 for r in result.probe_results if not r.passed and r.error is None and not r.inconclusive_reason)
+        sum(1 for r in result.probe_results if not r.passed and r.error is None and not r.inconclusive_reason and not r.suppressed)
         + sum(1 for r in result.scenario_results if not r.passed and r.status not in ("scan-incomplete", "inconclusive"))
     )
     inconclusive_count = (
         sum(1 for r in result.probe_results if r.inconclusive_reason)
         + sum(1 for r in result.scenario_results if r.status == "inconclusive")
     )
+    suppressed_count = sum(1 for r in result.probe_results if r.suppressed)
+    if suppressed_count:
+        click.echo(
+            f"Baseline: {suppressed_count} accepted finding(s) suppressed "
+            "(excluded from exit code; still listed in reports)."
+        )
     if result.exit_code == 0:
         if total_non_inconclusive_findings > 0:
             click.echo(
