@@ -44,7 +44,7 @@ catalog/
 - Template substitution occurs on the **parsed Python dict** (before `json.dumps`), not on the serialized JSON string. Validate that no substituted value contains `{{` after expansion (abort probe with ERROR).
 - Every file validated against meta-schema before loading — unknown fields rejected, not ignored
 - Ed25519 signatures on official catalog; harness refuses unsigned official files. **Public key hardcoded as bytes literal in `cosai_mcp/keys.py`** (not loaded from disk) + published via Sigstore/PEP 740 attestation. `COSAI_PUBKEY` env var overrides for enterprise key rotation.
-- All paths resolved within `catalog/` — absolute paths rejected
+- All paths resolved within `catalog/` (official + custom globs go through `_resolve_safe`) — absolute paths rejected; any symlink in `catalog/official/` or `catalog/custom/` is rejected (no symlink escape)
 - `operator` field is a closed enum: `eq`, `ne`, `contains`, `not_contains`, `matches_regex`, `status_in`, `error_code_in`
 - `matches_regex` uses `google-re2` (linear time, no backtracking). All patterns validated at catalog load time — RE2 refusal = `UnsafePatternError`. `matches_regex` disabled in custom catalog files unless `--allow-regex-in-custom` is set.
 - **Probe destination is not catalog-controlled.** Target host comes from CLI/scanner config only. Catalog defines payload + assertions only.

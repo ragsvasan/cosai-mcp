@@ -140,7 +140,7 @@ Each section below addresses one attack surface.
 **Controls:**
 
 - Reports signed with a per-installation Ed25519 key stored in the OS keychain (`keyring` library)
-- Signature covers: scan timestamp + catalog hash + report content hash
+- Signature covers: scan timestamp + catalog hash + report content hash. The catalog hash is content-bound — it digests the full canonical threat content of the loaded catalog, not just the threat IDs, so a tampered threat definition that keeps the same ID still changes the hash
 - Public key fingerprint embedded in the report — verifier uses only the fingerprint; private key not needed for verification
 - `cosai audit verify <report>` checks signature integrity
 - Two key types used: (1) catalog verification key (hardcoded public, never per-installation) and (2) report signing key (per-installation, OS keychain) — these are different keys
@@ -159,6 +159,8 @@ Each section below addresses one attack surface.
 ```
 
 Tampering with entry N breaks the chain at entry N+1. `cosai audit verify` surfaces `CHAIN_BROKEN` at the first invalid sequence number.
+
+**Genesis-rewrite limitation and external anchor.** Chain verification alone catches mid-file edits and reordering, but not a *wholesale rewrite from genesis* — an attacker who replaces the entire log with an internally-consistent new chain produces a valid-looking file. To close this, persist the last known tip `chain_hash` out-of-band and pass it via `cosai audit verify --expected-head <hash>` (or the `COSAI_AUDIT_HEAD` env var); verification then asserts the on-disk tip matches the externally-anchored head. When `--expected-head` is omitted, `audit verify` still succeeds on a consistent chain but prints a loud `[WARN]` stating that a genesis rewrite would not be detected.
 
 Write mechanism: O_APPEND + fsync per entry. File-level immutability (`chattr +a`) is a recommended OS-level supplement, documented as outside the scanner's scope.
 

@@ -218,6 +218,8 @@ The audit log is a hash-chained append-only file:
 
 Each entry's `entry_hash` covers the entry content + `prev_hash`. Tampering with any entry breaks the chain at the next entry. `cosai audit verify` walks the chain and reports `CHAIN_BROKEN` at the first invalid entry.
 
+Chain-walking alone does not catch a wholesale rewrite from genesis (a fully re-chained replacement file verifies clean). `cosai audit verify --expected-head <hash>` (or `COSAI_AUDIT_HEAD`) anchors the tip `chain_hash` to an out-of-band value to close this; without the anchor, verify still passes on a consistent chain but emits a `[WARN]`.
+
 File-level immutability (beyond O_APPEND) requires OS controls (`chattr +a`) outside the scanner's scope — documented explicitly.
 
 ---

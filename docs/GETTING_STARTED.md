@@ -347,6 +347,16 @@ Verify the audit log chain:
 cosai audit verify /var/log/cosai/traces/audit.log
 ```
 
+For full tamper-evidence, anchor the verification to the last known chain head
+(persisted out-of-band). Without `--expected-head`, verify still passes on a
+consistent chain but prints a `[WARN]` — a wholesale rewrite from genesis
+would not be detected:
+
+```bash
+cosai audit verify /var/log/cosai/traces/audit.log \
+  --expected-head sha256:<last-known-tip>   # or set COSAI_AUDIT_HEAD
+```
+
 Output:
 ```
 ✓ Report signature: VALID

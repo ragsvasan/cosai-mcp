@@ -93,7 +93,7 @@ cosai inventory verify baseline.json
 
 ### Trust model
 
-Snapshots are signed with the per-installation Ed25519 key (stored in OS keychain). Cross-machine verification uses `COSAI_INVENTORY_PUBKEY` (base64-encoded public key). The scanner refuses to accept re-signed snapshots from a different key without the env var override.
+Snapshots are signed with the per-installation Ed25519 key (stored in OS keychain). Verification **fails closed**: it requires an out-of-band trust anchor — either the per-installation keyring key (same-machine workflows) or the `COSAI_INVENTORY_PUBKEY` env var (base64-encoded raw 32-byte Ed25519 public key, for cross-machine verification). If no trust anchor is resolvable, verification is **refused** (`SignatureVerificationError`) — there is no signature-only fallback, because the artifact carries its own public key and verifying against that embedded key proves nothing about authenticity. A `COSAI_INVENTORY_PUBKEY` that is set but malformed is a hard error, never a silent downgrade. The same fail-closed trust model applies to scorecard signature verification.
 
 ---
 
@@ -193,6 +193,11 @@ cosai ir contain ./incidents/1234567890.json \
   --emit-to https://siem.example.com/webhook \
   --block-egress
 
+# Internal MCP server (private/loopback target) — explicit opt-in required
+cosai ir contain ./incidents/1234567890.json \
+  --emit-to https://siem.example.com/webhook \
+  --allow-private
+
 # Print an incident summary
 cosai ir status ./incidents/1234567890.json
 ```
@@ -205,6 +210,8 @@ cosai ir status ./incidents/1234567890.json
 | `emit_incident` | POST OCSF Security Incident (2001) to SIEM webhook |
 | `quarantine_report` | Write signed JSON incident report to disk |
 | `block_egress` | Generate `iptables`/`pfctl` commands for human execution |
+
+**Egress allowlist (default-deny).** The incident artifact is untrusted, machine-generated input, so `session_kill` and `emit_incident` apply the same network allowlist as the scanner transports: only `http`/`https` schemes, redirects and `HTTP(S)_PROXY` disabled, and any target resolving to a private / loopback / link-local address (or IPv6 ULA) is **rejected** to prevent SSRF via a crafted incident. Acting on a genuinely internal MCP server requires the explicit `--allow-private` opt-in (mirrors the scanner's `--allow-private-targets`); always-blocked ranges (ULA / `fc00::/7`) are rejected even with the flag.
 
 **Firewall commands are never auto-executed.** They are printed and written to the incident report for operator review. This is intentional: automatic network changes in production are a blast-radius risk. The SOAR playbook (triggered by the OCSF event) owns automation beyond this.
 
