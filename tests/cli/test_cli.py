@@ -403,3 +403,160 @@ class TestPytestPlugin:
         )
         # Should skip (no failure)
         assert proc.returncode == 0 or b"skip" in (proc.stdout + proc.stderr).encode().lower()
+
+
+# ---------------------------------------------------------------------------
+# WP5 — CLI flag collapse: ~8 visible flags, rest under --help-advanced.
+# Locked adoption paths (GitHub Action inputs, --cosai-* pytest args) must
+# keep working unchanged — every hidden flag stays fully functional.
+# ---------------------------------------------------------------------------
+
+# The intended core (always-visible) functional flags.
+_CORE_FLAGS = {
+    "--categories", "--engine", "--fail-on", "--baseline",
+    "--profile", "--report-sarif", "--report-html", "--report-mode",
+}
+# Always-present help flags (not counted as "options" for the ≤8 budget).
+_HELP_FLAGS = {"--help", "--help-advanced"}
+
+
+def _visible_long_flags(help_text: str) -> set[str]:
+    import re
+
+    return set(re.findall(r"^\s+(--[a-z][a-z0-9-]+)", help_text, re.MULTILINE))
+
+
+class TestScanHelpCollapse:
+    def test_plain_help_shows_only_core_flags(self) -> None:
+        out = _invoke(["scan", "--help"]).output
+        visible = _visible_long_flags(out) - _HELP_FLAGS
+        assert visible == _CORE_FLAGS, (
+            f"plain --help must show exactly the {len(_CORE_FLAGS)} core flags; "
+            f"got {sorted(visible)}"
+        )
+        assert len(visible) <= 8
+
+    def test_plain_help_hides_advanced_flags(self) -> None:
+        out = _invoke(["scan", "--help"]).output
+        for advanced in ("--ir-report", "--emit-to", "--scorecard",
+                         "--adversarial", "--probe-timeout", "--auth-token"):
+            assert advanced not in out
+
+    def test_plain_help_points_to_help_advanced(self) -> None:
+        out = _invoke(["scan", "--help"]).output
+        assert "--help-advanced" in out
+
+    def test_help_advanced_reveals_every_flag(self) -> None:
+        out = _invoke(["scan", "--help-advanced"]).output
+        for advanced in ("--ir-report", "--emit-to", "--scorecard",
+                         "--adversarial", "--probe-timeout", "--auth-token",
+                         "--allow-custom-catalog", "--no-adaptive",
+                         "--anomaly-threshold", "--contain-on-anomaly"):
+            assert advanced in out, f"{advanced} missing from --help-advanced"
+        # Core flags still present in advanced view too.
+        for core in _CORE_FLAGS:
+            assert core in out
+
+
+class TestHiddenFlagsStillFunctional:
+    """Hidden ≠ removed. Each advanced flag must still parse and reach the
+    scan path (the locked adoption paths and CI integrations depend on them)."""
+
+    def _run(self, extra_args: list[str]):
+        clean = _make_scan_result(exit_code=0)
+        with (
+            patch("cosai_mcp.cli.check_reachable"),
+            patch("cosai_mcp.cli._run_scan", return_value=clean) as m,
+        ):
+            res = _invoke(["scan", *extra_args, "http://localhost:8000"])
+        return res, m
+
+    def test_probe_timeout_still_parsed(self) -> None:
+        res, m = self._run(["--probe-timeout", "7.5"])
+        assert res.exit_code == 0, res.output
+        assert m.call_args.kwargs["probe_timeout_seconds"] == 7.5
+
+    def test_auth_token_still_parsed(self) -> None:
+        res, m = self._run(["--auth-token", "tok-123"])
+        assert res.exit_code == 0, res.output
+        assert m.call_args.kwargs["auth_token"] == "tok-123"
+
+    def test_no_adaptive_still_parsed(self) -> None:
+        res, m = self._run(["--no-adaptive"])
+        assert res.exit_code == 0, res.output
+        assert m.call_args.kwargs["adaptive"] is False
+
+    def test_block_private_targets_still_parsed(self) -> None:
+        res, m = self._run(["--block-private-targets"])
+        assert res.exit_code == 0, res.output
+        assert m.call_args.kwargs["allow_private_targets"] is False
+
+    def test_report_csv_hidden_but_functional(self, tmp_path: Path) -> None:
+        out_csv = tmp_path / "f.csv"
+        clean = _make_scan_result(exit_code=0)
+        with (
+            patch("cosai_mcp.cli.check_reachable"),
+            patch("cosai_mcp.cli._run_scan", return_value=clean),
+        ):
+            res = _invoke([
+                "scan", "--report-csv", str(out_csv), "--no-report",
+                "http://localhost:8000",
+            ])
+        assert res.exit_code == 0, res.output
+
+
+class TestLockedAdoptionPathsUnchanged:
+    """CLAUDE.md locked Adoption Paths must keep working byte-for-byte."""
+
+    def test_github_action_inputs_map_to_working_flags(self) -> None:
+        """GH Action `with: { target, fail_on }` → `cosai scan <target>
+        --fail-on <level>` (the documented action wiring)."""
+        clean = _make_scan_result(exit_code=0)
+        with (
+            patch("cosai_mcp.cli.check_reachable"),
+            patch("cosai_mcp.cli._run_scan", return_value=clean) as m,
+        ):
+            res = _invoke([
+                "scan", "http://localhost:8000", "--fail-on", "critical",
+            ])
+        assert res.exit_code == 0, res.output
+        assert m.call_args.kwargs["fail_on"] == "critical"
+        assert m.call_args.kwargs["target"] == "http://localhost:8000"
+
+    def test_fail_on_is_a_core_visible_flag(self) -> None:
+        out = _invoke(["scan", "--help"]).output
+        assert "--fail-on" in out  # GH Action depends on it being usable
+
+    def test_pytest_plugin_cosai_args_still_registered(self) -> None:
+        """The `--cosai-target/--cosai-severity/--cosai-categories/
+        --cosai-engine` pytest options are independent of the Click CLI and
+        must remain registered."""
+        import argparse
+
+        from cosai_mcp.pytest_plugin import pytest_addoption
+
+        captured: list[str] = []
+
+        class _Grp:
+            def addoption(self, name, **kw):
+                captured.append(name)
+
+        class _Parser:
+            def getgroup(self, *_a, **_k):
+                return _Grp()
+
+        pytest_addoption(_Parser())  # type: ignore[arg-type]
+        for opt in ("--cosai-target", "--cosai-severity",
+                    "--cosai-categories", "--cosai-engine"):
+            assert opt in captured, f"{opt} no longer registered by plugin"
+
+    def test_pytest_plugin_does_not_route_through_click_scan(self) -> None:
+        """Regression guard: the plugin calls _run_scan directly, so hiding
+        Click flags can never affect it."""
+        import inspect
+
+        from cosai_mcp import pytest_plugin
+
+        src = inspect.getsource(pytest_plugin)
+        assert "_run_scan" in src
+        assert "from cosai_mcp.cli import" not in src

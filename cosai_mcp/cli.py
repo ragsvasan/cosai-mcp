@@ -29,16 +29,79 @@ from cosai_mcp.report.verify import VerifyStatus, verify_audit_log
 # Top-level CLI group
 # ---------------------------------------------------------------------------
 
+class _AdvancedHelpCommand(click.Command):
+    """A command whose ``hidden=True`` options are revealed by ``--help-advanced``.
+
+    Keeps the default ``--help`` output to the ~8 core flags while every
+    advanced flag stays fully functional (no removal — the locked adoption
+    paths and CI integrations depend on them). ``--help-advanced`` prints the
+    complete option list.
+    """
+
+    #: Set by the --help-advanced callback before it re-renders help.
+    _show_advanced = False
+
+    def format_options(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        opts = []
+        for param in self.get_params(ctx):
+            if not isinstance(param, click.Option):
+                continue
+            rec = param.get_help_record(ctx)
+            if rec is None and self._show_advanced and param.hidden:
+                # Hidden option — surfaced only under --help-advanced.
+                param.hidden = False
+                try:
+                    rec = param.get_help_record(ctx)
+                finally:
+                    param.hidden = True
+            if rec is None:
+                continue
+            opts.append(rec)
+        if opts:
+            with formatter.section("Options"):
+                formatter.write_dl(opts)
+        if not self._show_advanced:
+            formatter.write_paragraph()
+            formatter.write_text(
+                "Run with --help-advanced to see all options "
+                "(reporting, adversarial mode, profiles, IR/SIEM, timeouts)."
+            )
+
+
+def _help_advanced_cb(ctx: click.Context, param: click.Parameter, value: bool):
+    if not value or ctx.resilient_parsing:
+        return
+    # Re-render this command's help with hidden options revealed. format_options
+    # reads _show_advanced and temporarily un-hides each option for its record.
+    cmd = ctx.command
+    if isinstance(cmd, _AdvancedHelpCommand):
+        cmd._show_advanced = True
+    click.echo(ctx.command.get_help(ctx))
+    ctx.exit()
+
+
 @click.group()
 def main() -> None:
-    """cosai-mcp: MCP security scanner covering all 12 CoSAI threat categories."""
+    """cosai-mcp: MCP security scanner for the CoSAI threat taxonomy.
+
+    9 categories scanned zero-config; T4/T9/T12 require the cosai-mcp
+    middleware deployed in the target.
+    """
 
 
 # ---------------------------------------------------------------------------
 # cosai scan
 # ---------------------------------------------------------------------------
 
-@main.command()
+@main.command(cls=_AdvancedHelpCommand)
+@click.option(
+    "--help-advanced",
+    is_flag=True,
+    is_eager=True,
+    expose_value=False,
+    callback=_help_advanced_cb,
+    help="Show every option (advanced reporting, adversarial, IR/SIEM, tuning).",
+)
 @click.argument("target")
 @click.option(
     "--categories",
@@ -66,14 +129,14 @@ def main() -> None:
                    "fingerprints. Matched findings are excluded from the exit "
                    "code but still listed in every report. A malformed baseline "
                    "fails the scan (exit 2) — never silently ignored.")
-@click.option("--allow-custom-catalog", is_flag=True, default=False,
+@click.option("--allow-custom-catalog", is_flag=True, default=False, hidden=True,
               help="Load threat definitions from catalog/custom/ in addition to official/.")
 @click.option("--report-sarif", type=click.Path(), default=None,
               help="Write SARIF 2.1.0 report to this file path.")
 @click.option("--report-html", type=click.Path(), default=None,
               help="Write HTML report to this file path. "
                    "Defaults to cosai-report.html in the current directory.")
-@click.option("--no-report", is_flag=True, default=False,
+@click.option("--no-report", is_flag=True, default=False, hidden=True,
               help="Suppress the default cosai-report.html output.")
 @click.option(
     "--report-mode",
@@ -88,45 +151,46 @@ def main() -> None:
         "ci: suppress HTML output (plain text summary only)."
     ),
 )
-@click.option("--report-csv", type=click.Path(), default=None,
+@click.option("--report-csv", type=click.Path(), default=None, hidden=True,
               help="Write CSV findings report to this file path (Excel-compatible).")
-@click.option("--report-coverage", is_flag=True, default=False,
+@click.option("--report-coverage", is_flag=True, default=False, hidden=True,
               help="Print coverage matrix showing which engine covers each category.")
-@click.option("--probe-timeout", type=float, default=30.0, show_default=True,
+@click.option("--probe-timeout", type=float, default=30.0, show_default=True, hidden=True,
               help="Per-probe timeout in seconds.")
-@click.option("--probe-delay", type=float, default=0.0, show_default=True,
+@click.option("--probe-delay", type=float, default=0.0, show_default=True, hidden=True,
               help="Seconds to sleep between probes. Use when the target server "
                    "enforces rate limits on new MCP sessions.")
-@click.option("--allow-private-targets/--block-private-targets", default=True,
+@click.option("--allow-private-targets/--block-private-targets", default=True, hidden=True,
               help="Allow scanning RFC1918/loopback targets (default: allowed for dev use). "
                    "Use --block-private-targets in CI to enforce public-target-only policy.")
-@click.option("--catalog-root", type=click.Path(exists=True, file_okay=False), default=None,
+@click.option("--catalog-root", type=click.Path(exists=True, file_okay=False), default=None, hidden=True,
               help="Override catalog root directory (default: ./catalog).")
-@click.option("--auth-token", default=None, envvar="COSAI_AUTH_TOKEN",
+@click.option("--auth-token", default=None, envvar="COSAI_AUTH_TOKEN", hidden=True,
               help="Bearer token for servers that require auth on the MCP handshake.")
-@click.option("--mcp-path", default="/mcp", show_default=True,
+@click.option("--mcp-path", default="/mcp", show_default=True, hidden=True,
               help="URL path of the MCP endpoint (override if server uses a custom path).")
-@click.option("--no-adaptive", is_flag=True, default=False,
+@click.option("--no-adaptive", is_flag=True, default=False, hidden=True,
               help="Disable adaptive probe synthesis. Forces static catalog payloads — "
                    "use for hermetic tests or when server schema is adversarially crafted.")
 @click.option("--profile", default=None,
-              help="Server profile name (e.g. mnemo, fastmcp). Sets mcp_path, auth header "
-                   "format, tool name map, and skip_categories automatically.")
-@click.option("--allow-custom-profiles", is_flag=True, default=False,
+              help="Server profile name (e.g. mnemo, fastmcp). Optional — omit for a "
+                   "generic scan. Sets mcp_path, auth header format, tool name map, "
+                   "and skip_categories automatically.")
+@click.option("--allow-custom-profiles", is_flag=True, default=False, hidden=True,
               help="Load profile from .cosai/profiles/<name>.py or ~/.cosai/profiles/<name>.py "
                    "in addition to built-in profiles.")
-@click.option("--adversarial", is_flag=True, default=False,
+@click.option("--adversarial", is_flag=True, default=False, hidden=True,
               help="Enable adversarial probe mode (canary-only payloads). "
                    "Requires --i-own-this-target. "
                    "ONLY use against targets you own and have authorization to test.")
-@click.option("--i-own-this-target", "i_own_this_target", default=None,
+@click.option("--i-own-this-target", "i_own_this_target", default=None, hidden=True,
               help="Ownership declaration for adversarial mode. "
                    "Must contain the target hostname verbatim. "
                    "Example: --i-own-this-target=myserver.example.com")
-@click.option("--allow-stateful-adversarial", is_flag=True, default=False,
+@click.option("--allow-stateful-adversarial", is_flag=True, default=False, hidden=True,
               help="Allow stateful adversarial probes that modify server state. "
                    "Only effective with --adversarial.")
-@click.option("--report-adversarial-html", type=click.Path(), default=None,
+@click.option("--report-adversarial-html", type=click.Path(), default=None, hidden=True,
               help="Write the adversarial probe report to this path "
                    "(default: cosai-adversarial-report.html when --adversarial is set).")
 @click.option("--skip-reachability", is_flag=True, default=False, hidden=True,
@@ -135,6 +199,7 @@ def main() -> None:
     "--emit-to",
     default=None,
     envvar="COSAI_EMIT_TO",
+    hidden=True,
     help=(
         "SIEM/SOAR webhook URL.  When set, every probe result is emitted as an "
         "OCSF Detection Finding (class_uid 2004) to this endpoint via HTTP POST. "
@@ -145,6 +210,7 @@ def main() -> None:
     "--emit-auth-header",
     default=None,
     envvar="COSAI_EMIT_AUTH",
+    hidden=True,
     help=(
         "Authorization header value for the SIEM webhook "
         "(e.g. 'Bearer <token>'). Also read from COSAI_EMIT_AUTH env var."
@@ -155,6 +221,7 @@ def main() -> None:
     type=int,
     default=10,
     show_default=True,
+    hidden=True,
     help="Max findings in the rolling window before an anomaly alert is emitted.",
 )
 @click.option(
@@ -162,15 +229,16 @@ def main() -> None:
     type=int,
     default=3,
     show_default=True,
+    hidden=True,
     help="Max critical findings in the rolling window before a burst alert fires.",
 )
-@click.option("--contain-on-anomaly", is_flag=True, default=False,
+@click.option("--contain-on-anomaly", is_flag=True, default=False, hidden=True,
               help="Trigger IR containment automatically when anomaly thresholds are exceeded.")
-@click.option("--ir-report", type=click.Path(), default=None,
+@click.option("--ir-report", type=click.Path(), default=None, hidden=True,
               help="Write a JSON incident report to this path when findings are detected.")
-@click.option("--scorecard", "scorecard_path", type=click.Path(), default=None,
+@click.option("--scorecard", "scorecard_path", type=click.Path(), default=None, hidden=True,
               help="Write a signed conformance scorecard JSON to this path.")
-@click.option("--no-sign-scorecard", is_flag=True, default=False,
+@click.option("--no-sign-scorecard", is_flag=True, default=False, hidden=True,
               help="Produce an unsigned scorecard (skip Ed25519 signing).")
 def scan(
     target: str,
