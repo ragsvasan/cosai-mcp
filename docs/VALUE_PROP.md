@@ -118,7 +118,7 @@ This is conformance you can verify, not a dashboard you have to believe.
 ## cosai-mcp Unique Value
 
 **For security engineers:**
-Run `cosai scan https://my-mcp-server` and get a SARIF report in GitHub's native security tab — covering all 12 CoSAI categories — without reading any code or deploying any proxy.
+Run `cosai scan https://my-mcp-server` and get a SARIF report in GitHub's native security tab — covering T1–T12 via three engines (8 categories zero-config, 4 via middleware).
 
 **For SOC analysts:**
 Every probe result streams to your SIEM as a native OCSF Detection Finding (class_uid 2004). Anomaly rules fire on finding-rate spikes; a Security Incident (class_uid 2001) auto-triggers SOAR playbooks. No adapter, no ETL, no schema translation.

@@ -1,6 +1,6 @@
 # Getting Started with cosai-mcp
 
-cosai scans MCP servers for security vulnerabilities across all 12 CoSAI threat categories. It requires nothing installed on the target — point it at any running MCP server and get a report.
+cosai scans MCP servers for security vulnerabilities across T1–T12 via three engines (8 categories zero-config, 4 via middleware deployment). Black-box probing requires nothing on the target; middleware coverage requires deploying cosai_mcp/middleware/ — point it at any running MCP server and get a report.
 
 ---
 

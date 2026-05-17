@@ -10,7 +10,7 @@ Designed in April 2026 based on the CoSAI/OASIS January 2026 whitepaper "Securit
 
 Full competitive analysis: [docs/VALUE_PROP.md](docs/VALUE_PROP.md)
 
-**Our unique value:** the only tool that combines runtime black-box JSON-RPC probing + stateful multi-turn conformance harness + all 12 CoSAI categories + CI/CD gate. Static scanners (Cisco, Snyk, Enkrypt) and runtime proxies (MCP-Bastion, MCPProxy-go) are complements, not competitors — they test what you wrote; we test what you shipped.
+**Our unique value:** the only tool that combines runtime black-box JSON-RPC probing + stateful multi-turn conformance harness + T1–T12 via three engines (8 zero-config, 4 via middleware) + CI/CD gate. Static scanners (Cisco, Snyk, Enkrypt) and runtime proxies (MCP-Bastion, MCPProxy-go) are complements, not competitors — they test what you wrote; we test what you shipped.
 
 **Do not duplicate:** static code analysis, production traffic monitoring, or LLM-semantic judgment. These are covered by existing tools we recommend alongside cosai-mcp.
 
@@ -155,7 +155,7 @@ examples/
 .github/workflows/
   cosai-gate.yml      # Reusable CI action
 docs/
-  threat-mapping.md   # CoSAI T1–T12 ↔ ISO 27001 ↔ NIST AI RMF
+  threat-mapping.md   # CoSAI T1–T12 ↔ NIST AI RMF
   patterns/
 ```
 
@@ -313,7 +313,7 @@ When writing or reviewing MCP server code, enforce these rules. They are distill
 ## Open Source Strategy
 - License: Apache 2.0
 - Target upstream: `cosai-oasis` GitHub org (contribute as reference implementation)
-- Aligns with: OWASP MCP Top 10, CoSAI T1–T12, ISO 27001:2022, NIST AI RMF 2026
+- Aligns with: OWASP MCP Top 10, CoSAI T1–T12, NIST AI RMF 2026
 - SARIF output enables GitHub native security tab integration
 
 ## CoSAI Threat Categories Reference

@@ -105,6 +105,8 @@ Without signed inventory, a supply-chain attack that poisons the tool manifest a
 
 ### 3.3 Track B — OCSF Telemetry to SIEM/SOAR
 
+> **Experimental:** Track B is available behind the `--experimental` flag and is not enabled by default.
+
 **What it is:** After every scan, each probe result is serialised as an OCSF Detection Finding (class_uid 2004) and POSTed to a configurable SIEM webhook. An in-process anomaly detector fires alerts when finding rates or critical burst counts exceed thresholds.
 
 **Why we built it:**
@@ -121,6 +123,8 @@ The anomaly detection layer (HIGH_FINDING_RATE, CRITICAL_BURST, SEVERITY_ESCALAT
 - URL credential redaction before any CLI output: `urlparse` + `urlunparse` strips userinfo from logged URLs.
 
 ### 3.4 Track D — Automated IR Containment
+
+> **Experimental:** Track D is available behind the `--experimental` flag and is not enabled by default.
 
 **What it is:** When anomaly thresholds are exceeded, the scanner (1) builds an `IncidentRecord`, (2) emits an OCSF Security Incident (class_uid 2001) to trigger SOAR playbooks, (3) writes a signed quarantine report to disk, and (4) generates firewall block commands for operator review. Block commands are never auto-executed.
 
@@ -343,7 +347,7 @@ CLI additions:
 **Commit:** `docs: add PLATFORM_GUIDE, update README and VALUE_PROP for v0.2+ platform`
 
 - `docs/PLATFORM_GUIDE.md` — new standalone positioning doc: full operational loop, audience map, per-track deep dives, GitHub Actions reference, capability comparison matrix
-- `README.md` — test count 885→917, Quick Start expanded with all new commands, docs table updated
+- `README.md` — test count 885→1161, Quick Start expanded with all new commands, docs table updated
 - `docs/VALUE_PROP.md` — Platform Capabilities section (Tracks A/B/D/E), capability matrix extended to 8 columns, SOC/CISO audience paragraphs added
 
 ### Test count
@@ -355,7 +359,7 @@ CLI additions:
 | + Track B (telemetry) | added |
 | + Track D (IR) | +39 tests |
 | + Track E (scorecard) | +32 tests |
-| **Total (all tracks merged)** | **917** |
+| **Total (all tracks merged)** | **1161** |
 
 ---
 
