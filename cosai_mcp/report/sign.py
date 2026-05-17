@@ -1,10 +1,31 @@
-"""Report signing — per-installation Ed25519 key stored in OS keychain via keyring."""
+"""Report / scorecard signing key resolution.
+
+Key precedence (highest first), shared by report AND scorecard signing so a
+fleet produces *comparable* artifacts (identical ``public_key_fingerprint``
+across every machine):
+
+  1. ``COSAI_REPORT_SIGNING_KEY`` — base64 of a raw 32-byte Ed25519 private
+     key.  This is the **org / shared / fleet** key: set it identically on
+     every CI runner and laptop in a fleet and every signed report and
+     scorecard carries the same public-key fingerprint, so scorecards are
+     directly comparable across the fleet.  Fail-closed: if the variable is
+     set but is not valid base64 / not 32 bytes, signing raises rather than
+     silently falling back to a per-machine key (which would make artifacts
+     look authentic but be fleet-incomparable).
+  2. Per-installation OS-keychain key (``keyring``) — the default for a single
+     developer machine; unique per install, NOT fleet-comparable.
+
+This mirrors the existing ``COSAI_PUBKEY`` (catalog verification) and
+``COSAI_SIGNING_SEED`` (catalog signing) override model — same shape, same
+fail-closed discipline.
+"""
 from __future__ import annotations
 
 import base64
 import binascii
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,6 +43,47 @@ except ImportError:
 
 _SERVICE_NAME = "cosai-mcp"
 _KEY_ACCOUNT = "report-signing-key"
+
+_ORG_KEY_ENV = "COSAI_REPORT_SIGNING_KEY"
+
+
+class OrgSigningKeyError(ValueError):
+    """Raised when ``COSAI_REPORT_SIGNING_KEY`` is set but invalid.
+
+    Fail-closed: an explicitly-pinned org key that cannot be loaded must
+    abort signing, never silently downgrade to a per-installation key.
+    """
+
+
+def org_signing_key() -> Ed25519PrivateKey | None:
+    """Return the org/shared Ed25519 signing key from the environment.
+
+    Returns ``None`` when ``COSAI_REPORT_SIGNING_KEY`` is unset (callers then
+    fall back to the per-installation keychain key).  Raises
+    :class:`OrgSigningKeyError` when the variable is set but malformed —
+    a pinned fleet key must fail closed.
+    """
+    raw_b64 = os.environ.get(_ORG_KEY_ENV, "")
+    if not raw_b64:
+        return None
+    try:
+        raw = base64.b64decode(raw_b64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise OrgSigningKeyError(
+            f"{_ORG_KEY_ENV} is set but is not valid base64. It must be the "
+            "base64 encoding of a raw 32-byte Ed25519 private key."
+        ) from exc
+    if len(raw) != 32:
+        raise OrgSigningKeyError(
+            f"{_ORG_KEY_ENV} decodes to {len(raw)} bytes; a raw Ed25519 "
+            "private key must be exactly 32 bytes."
+        )
+    try:
+        return Ed25519PrivateKey.from_private_bytes(raw)
+    except ValueError as exc:  # pragma: no cover - 32-byte is always valid
+        raise OrgSigningKeyError(
+            f"{_ORG_KEY_ENV} is not a valid Ed25519 private key."
+        ) from exc
 
 
 def _b64(data: bytes) -> str:
@@ -119,6 +181,12 @@ class ReportSigner:
 
     @staticmethod
     def _load_or_create_key() -> Ed25519PrivateKey:
+        # Org/shared fleet key takes precedence over the per-installation
+        # keychain key so every machine in a fleet signs with the same key
+        # (comparable scorecards). Fail-closed if it is set but invalid.
+        org_key = org_signing_key()
+        if org_key is not None:
+            return org_key
         if not _KEYRING_AVAILABLE:
             raise RuntimeError(
                 "keyring is required for report signing. "

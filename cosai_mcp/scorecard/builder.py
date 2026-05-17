@@ -11,6 +11,8 @@ from cosai_mcp.scorecard.models import (
     _ENGINE_COVERAGE,
 )
 
+from cosai_mcp.report.sign import OrgSigningKeyError
+
 if TYPE_CHECKING:
     from cosai_mcp.api import ScanResult
 
@@ -145,6 +147,12 @@ def build_scorecard(
     try:
         from cosai_mcp.scorecard.signing import sign_scorecard
         return sign_scorecard(unsigned)
+    except OrgSigningKeyError:
+        # A misconfigured fleet org key must NOT silently produce an unsigned
+        # scorecard — a fleet that believes it is emitting comparable signed
+        # scorecards but is silently emitting unsigned ones is exactly the
+        # failure WP6 forbids. Propagate so the CLI fails closed (exit 2).
+        raise
     except Exception:
         # Best-effort signing — return unsigned if keyring unavailable
         return unsigned

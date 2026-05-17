@@ -22,6 +22,7 @@ from cosai_mcp.api import (
 from cosai_mcp.exceptions import ScannerInternalError, TargetUnreachableError
 from cosai_mcp.profiles import BUILTIN_PROFILES, resolve_profile
 from cosai_mcp.profiles.models import ServerProfile
+from cosai_mcp.report.sign import OrgSigningKeyError
 from cosai_mcp.report.verify import VerifyStatus, verify_audit_log
 
 
@@ -1298,6 +1299,11 @@ def _write_sarif_report(result: ScanResult, path: Path) -> None:
         )
         sig_path = path.with_suffix(".sig.json")
         sig_path.write_text(json.dumps(sig.to_dict(), indent=2), encoding="utf-8")
+    except OrgSigningKeyError as exc:
+        # A misconfigured fleet org key must be LOUD — a fleet that believes
+        # it is emitting comparable signed reports but is silently emitting
+        # none is exactly the failure WP6 must not introduce.
+        click.echo(f"[WARN] Report not signed — {exc}", err=True)
     except Exception:  # noqa: BLE001
         pass  # signing unavailable (no keyring / no key) — continue without signature
 
@@ -1488,6 +1494,8 @@ def _write_adversarial_html_report(
         )
         sig_path = path.with_suffix(".sig.json")
         sig_path.write_text(json.dumps(sig.to_dict(), indent=2), encoding="utf-8")
+    except OrgSigningKeyError as exc:
+        click.echo(f"[WARN] Adversarial report not signed — {exc}", err=True)
     except Exception:  # noqa: BLE001
         pass  # signing unavailable (no keyring / no key) — continue without signature
 

@@ -93,14 +93,32 @@ _SCRUB_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
 )
 
 
+# cosai-mcp's OWN configuration variables. These are not target-bound
+# credentials — they configure the scanner itself and several (notably the
+# WP6 fleet signing key) are required IN-PROCESS for report/scorecard signing.
+# They are never forwarded into a probe subprocess regardless (probes get a
+# minimal filtered env), so exempting them from the secret-pattern scrub does
+# not widen the subprocess attack surface. Without this exemption,
+# COSAI_REPORT_SIGNING_KEY matches ``.*_KEY$`` and the fleet key is silently
+# stripped before signing — defeating WP6 entirely in the CLI path.
+_SCRUB_ALLOWLIST: frozenset[str] = frozenset({
+    "COSAI_REPORT_SIGNING_KEY",
+})
+
+
 def scrub_env(env: dict[str, str] | None = None) -> dict[str, str]:
     """Return a copy of ``env`` with sensitive vars removed.
 
     If ``env`` is None, reads ``os.environ`` at call time into a fresh dict.
-    Never mutates the source mapping.
+    Never mutates the source mapping. cosai-mcp's own config vars
+    (``_SCRUB_ALLOWLIST``) are preserved — they are scanner configuration,
+    not target secrets.
     """
     source = env if env is not None else dict(os.environ)
-    return {k: v for k, v in source.items() if not any(p.match(k) for p in _SCRUB_PATTERNS)}
+    return {
+        k: v for k, v in source.items()
+        if k in _SCRUB_ALLOWLIST or not any(p.match(k) for p in _SCRUB_PATTERNS)
+    }
 
 
 def _apply_env_scrub() -> None:
@@ -110,6 +128,8 @@ def _apply_env_scrub() -> None:
     Library paths should pass scrub_env() output to subprocess constructors.
     """
     for key in list(os.environ.keys()):
+        if key in _SCRUB_ALLOWLIST:
+            continue  # cosai's own config — needed in-process (e.g. WP6 key)
         if any(p.match(key) for p in _SCRUB_PATTERNS):
             del os.environ[key]
 

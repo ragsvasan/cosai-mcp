@@ -36,6 +36,16 @@ def _canonical_bytes(d: dict[str, Any]) -> bytes:
 
 
 def _get_or_create_private_key() -> Ed25519PrivateKey:
+    # Org/shared fleet key (COSAI_REPORT_SIGNING_KEY) takes precedence over the
+    # per-installation keychain key so every machine in a fleet signs
+    # scorecards with the same key — making fleet scorecards directly
+    # comparable by public-key fingerprint. Fail-closed if set but invalid.
+    from cosai_mcp.report.sign import org_signing_key
+
+    org_key = org_signing_key()
+    if org_key is not None:
+        return org_key
+
     try:
         import keyring
     except ImportError:
@@ -75,6 +85,19 @@ def _get_trusted_public_key_bytes() -> bytes | None:
                 "a raw Ed25519 public key must be exactly 32 bytes."
             )
         return raw
+    # WP6: when the fleet org signing key is set, its public bytes are the
+    # trust anchor — so a fleet round-trips (sign on machine A, verify on
+    # machine B) by setting ONE env var, with no separate pubkey distribution.
+    # Fail-closed: a malformed org key raises ScorecardVerificationError
+    # rather than silently downgrading to the per-machine keyring key.
+    from cosai_mcp.report.sign import OrgSigningKeyError, org_signing_key
+
+    try:
+        org_key = org_signing_key()
+    except OrgSigningKeyError as exc:
+        raise ScorecardVerificationError(str(exc)) from exc
+    if org_key is not None:
+        return org_key.public_key().public_bytes_raw()
     try:
         priv = _get_or_create_private_key()
         return priv.public_key().public_bytes_raw()
