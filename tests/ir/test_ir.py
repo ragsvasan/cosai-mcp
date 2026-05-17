@@ -494,6 +494,7 @@ class TestScanIRWiring:
                     f"http://127.0.0.1:{target.port}",
                     "--no-report",
                     "--report-mode", "ci",
+                    "--experimental",
                     "--contain-on-anomaly",
                     "--anomaly-threshold", "1",
                     "--ir-report", str(ir_file),
@@ -518,6 +519,7 @@ class TestScanIRWiring:
                     f"http://127.0.0.1:{target.port}",
                     "--no-report",
                     "--report-mode", "ci",
+                    "--experimental",
                     "--ir-report", str(ir_file),
                     "--skip-reachability",
                 ],
@@ -542,6 +544,7 @@ class TestScanIRWiring:
                     f"http://127.0.0.1:{target.port}",
                     "--no-report",
                     "--report-mode", "ci",
+                    "--experimental",
                     "--emit-to", "http://127.0.0.1:1/",  # always refused
                     "--skip-reachability",
                 ],

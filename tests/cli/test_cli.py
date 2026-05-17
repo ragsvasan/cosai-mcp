@@ -560,3 +560,110 @@ class TestLockedAdoptionPathsUnchanged:
         src = inspect.getsource(pytest_plugin)
         assert "_run_scan" in src
         assert "from cosai_mcp.cli import" not in src
+
+
+# ---------------------------------------------------------------------------
+# WP3 — Tracks B (SIEM/OCSF) and D (IR containment) are experimental and gated
+# behind --experimental. Without the flag, using a Track B/D scan option fails
+# CLOSED (exit 2) — never silently ignored. Code is NOT deleted: with the flag
+# the dispatch still runs.
+# ---------------------------------------------------------------------------
+
+class TestExperimentalGate:
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            ["--emit-to", "http://127.0.0.1:1/"],
+            ["--emit-auth-header", "Bearer x"],
+            ["--contain-on-anomaly"],
+            ["--ir-report", "incident.json"],
+        ],
+    )
+    def test_track_bd_flag_without_experimental_exits_2(self, extra) -> None:
+        clean = _make_scan_result(exit_code=0)
+        with (
+            patch("cosai_mcp.cli.check_reachable"),
+            patch("cosai_mcp.cli._run_scan", return_value=clean),
+        ):
+            res = _invoke(["scan", "http://localhost:8000", *extra])
+        assert res.exit_code == 2, res.output
+        assert "--experimental" in res.output
+        assert "experimental" in res.output.lower()
+
+    def test_error_names_the_offending_flag(self) -> None:
+        clean = _make_scan_result(exit_code=0)
+        with (
+            patch("cosai_mcp.cli.check_reachable"),
+            patch("cosai_mcp.cli._run_scan", return_value=clean),
+        ):
+            res = _invoke(
+                ["scan", "http://localhost:8000", "--ir-report", "x.json"]
+            )
+        assert res.exit_code == 2
+        assert "--ir-report" in res.output
+
+    def test_clean_scan_without_any_track_bd_flag_unaffected(self) -> None:
+        """The default scan surface must be entirely unaffected — no
+        --experimental needed for a normal scan."""
+        clean = _make_scan_result(exit_code=0)
+        with (
+            patch("cosai_mcp.cli.check_reachable"),
+            patch("cosai_mcp.cli._run_scan", return_value=clean),
+        ):
+            res = _invoke(["scan", "http://localhost:8000"])
+        assert res.exit_code == 0, res.output
+        assert "experimental" not in res.output.lower()
+
+    def test_experimental_flag_allows_track_b_dispatch(self) -> None:
+        """Code is NOT deleted: with --experimental, --emit-to reaches the
+        telemetry emitter (we assert the dispatch function is invoked)."""
+        clean = _make_scan_result(exit_code=0)
+        with (
+            patch("cosai_mcp.cli.check_reachable"),
+            patch("cosai_mcp.cli._run_scan", return_value=clean),
+            patch("cosai_mcp.cli._emit_scan_telemetry") as emit,
+            patch("cosai_mcp.cli._run_ir_containment"),
+        ):
+            res = _invoke([
+                "scan", "http://localhost:8000", "--experimental",
+                "--emit-to", "http://127.0.0.1:9/",
+            ])
+        assert res.exit_code == 0, res.output
+        emit.assert_called_once()
+
+    def test_experimental_flag_allows_track_d_dispatch(self) -> None:
+        clean = _make_scan_result(exit_code=0)
+        with (
+            patch("cosai_mcp.cli.check_reachable"),
+            patch("cosai_mcp.cli._run_scan", return_value=clean),
+            patch("cosai_mcp.cli._run_ir_containment") as ir,
+        ):
+            res = _invoke([
+                "scan", "http://localhost:8000", "--experimental",
+                "--ir-report", "incident.json",
+            ])
+        assert res.exit_code == 0, res.output
+        ir.assert_called_once()
+
+    def test_experimental_alone_without_bd_flags_is_noop(self) -> None:
+        clean = _make_scan_result(exit_code=0)
+        with (
+            patch("cosai_mcp.cli.check_reachable"),
+            patch("cosai_mcp.cli._run_scan", return_value=clean),
+            patch("cosai_mcp.cli._emit_scan_telemetry") as emit,
+            patch("cosai_mcp.cli._run_ir_containment") as ir,
+        ):
+            res = _invoke(
+                ["scan", "http://localhost:8000", "--experimental"]
+            )
+        assert res.exit_code == 0, res.output
+        emit.assert_not_called()
+        ir.assert_not_called()
+
+    def test_experimental_is_hidden_from_plain_help(self) -> None:
+        out = _invoke(["scan", "--help"]).output
+        assert "--experimental" not in out
+
+    def test_experimental_in_help_advanced(self) -> None:
+        out = _invoke(["scan", "--help-advanced"]).output
+        assert "--experimental" in out

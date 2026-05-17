@@ -39,16 +39,20 @@ class _AdvancedHelpCommand(click.Command):
     complete option list.
     """
 
-    #: Set by the --help-advanced callback before it re-renders help.
-    _show_advanced = False
+    #: ctx.meta key carrying the per-invocation "show advanced" signal.
+    #: Stored on the Context (NOT the Command) so it can never leak between
+    #: invocations — Click reuses the same Command instance in-process, so
+    #: instance/class state would make a later plain --help render advanced.
+    _META_KEY = "cosai.show_advanced_help"
 
     def format_options(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        show_advanced = bool(ctx.meta.get(self._META_KEY, False))
         opts = []
         for param in self.get_params(ctx):
             if not isinstance(param, click.Option):
                 continue
             rec = param.get_help_record(ctx)
-            if rec is None and self._show_advanced and param.hidden:
+            if rec is None and show_advanced and param.hidden:
                 # Hidden option — surfaced only under --help-advanced.
                 param.hidden = False
                 try:
@@ -61,7 +65,7 @@ class _AdvancedHelpCommand(click.Command):
         if opts:
             with formatter.section("Options"):
                 formatter.write_dl(opts)
-        if not self._show_advanced:
+        if not show_advanced:
             formatter.write_paragraph()
             formatter.write_text(
                 "Run with --help-advanced to see all options "
@@ -72,11 +76,10 @@ class _AdvancedHelpCommand(click.Command):
 def _help_advanced_cb(ctx: click.Context, param: click.Parameter, value: bool):
     if not value or ctx.resilient_parsing:
         return
-    # Re-render this command's help with hidden options revealed. format_options
-    # reads _show_advanced and temporarily un-hides each option for its record.
-    cmd = ctx.command
-    if isinstance(cmd, _AdvancedHelpCommand):
-        cmd._show_advanced = True
+    # Per-invocation signal on ctx.meta (never on the Command instance, which
+    # Click reuses in-process — instance state would leak into a later
+    # plain --help and wrongly reveal hidden options).
+    ctx.meta[_AdvancedHelpCommand._META_KEY] = True
     click.echo(ctx.command.get_help(ctx))
     ctx.exit()
 
@@ -241,6 +244,10 @@ def main() -> None:
               help="Write a signed conformance scorecard JSON to this path.")
 @click.option("--no-sign-scorecard", is_flag=True, default=False, hidden=True,
               help="Produce an unsigned scorecard (skip Ed25519 signing).")
+@click.option("--experimental", is_flag=True, default=False, hidden=True,
+              help="Enable experimental Tracks B/D (SIEM/OCSF telemetry "
+                   "emission and IR containment). These are NOT part of the "
+                   "default scan surface and may change or be removed.")
 def scan(
     target: str,
     categories: str,
@@ -276,6 +283,7 @@ def scan(
     critical_burst_threshold: int,
     scorecard_path: str | None,
     no_sign_scorecard: bool,
+    experimental: bool,
 ) -> None:
     """Scan a target MCP server for CoSAI threat categories T1–T12.
 
@@ -287,6 +295,29 @@ def scan(
         2  Scanner internal error (fail-closed; treated as failure by CI).
         3  Target unreachable.
     """
+    # -- WP3: Tracks B/D are experimental and OFF the default scan surface --
+    # Using any SIEM/OCSF (Track B) or IR-containment (Track D) flag without
+    # --experimental fails closed (exit 2) rather than silently ignoring the
+    # flag: a user who passed --emit-to / --ir-report and got NO emission
+    # would wrongly believe their SIEM was wired.
+    _experimental_flags_used = [
+        name for name, used in (
+            ("--emit-to", bool(emit_to)),
+            ("--emit-auth-header", bool(emit_auth_header)),
+            ("--contain-on-anomaly", bool(contain_on_anomaly)),
+            ("--ir-report", bool(ir_report)),
+        ) if used
+    ]
+    if _experimental_flags_used and not experimental:
+        click.echo(
+            "[ERROR] "
+            + ", ".join(_experimental_flags_used)
+            + " require --experimental (Tracks B/D: SIEM/OCSF telemetry and "
+            "IR containment are experimental and not part of the default "
+            "scan surface).",
+            err=True,
+        )
+        sys.exit(2)
     # Scrub sensitive env vars from this process before spawning subprocesses.
     # CLI-only: one-time mutation of os.environ at process start is acceptable
     # because this process exits when the scan completes (FIX [2]).
@@ -367,8 +398,8 @@ def scan(
     # -- Emit summary --
     _print_scan_summary(result, fail_on=fail_on)
 
-    # -- SIEM/SOAR telemetry emission --
-    if emit_to:
+    # -- SIEM/SOAR telemetry emission (Track B — experimental, WP3) --
+    if emit_to and experimental:
         _emit_scan_telemetry(
             result=result,
             target=target,
@@ -429,8 +460,9 @@ def scan(
             click.echo(f"[ERROR] Failed to write adversarial HTML report: {exc}", err=True)
             sys.exit(2)
 
-    # -- IR containment (best-effort; must not change exit_code) --
-    if contain_on_anomaly or ir_report or emit_to:
+    # -- IR containment (Track D — experimental, WP3; best-effort; must not
+    #    change exit_code) --
+    if experimental and (contain_on_anomaly or ir_report or emit_to):
         try:
             _run_ir_containment(
                 result=result,
