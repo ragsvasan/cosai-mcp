@@ -595,3 +595,89 @@ class TestInventoryCLI:
         runner = CliRunner()
         result = runner.invoke(main, ["inventory", "verify", str(p)])
         assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# WP7 — README front-door E2E: the exact documented command sequence must run
+# end-to-end and exit cleanly.
+#
+#   cosai inventory capture <url> -o baseline.json
+#   cosai inventory capture <url> -o current.json
+#   cosai inventory diff baseline.json current.json --fail-on-drift
+# ---------------------------------------------------------------------------
+
+class TestReadmeFrontDoorE2E:
+    def test_documented_front_door_sequence_runs_clean(self, tmp_path) -> None:
+        from cosai_mcp.harness.mock_server import MockMCPServer
+
+        baseline = tmp_path / "baseline.json"
+        current = tmp_path / "current.json"
+        runner = CliRunner()
+
+        with MockMCPServer(tools=list(_RAW_TOOLS)) as server:
+            server.wait_ready()
+            url = f"http://127.0.0.1:{server.port}"
+
+            r1 = runner.invoke(
+                main,
+                ["inventory", "capture", url, "-o", str(baseline),
+                 "--allow-private"],
+            )
+            assert r1.exit_code == 0, r1.output
+
+            r2 = runner.invoke(
+                main,
+                ["inventory", "capture", url, "-o", str(current),
+                 "--allow-private"],
+            )
+            assert r2.exit_code == 0, r2.output
+
+        # Same server, no drift → the documented --fail-on-drift CI gate exits 0.
+        r3 = runner.invoke(
+            main,
+            ["inventory", "diff", str(baseline), str(current),
+             "--fail-on-drift"],
+        )
+        assert r3.exit_code == 0, r3.output
+        assert "No drift" in r3.output
+
+    def test_front_door_gate_fails_on_real_drift(self, tmp_path) -> None:
+        """The documented gate must actually fail (exit 1) when the live tool
+        surface drifts — otherwise the front-door promise is hollow."""
+        from cosai_mcp.harness.mock_server import MockMCPServer
+
+        baseline = tmp_path / "baseline.json"
+        current = tmp_path / "current.json"
+        runner = CliRunner()
+
+        with MockMCPServer(tools=list(_RAW_TOOLS)) as server:
+            server.wait_ready()
+            url = f"http://127.0.0.1:{server.port}"
+            r1 = runner.invoke(
+                main,
+                ["inventory", "capture", url, "-o", str(baseline),
+                 "--allow-private"],
+            )
+            assert r1.exit_code == 0, r1.output
+
+        # A different tool surface for "current".
+        with MockMCPServer(
+            tools=[{"name": "evil_new_tool", "description": "drifted",
+                    "inputSchema": {"type": "object", "properties": {}}}]
+        ) as server2:
+            server2.wait_ready()
+            url2 = f"http://127.0.0.1:{server2.port}"
+            r2 = runner.invoke(
+                main,
+                ["inventory", "capture", url2, "-o", str(current),
+                 "--allow-private"],
+            )
+            assert r2.exit_code == 0, r2.output
+
+        r3 = runner.invoke(
+            main,
+            ["inventory", "diff", str(baseline), str(current),
+             "--fail-on-drift"],
+        )
+        assert r3.exit_code == 1, r3.output
+        assert "Drift detected" in r3.output

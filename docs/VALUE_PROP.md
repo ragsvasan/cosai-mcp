@@ -73,38 +73,27 @@ Every existing tool covers 1–3 threat categories. Snyk Agent Scan has the best
 | **CoSAI/OASIS whitepaper** (Jan 2026) | 12 threat categories — defines the taxonomy cosai-mcp implements. Zero code shipped. |
 | **OWASP MCP Top 10** | 10 MCP-specific protocol risks (A01–A12), references "mcp-attack-labs" repo. No standalone scanner. |
 | **OWASP Agentic Security Initiative (ASI) Top 10** | 10 agentic AI risks (ASI01–ASI10) — broader than MCP, covers memory poisoning (ASI04), tool misuse (ASI02), unsafe output (ASI03). No scanner. cosai-mcp maps to 9/10 items; ASI04 multi-agent state is partially out of MCP-layer scope. |
-| **MITRE ATLAS** | Adversarial Threat Landscape for AI Systems — real-world adversarial ML attack patterns. No MCP-specific scanner. cosai-mcp probe IDs map to ATLAS technique IDs in SARIF output. |
-| **CSA AI Controls Matrix** | 243 AI security controls across 17 domains. No automated enforcement tool. cosai-mcp provides runnable evidence for the tool-access and audit-logging control families. |
-| **MCP Server Security Standard (MSSS)** | 4 conformance levels with testable evidence requirements. No automated tool. |
 
 ### Commercial Agentic-AI Security Platforms
 
 | Vendor | What it actually does | Coverage | Trust model |
 |--------|----------------------|----------|-------------|
-| **CrowdStrike Falcon AI Detection & Response** | Agent-side runtime detection/response, marketed via the *"90-Day Roadmap for Securing Agentic AI"* whitepaper | Broad agentic + MCP attack surface, SOC-oriented | Closed-source; vendor is the trust anchor; demo-by-request; not CI-native or developer-owned |
-| **Palo Alto / Prisma AIRS, Wiz AI-SPM, et al.** | Posture management + runtime AI threat detection | Cloud + model + agent posture | Closed-source platform; not MCP-protocol-conformance-specific |
+| **Commercial agentic-AI SOC / posture platforms** (Palo Alto Prisma AIRS, Wiz AI-SPM, et al.) | Posture management + runtime AI threat detection | Cloud + model + agent posture | Closed-source platform; vendor is the trust anchor; not MCP-protocol-conformance-specific; not CI-native or developer-owned |
 
-**Verdict:** These are commercial SOC/posture platforms. They describe the right attack surface (CrowdStrike's whitepaper is technically sound) but sell the implementation as a closed product. cosai-mcp + mcp-armor are the OSS, signature-anchored implementation of the same control set — verifiable without trusting a vendor, and CI-gateable rather than demo-gated.
+**Verdict:** These are commercial SOC/posture platforms. They describe the right attack surface but sell the implementation as a closed product. cosai-mcp is the OSS, signature-anchored **runnable reference implementation of the CoSAI MCP taxonomy** — verifiable without trusting a vendor, and CI-gateable rather than demo-gated.
 
 ---
 
-## CrowdStrike 90-Day Roadmap Mapping
+## Positioning: runnable reference implementation + signed conformance artifact
 
-CrowdStrike's whitepaper defines an 8-workstream "90-day roadmap." It maps cleanly onto the cosai-mcp (scanner, CI-time proof) + mcp-armor (middleware, runtime enforcement) split. Honest status — *shipped* vs *roadmap*:
+cosai-mcp's value is not "another scanner." It is the **runnable reference implementation of the CoSAI/OASIS MCP Security taxonomy** plus a **signed conformance artifact**:
 
-| # | CrowdStrike workstream | cosai-mcp + mcp-armor status |
-|---|------------------------|------------------------------|
-| 1 | Tool Inventory & Classification | **Partial (shipped):** runtime tool discovery + AG-MP.1 risk tiers. **Roadmap:** signed pre-deploy inventory artifact + owner registry. |
-| 2 | MCP Auth, Identity & Version Control | **Shipped — exceeds:** Ed25519-signed catalogs, DPoP (RFC 9449), JTI replay, signed reports, version-frozen catalog. |
-| 3 | Prompt-Layer & Tool-Execution Guardrails | **Shipped — exceeds:** RE2-only linear-time scanning, 24 OWASP injection patterns, strict schemas, SSRF allowlists, fail-closed. |
-| 4 | Observability for Planning & Tool Calls | **Partial (shipped):** hash-chained tamper-evident audit + DAG causal trace. **Roadmap:** SIEM/SOAR emitter + anomaly thresholds. |
-| 5 | Governance for Tool Updates & Capability Drift | **Partial (shipped):** mid-session drift/rug-pull + typosquat detection. **Roadmap:** approval-gate workflow, baseline registry, RACI, deprecation. |
-| 6 | Restrict Non-Human Identities & Permissions | **Partial (shipped):** per-tool RBAC, confused-deputy, scope enforcement tests. **Roadmap:** credential-rotation + NHI anomaly monitoring. |
-| 7 | Human-in-the-Loop for Sensitive Actions | **Partial (shipped):** destructive two-stage commit + detection of missing HITL gates. **Roadmap:** non-bypassable out-of-band approval (agent cannot resubmit its own token). |
-| 8 | Agent-Specific Incident Response | **Roadmap:** containment primitives exist (budget kill, tool blocking); orchestration (pause/quarantine/freeze/revoke), severity tiers, playbooks, tabletop pack. |
-| ★ | *Not in CrowdStrike* | **Roadmap differentiator:** signed **MCP Security Conformance Level** — SLSA-style tier tying scanner proof ↔ runtime enforcement ↔ audit chain into one verifiable, publishable artifact. Closed commercial platforms structurally cannot offer a vendor-independent conformance proof. |
+- The threat catalog is Ed25519-signed; the scanner refuses unsigned official definitions.
+- Every scan can emit a signed scorecard (per-installation or org/fleet key) that an auditor verifies offline — no vendor in the trust path.
+- The audit log is hash-chained and `cosai audit verify`-checkable.
+- Coverage is honest: 9 categories zero-config, T4/T9/T12 via deployed middleware (partial), and the engine matrix is published rather than marketed.
 
-The strategic point: CrowdStrike's roadmap is a *sales narrative*. Closing workstreams 1/4/5/7/8 as OSS, signature-anchored controls converts that narrative into a verifiable feature list no closed platform can match on trust model.
+This is conformance you can verify, not a dashboard you have to believe.
 
 ---
 
@@ -120,9 +109,9 @@ The strategic point: CrowdStrike's roadmap is a *sales narrative*. Closing works
 | MCPSafetyScanner | ⚠️ LLM-based | ⚠️ LLM-based | ⚠️ partial | ❌ | ❌ | ❌ | ❌ | ❌ |
 | MCP-Bastion | ❌ enforcement | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | MCPProxy-go | ❌ monitoring | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| CoSAI / OWASP / MSSS | ❌ docs | ❌ | ✅ defines | ❌ | ❌ | ❌ | ❌ | ❌ |
+| CoSAI / OWASP | ❌ docs | ❌ | ✅ defines | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **cosai-mcp v0.1** | **✅** | **✅** | **✅** | **✅** | ❌ | ❌ | ❌ | ❌ |
-| **cosai-mcp v0.2+** | **✅** | **✅** | **✅** | **✅** | **✅ Track A** | **✅ Track B** | **✅ Track D** | **✅ Track E** |
+| **cosai-mcp v0.2+** | **✅** | **✅** | **✅** | **✅** | **✅ Track A** | **🧪 Track B (experimental)** | **🧪 Track D (experimental)** | **✅ Track E** |
 
 ---
 
@@ -138,7 +127,7 @@ Every probe result streams to your SIEM as a native OCSF Detection Finding (clas
 Drop `uses: cosai-mcp/scan-action@<SHA>` into CI. Exit code 1 = findings above threshold, exit code 2 = scanner error (treated as failure, never silent). The gate is fail-closed by design. Tool inventory snapshots catch silent schema changes between deploys before they reach production.
 
 **For compliance / CISO:**
-A signed conformance scorecard (Ed25519, machine-verifiable offline) is produced after every scan. The scorecard provides per-category grades mapped to MSSS conformance levels and CSA AI Controls Matrix evidence requirements. Auditors can verify signatures without trusting the reporting party.
+A signed conformance scorecard (Ed25519, machine-verifiable offline) is produced after every scan. The scorecard provides per-category CoSAI conformance grades mapped to the NIST AI RMF profile. Auditors can verify signatures without trusting the reporting party.
 
 **For MCP server authors:**
 The pytest plugin (`--cosai-target`, `--cosai-severity`) runs conformance checks as part of the normal test suite. No separate tool, no separate CI job.
@@ -161,7 +150,7 @@ Existing tools have only one engine class (static or proxy). The three-engine sp
 
 ## Platform Capabilities (v0.2+)
 
-Beyond the conformance scanner, cosai-mcp v0.2+ ships four operational capabilities that close the gap between "we found a finding" and "the incident is contained and auditable."
+Beyond the conformance scanner, cosai-mcp v0.2+ ships operational capabilities that close the gap between "we found a finding" and "the incident is contained and auditable." Track A (inventory/drift) and Track E (signed scorecard) are part of the default surface. **Track B (SIEM/OCSF telemetry) and Track D (IR containment) are EXPERIMENTAL**: they are gated behind the `--experimental` CLI flag, are not part of the default scan surface, and may change or be removed.
 
 See [PLATFORM_GUIDE.md](PLATFORM_GUIDE.md) for the full operational pipeline with CLI examples and a GitHub Actions reference.
 
@@ -174,30 +163,36 @@ cosai inventory capture http://localhost:8000 -o baseline.json
 cosai inventory diff baseline.json current.json --fail-on-drift  # exits 1 on drift
 ```
 
-### Track B — OCSF Telemetry to SIEM/SOAR
+### Track B — OCSF Telemetry to SIEM/SOAR · 🧪 EXPERIMENTAL
+
+> **Experimental.** Requires the `--experimental` CLI flag. Not part of the
+> default scan surface; the interface may change or be removed.
 
 After every scan, each probe result is serialised as an [OCSF Detection Finding](https://schema.ocsf.io/2.0.0/classes/detection_finding) (class_uid 2004) and POSTed to a configurable SIEM webhook. An in-process anomaly detector fires alerts on finding-rate spikes and critical bursts. Every commercial SIEM (Splunk, Elastic, Panther, Sentinel) natively ingests OCSF — no adapter required.
 
 ```bash
-cosai scan http://localhost:8000 \
+cosai scan http://localhost:8000 --experimental \
   --emit-to https://siem.example.com/webhook/cosai \
   --emit-auth-header "Bearer $SIEM_TOKEN" \
   --anomaly-threshold 5
 ```
 
-### Track D — Automated IR Containment
+### Track D — Automated IR Containment · 🧪 EXPERIMENTAL
+
+> **Experimental.** Requires the `--experimental` CLI flag. Not part of the
+> default scan surface; the interface may change or be removed.
 
 When anomaly thresholds are exceeded, the scanner emits an [OCSF Security Incident](https://schema.ocsf.io/2.0.0/classes/security_incident) (class_uid 2001) to trigger SOAR playbooks, writes a signed quarantine report, and generates firewall block commands for operator review. Block commands are never auto-executed — SOAR automation owns that step.
 
 ```bash
-cosai scan http://localhost:8000 \
+cosai scan http://localhost:8000 --experimental \
   --contain-on-anomaly --anomaly-threshold 3 \
   --ir-report ./incident.json
 ```
 
 ### Track E — Signed Conformance Scorecard
 
-Produces a per-category conformance grade for all 12 CoSAI categories, signed with the per-installation Ed25519 key. Auditors can verify the signature offline without trusting the reporting party. Maps directly to MSSS conformance levels and CSA AI Controls Matrix evidence requirements.
+Produces a per-category conformance grade for all 12 CoSAI categories, signed with the per-installation (or org/fleet) Ed25519 key. Auditors can verify the signature offline without trusting the reporting party. Conformance is expressed against CoSAI T1–T12 and the NIST AI RMF profile.
 
 ```bash
 cosai scan http://localhost:8000 --scorecard scorecard.json
@@ -294,7 +289,6 @@ jobs:
 
 ## Sources
 
-- CrowdStrike — *AI Agent Security: Architecture, Attack Surface, and Defense — A Practical 90-Day Roadmap for Securing Agentic AI* (vendor whitepaper; analysed for the roadmap mapping above)
 - [CoSAI/OASIS MCP Security Whitepaper](https://www.oasis-open.org/2026/01/27/coalition-for-secure-ai-releases-extensive-taxonomy-for-model-context-protocol-security/) (Jan 2026)
 - [CoSAI ws4 GitHub — model-context-protocol-security.md](https://github.com/cosai-oasis/ws4-secure-design-agentic-systems/blob/main/model-context-protocol-security.md)
 - [CoSAI Practical MCP Security Guide](https://www.coalitionforsecureai.org/securing-the-ai-agent-revolution-a-practical-guide-to-mcp-security/)
@@ -305,10 +299,7 @@ jobs:
 - [Adversa AI — Top 25 MCP Vulnerabilities](https://adversa.ai/mcp-security-top-25-mcp-vulnerabilities/)
 - [OWASP MCP Top 10](https://owasp.org/www-project-mcp-top-10/)
 - [OWASP Agentic Security Initiative (ASI) Top 10](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
-- [MITRE ATLAS](https://atlas.mitre.org)
-- [CSA AI Controls Matrix](https://cloudsecurityalliance.org/research/working-groups/artificial-intelligence)
-- [CSA Agentic AI NIST RMF Profile v1](https://labs.cloudsecurityalliance.org/agentic/agentic-nist-ai-rmf-profile-v1/)
-- [MCP Server Security Standard](https://github.com/mcp-security-standard/mcp-server-security-standard)
+- [NIST AI RMF — Agentic AI Profile v1](https://labs.cloudsecurityalliance.org/agentic/agentic-nist-ai-rmf-profile-v1/)
 - [AgentRFC conformance paper](https://arxiv.org/abs/2603.23801)
 - [MCP-DPT defense placement taxonomy](https://arxiv.org/abs/2604.07551)
 - [MCPProxy-go](https://github.com/smart-mcp-proxy/mcpproxy-go)

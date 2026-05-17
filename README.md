@@ -55,6 +55,26 @@ cosai scan http://localhost:8000
 
 T4, T9, T12 require the cosai-mcp middleware deployed in the target server — black-box probing cannot detect prompt injection, LLM trust violations, or audit log tampering from outside the call path. See [docs/THREAT_CATALOG.md](docs/THREAT_CATALOG.md) for the full rationale.
 
+## Front door — detect tool drift in CI
+
+The fastest way to get value: capture a signed inventory of a server's tool
+surface, then gate CI on drift. A new or mutated tool definition is the
+earliest signal of a supply-chain (T11) or tool-poisoning (T4) change.
+
+```bash
+# Once: capture the trusted baseline (signed artifact)
+cosai inventory capture http://localhost:8000 -o baseline.json
+
+# In CI: fail the build if the live tool surface drifted from the baseline
+cosai inventory capture http://localhost:8000 -o current.json
+cosai inventory diff baseline.json current.json --fail-on-drift
+```
+
+`cosai inventory diff` exits non-zero on drift (with `--fail-on-drift`),
+verifies the Ed25519 signatures on signed artifacts, and is the single
+command most teams should wire into CI first. Then add a full `cosai scan`
+for the conformance scorecard.
+
 ## Quick start
 
 ```bash
@@ -73,12 +93,15 @@ cosai scorecard verify scorecard.json
 cosai scorecard show scorecard.json --verify
 
 # Stream findings to SIEM as OCSF Detection Finding events
-cosai scan http://localhost:8000 \
+# (Track B — EXPERIMENTAL, requires --experimental; not part of the
+#  default scan surface and may change or be removed)
+cosai scan http://localhost:8000 --experimental \
   --emit-to https://siem.example.com/webhook/cosai \
   --emit-auth-header "Bearer $SIEM_TOKEN"
 
 # Auto-quarantine on anomaly + IR containment
-cosai scan http://localhost:8000 \
+# (Track D — EXPERIMENTAL, requires --experimental)
+cosai scan http://localhost:8000 --experimental \
   --contain-on-anomaly --anomaly-threshold 3 \
   --ir-report ./incident.json \
   --emit-to https://siem.example.com/webhook
@@ -113,7 +136,7 @@ pytest --cosai-target=http://localhost:8000 --cosai-severity=critical
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Three-engine model, transport, probe isolation, report pipeline |
 | [docs/SECURITY.md](docs/SECURITY.md) | Scanner security model; controls against malicious targets |
 | [docs/THREAT_CATALOG.md](docs/THREAT_CATALOG.md) | T1–T12 reference; attack patterns; remediation |
-| [docs/THREAT_MAPPING.md](docs/THREAT_MAPPING.md) | ISO 27001 / NIST AI RMF / OWASP MCP Top 10 / OWASP ASI Top 10 / MITRE ATLAS / SOC 2 |
+| [docs/THREAT_MAPPING.md](docs/THREAT_MAPPING.md) | CoSAI T1–T12 / NIST AI RMF / OWASP MCP Top 10 / CWE |
 | [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Threat definition JSON schema; adding new probes |
 | [docs/CATALOG_SIGNING_FAQ.md](docs/CATALOG_SIGNING_FAQ.md) | Threat definition signing & trust model; key rotation; enterprise overrides |
 | [docs/architecture-decisions.md](docs/architecture-decisions.md) | Full architecture panel findings |
@@ -127,22 +150,12 @@ pytest --cosai-target=http://localhost:8000 --cosai-severity=critical
 | Cisco MCP Scanner / Snyk / Enkrypt | Static analysis only — tests source code, not the running server |
 | mcp-authx | T1 only |
 | OWASP MCP Top 10 | Document; no runnable code |
-| CrowdStrike Falcon AI Detection & Response | Closed commercial agent-side SOC; the "90-day roadmap" is sold, not shipped — demo-by-request, vendor-trust-anchored |
 
 cosai-mcp is the only tool that combines runtime black-box probing + stateful multi-turn conformance testing + a CI/CD gate spanning the CoSAI taxonomy: 9 categories scanned zero-config, plus T4/T9/T12 covered when the middleware is deployed in the target. Static analyzers and runtime proxies are complements — they test what you wrote and monitor production; cosai-mcp gates what ships.
 
-### vs. commercial agentic-AI platforms (CrowdStrike, et al.)
+### What this is
 
-CrowdStrike's *"AI Agent Security: A Practical 90-Day Roadmap for Securing Agentic AI"* is an accurate description of the MCP attack surface — and a checklist whose implementation it sells as a closed Falcon module. **cosai-mcp + [mcp-armor](https://github.com/cosai-oasis/mcp-armor) are the OSS, signature-anchored implementation of that same checklist:** the scanner *proves* conformance in CI, the middleware *enforces* it in the call path, and every artifact (signed catalog, hash-chained audit, signed report) is verifiable without trusting a vendor.
-
-Where this stack already exceeds the commercial framing today:
-
-- **Signed supply chain is shipped, not aspirational.** Their roadmap *recommends* signed tool manifests and version pinning; cosai-mcp ships Ed25519-signed threat catalogs, DPoP (RFC 9449) identity binding, and JTI replay defense as the default.
-- **In-call-path, not a sidecar SOC.** T4/T9/T12 are detected from inside the server (mcp-armor), not inferred by an external agent that has to be trusted and bought.
-- **Tamper-evident by construction.** Hash-chained audit log + per-installation signed reports — conformance you can verify, not a dashboard you have to believe.
-- **Honest mechanism classes.** Three engines, each the right tool for its category — versus a single commercial layer that markets full coverage it cannot structurally deliver.
-
-Roadmap (closing the remaining checklist workstreams as OSS — see [docs/VALUE_PROP.md](docs/VALUE_PROP.md#crowdstrike-90-day-roadmap-mapping)): pre-deploy tool inventory + governance gate (WS1/WS5), SIEM/SOAR emitter + anomaly thresholds (WS4), non-bypassable human-in-the-loop (WS7), agent incident-response containment (WS8), and a signed **MCP Security Conformance Level** scorecard tying scanner proof ↔ runtime enforcement ↔ audit chain into one verifiable artifact.
+A **runnable reference implementation of the CoSAI/OASIS MCP Security taxonomy** plus a **signed conformance artifact**: point the scanner at any MCP server, get a SARIF report and an Ed25519-signed scorecard that proves — verifiably, without trusting a vendor — which CoSAI categories the server passes. The threat catalog is signed, the audit log is hash-chained, and reports carry a per-installation (or org/fleet) signing key fingerprint. Conformance you can verify, not a dashboard you have to believe.
 
 ## FAQ
 
