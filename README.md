@@ -4,9 +4,9 @@
 [![CI](https://github.com/ragsvasan/cosai-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ragsvasan/cosai-mcp/actions)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-Open-source MCP security framework covering all 12 CoSAI threat categories (T1–T12).
+Open-source MCP security framework for the 12 CoSAI threat categories (T1–T12): **9 categories with zero-config black-box/stateful coverage; 3 (T4, T9, T12) require the cosai-mcp middleware deployed in the target.**
 
-**Status:** Alpha — 917 tests passing, all T1–T12 categories implemented, Apache 2.0.
+**Status:** Alpha — 1097 tests passing, Apache 2.0. Zero-config scan covers 9 categories (T1–T3, T5–T8, T10–T11). T4/T9/T12 detection needs the middleware in the target's call path. Middleware coverage is partial: the `auth`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, and `audit` modules are implemented; `authz` (T2), `validation` (T3), `session` (T7), and `supply_chain` (T11) are not yet implemented (they raise `NotImplementedError`).
 
 ```bash
 # Try without installing
@@ -23,8 +23,8 @@ cosai scan http://localhost:8000
 
 `cosai-mcp` is the runnable reference implementation of the [CoSAI/OASIS January 2026 MCP Security whitepaper](https://github.com/cosai-oasis/ws4-secure-design-agentic-systems/blob/main/model-context-protocol-security.md). It ships three things:
 
-- **Exhaustive test suite** — black-box probes + stateful conformance harness covering T1–T12; point at any MCP server, get a SARIF report
-- **Composable Python middleware** — drop `CoSAIStack` into FastAPI/FastMCP for runtime enforcement
+- **Exhaustive test suite** — black-box probes + stateful conformance harness with zero-config coverage of 9 categories (T1–T3, T5–T8, T10–T11); point at any MCP server, get a SARIF report
+- **Composable Python middleware** — drop `CoSAIStack` into FastAPI/FastMCP for runtime enforcement (8 of 12 modules implemented; `authz`, `validation`, `session`, `supply_chain` are not-yet-implemented stubs)
 - **JSON-extensible threat catalog** — add new threats by dropping a signed JSON file; no code changes
 
 ## Key capabilities
@@ -129,7 +129,7 @@ pytest --cosai-target=http://localhost:8000 --cosai-severity=critical
 | OWASP MCP Top 10 | Document; no runnable code |
 | CrowdStrike Falcon AI Detection & Response | Closed commercial agent-side SOC; the "90-day roadmap" is sold, not shipped — demo-by-request, vendor-trust-anchored |
 
-cosai-mcp is the only tool that combines runtime black-box probing + stateful multi-turn conformance testing + all 12 CoSAI categories + CI/CD gate. Static analyzers and runtime proxies are complements — they test what you wrote and monitor production; cosai-mcp gates what ships.
+cosai-mcp is the only tool that combines runtime black-box probing + stateful multi-turn conformance testing + a CI/CD gate spanning the CoSAI taxonomy: 9 categories scanned zero-config, plus T4/T9/T12 covered when the middleware is deployed in the target. Static analyzers and runtime proxies are complements — they test what you wrote and monitor production; cosai-mcp gates what ships.
 
 ### vs. commercial agentic-AI platforms (CrowdStrike, et al.)
 

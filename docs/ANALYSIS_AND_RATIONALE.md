@@ -66,7 +66,7 @@ CoSAI whitepaper, OWASP MCP Top 10, OWASP ASI Top 10, MITRE ATLAS, CSA AI Contro
 
 1. **Runtime black-box JSON-RPC probing** — no tool sends crafted protocol messages to a live server to discover vulnerabilities through actual protocol interaction.
 2. **Stateful multi-turn conformance** — MCP attacks like confused deputy, privilege escalation chains, and session token binding failures span multiple calls. One-shot probes can't catch them.
-3. **All 12 CoSAI categories in one CI gate** — every tool covers 1–3 categories. No single pass/fail verdict existed.
+3. **The CoSAI taxonomy in one CI gate** — every other tool covers 1–3 categories. cosai-mcp scans 9 categories zero-config and covers T4/T9/T12 when its middleware is deployed in the target; no single pass/fail verdict spanning the taxonomy existed before.
 
 ---
 
@@ -78,10 +78,10 @@ A runtime conformance scanner that:
 
 - **Points at a running MCP server** via HTTP (Streamable HTTP primary, stdio, LegacySSE fallback)
 - **Completes the full MCP session lifecycle** before probing: `initialize` → `initialized` → `tools/list` → iterate tools
-- **Runs three scan engines** against all 12 CoSAI categories:
+- **Runs three scan engines** across the CoSAI taxonomy (9 categories zero-config; T4/T9/T12 require the middleware in the target call path):
   - *Black-box prober*: one-shot JSON-RPC probes (T1, T3, T5, T8, T10, partial T2/T6/T11)
   - *Stateful conformance harness*: multi-turn scripted scenarios (T2, T6, T7)
-  - *Middleware instrumentation*: detection-from-inside the call path (T4, T9, T12)
+  - *Middleware instrumentation*: detection-from-inside the call path (T4, T9, T12). Implemented modules: `auth`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, `audit`. Not yet implemented (raise `NotImplementedError`): `authz` (T2), `validation` (T3), `session` (T7), `supply_chain` (T11).
 - **Outputs SARIF 2.1.0** for GitHub's native security findings tab
 - **Exits with a deterministic code** (0 = clean, 1 = findings above threshold, 2 = scanner error, 3 = unreachable) — CI-gate-safe
 
@@ -140,7 +140,7 @@ Firewall commands are intentionally never auto-executed. Automatic network chang
 
 ### 3.5 Track E — Signed Conformance Scorecard
 
-**What it is:** After every scan, produces a per-category conformance grade for all 12 CoSAI categories, signs the scorecard with the per-installation Ed25519 key, and writes it as a machine-verifiable JSON artifact. Any post-hoc modification invalidates the signature.
+**What it is:** After every scan, produces a per-category conformance grade across all 12 CoSAI categories (categories with no zero-config coverage — e.g. T4/T9/T12 without the middleware deployed — are graded accordingly rather than reported as passing), signs the scorecard with the per-installation Ed25519 key, and writes it as a machine-verifiable JSON artifact. Any post-hoc modification invalidates the signature.
 
 **Why we built it:**
 
@@ -273,7 +273,7 @@ Both inventory snapshots (Track A) and scorecards (Track E) use the same Ed25519
 
 ### Baseline (pre-tracks)
 
-The scanner core covering all 12 CoSAI categories with three-engine architecture, SARIF output, adversarial mode, adaptive probe synthesis, server profiles, HTML/CSV reports, and 885 tests.
+The scanner core spanning the CoSAI taxonomy via the three-engine architecture (9 categories zero-config; T4/T9/T12 via deployed middleware) with SARIF output, adversarial mode, adaptive probe synthesis, server profiles, HTML/CSV reports, and the full test suite.
 
 ### Track A — cosai inventory (branch: track-a-inventory)
 
