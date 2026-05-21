@@ -150,7 +150,7 @@ class SarifBuilder:
 
             self._rules[rule_id] = rule_dict
 
-        if result.passed:
+        if result.passed or result.inconclusive_reason:
             return
 
         # Build message text from assertion failures. response_body / assertion

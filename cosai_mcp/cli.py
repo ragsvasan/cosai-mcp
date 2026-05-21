@@ -1243,9 +1243,9 @@ def _print_coverage_matrix() -> None:
 
 def _print_scan_summary(result: ScanResult, fail_on: str = "critical") -> None:
     total_probes = len(result.probe_results)
-    failed_probes = sum(1 for r in result.probe_results if not r.passed)
+    failed_probes = sum(1 for r in result.probe_results if not r.passed and not r.inconclusive_reason)
     total_scenarios = len(result.scenario_results)
-    failed_scenarios = sum(1 for r in result.scenario_results if not r.passed)
+    failed_scenarios = sum(1 for r in result.scenario_results if not r.passed and not r.inconclusive_reason)
 
     click.echo(f"\nTarget: {result.target_url}")
     click.echo(f"Timestamp: {result.scan_timestamp}")

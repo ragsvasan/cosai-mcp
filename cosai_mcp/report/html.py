@@ -525,8 +525,12 @@ class HtmlReportBuilder:
                 )
 
         for sc in self._scenarios:
-            status = "PASS" if sc.passed else "FINDING"
-            st_cls = "st-pass" if sc.passed else "st-finding"
+            if sc.passed:
+                status, st_cls = "PASS", "st-pass"
+            elif sc.inconclusive_reason:
+                status, st_cls = "INCONCLUSIVE", "st-inconclusive"
+            else:
+                status, st_cls = "FINDING", "st-finding"
             cat_name = _CATEGORY_NAMES.get(sc.category, sc.category)
             failed_steps = [s for s in sc.steps if not s.passed]
             assertion_summary = ""
