@@ -28,6 +28,20 @@ Drop `CoSAIStack` into any FastAPI or FastMCP server and get all 12 controls enf
 **3. A JSON-extensible threat catalog**
 New vulnerability discovered? Add a JSON file. Existing threat updated? Edit a JSON file. No code changes, no releases required. The catalog is cryptographically signed — new definitions are trusted only when signed by the project keypair.
 
+## Why No Existing Tool Fills This Gap
+
+The MCP security tooling landscape falls into two categories: static scanners (Cisco, Snyk, Enkrypt) that read what you wrote before deployment, and runtime proxies (MCP-Bastion, MCPProxy-go) that monitor live production traffic. Neither answers the question in between: *what does your running server actually accept?*
+
+Three capabilities exist in no single tool today:
+
+- **Runtime black-box JSON-RPC probing.** No existing scanner sends crafted protocol-level requests to a live server. Batch request amplification, method enumeration, authentication bypass, error information disclosure — none are detectable from static analysis or traffic interception.
+- **Stateful multi-turn conformance.** Confused deputy attacks, session token drift, and privilege escalation chains only surface across sequential requests. One-shot probes miss them structurally.
+- **Full CoSAI T1–T12 in a single CI gate.** Every existing tool covers 1–3 threat categories. No tool provides a pass/fail verdict against the complete taxonomy with a standardized, fail-closed exit code contract.
+
+The positioning is intentional: run static scanners in your IDE and pre-commit hooks; run cosai-mcp in CI against the server you actually shipped. They test different things. → Full competitive landscape: [VALUE_PROP.md](VALUE_PROP.md)
+
+---
+
 ## Design Principles
 
 **Security-first, not security-bolted-on.** The harness itself is a high-value target. We apply the same zero-trust model to our own code that we apply to the MCP servers we test: no code execution in catalog files, OS-level probe isolation, network allowlisting, immutable result objects, tamper-evident reports.
@@ -37,6 +51,20 @@ New vulnerability discovered? Add a JSON file. Existing threat updated? Edit a J
 **Fail closed.** A scanner that can't connect to its target reports `scan-incomplete`, not `clean`. An internal scanner error exits with code 2, which the CI gate treats as failure. There is no ambiguous success state.
 
 **Honest coverage claims.** Black-box probing cannot detect T4 (tool poisoning), T9 (LLM trust boundary failures), or T12 (invisible activity). We say so explicitly. The coverage matrix in every report shows which engine covered which category and which were not reachable from outside.
+
+## Why the Scanner Itself Can Be Trusted
+
+The scanner is a high-value target: it runs in CI with broad permissions, handles attacker-controlled content from the servers it probes, and its output feeds directly into security decision systems. A malicious MCP server operator knows this. The harness is designed around five concrete attack goals — result inversion, SSRF pivoting, code execution in CI, SARIF poisoning, catalog tampering — and addresses each structurally:
+
+- **Probe isolation.** Each probe runs in a separate `multiprocessing.Process`. OS process boundaries eliminate shared Python state. A crafted response from a malicious server cannot contaminate a subsequent probe's execution context. Timeouts are enforced at OS level (`SIGKILL`), not via Python threading — a GIL-holding operation in a probe cannot stall the harness.
+- **Network allowlist enforced at socket connect time.** The target hostname is resolved to an IP once at scan start. Any connect to a different IP is rejected at the transport layer — not in validation logic — defeating DNS rebinding. Redirects are disabled unconditionally. RFC1918, link-local, loopback, cloud metadata endpoints (`169.254.169.254`), and IPv6 ULA are blocked by default regardless of what a server response says.
+- **SARIF structural isolation.** Attacker-controlled bytes appear in exactly one output field: `result.message.text`, as plain text, length-capped, control-characters stripped. Fields that GitHub interprets structurally — `ruleId`, `suppressions`, `partialFingerprints` — are generated from catalog metadata only. They are never derived from server response content.
+- **Catalog integrity.** The Ed25519 public key is a bytes literal hardcoded in `cosai_mcp/keys.py` — not loaded from disk, not configurable at runtime. Unsigned official catalog files are rejected outright (not warned about). Template substitution operates on the parsed Python dict, not the serialized JSON string — JSON structural injection through template expansion is impossible.
+- **Report signing and credential scrubbing.** Each report is signed with a per-installation key stored in the OS keychain; any tampering breaks verification. CI environment credentials (`*_TOKEN`, `*_KEY`, cloud provider vars) are stripped from the environment before any subprocess launch.
+
+Full threat model with attack scenarios and control rationale: [SECURITY.md](SECURITY.md)
+
+---
 
 ## Why Open Source
 

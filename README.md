@@ -128,10 +128,12 @@ pytest --cosai-target=http://localhost:8000 --cosai-severity=critical
 
 ## Documentation
 
+New to cosai-mcp? Start with [docs/VISION.md](docs/VISION.md) — it covers what this is, why no existing tool fills the gap, why the scanner itself can be trusted, and the primary use cases.
+
 | Document | Audience |
 |----------|----------|
+| [docs/VISION.md](docs/VISION.md) | **Start here** — what it is, the competitive gap, security model, use cases |
 | [docs/PLATFORM_GUIDE.md](docs/PLATFORM_GUIDE.md) | Full operational pipeline: inventory → scan → SIEM → IR → scorecard |
-| [docs/VISION.md](docs/VISION.md) | Why this exists; use cases |
 | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | Installation, CLI, pytest plugin, GitHub Action |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Three-engine model, transport, probe isolation, report pipeline |
 | [docs/SECURITY.md](docs/SECURITY.md) | Scanner security model; controls against malicious targets |
