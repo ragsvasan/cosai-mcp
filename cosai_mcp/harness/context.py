@@ -37,6 +37,9 @@ _SCHEMA_MISMATCH_KEYWORDS: tuple[str, ...] = (
     "not a valid",
     "type error",
     "validation error",
+    "validation failed",   # e.g. VitalSync: "Validation failed at clientModel: ..."
+    "invalid input",       # e.g. VitalSync: "Invalid input: expected string, received undefined"
+    "unrecognized key",    # e.g. VitalSync: "Unrecognized key: \"tick\""
     "schema",
     "unknown tool",
     "tool not found",
@@ -158,9 +161,11 @@ class ProbeContext:
                 error=f"Template substitution failed: {exc}",
             )
 
+        probe_override_headers = dict(probe.probe_headers) if probe.probe_headers else None
+
         start = time.monotonic()
         try:
-            response = await self._dispatch(probe.method, resolved_payload)
+            response = await self._dispatch(probe.method, resolved_payload, override_headers=probe_override_headers)
         except Exception as exc:
             duration = time.monotonic() - start
             return make_probe_result(
@@ -234,7 +239,10 @@ class ProbeContext:
         )
 
     async def _dispatch(
-        self, method: str, payload: dict[str, Any]
+        self,
+        method: str,
+        payload: dict[str, Any],
+        override_headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Route a probe's method to the appropriate session call."""
         if method == "tools/call":
@@ -242,6 +250,6 @@ class ProbeContext:
             arguments: dict[str, Any] = payload.get("arguments", {})
             if not isinstance(arguments, dict):
                 arguments = {}
-            return await self._session.tools_call(name, arguments)
+            return await self._session.tools_call(name, arguments, override_headers=override_headers)
         # Default: send via the public session API — never bypass the session layer
-        return await self._session.send_raw(method, payload)
+        return await self._session.send_raw(method, payload, override_headers=override_headers)

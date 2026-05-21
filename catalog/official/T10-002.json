@@ -23,7 +23,16 @@
         {
           "target": "response.error",
           "operator": "eq",
-          "value": false
+          "value": false,
+          "description": "The first tool call should succeed. If the server returns a rate-limit error on the very first call the rate-limit threshold is too aggressive."
+        }
+      ],
+      "corroboration": [
+        {
+          "target": "response.error_code",
+          "operator": "eq",
+          "value": -32029,
+          "description": "Only report as a finding if the error is specifically a rate-limit response (-32029). A generic tool argument error means the probe payload was invalid, not that rate limiting fired."
         }
       ]
     }

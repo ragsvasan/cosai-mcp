@@ -191,7 +191,12 @@ class MCPSession:
             transport_type=self._transport_type,
         )
 
-    async def tools_call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    async def tools_call(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        override_headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         """Invoke a tool on the connected MCP server.
 
         Raises
@@ -203,6 +208,7 @@ class MCPSession:
         return await self._transport.send(
             "tools/call",
             {"name": name, "arguments": arguments},
+            override_headers=override_headers,
         )
 
     async def tools_list(self) -> list[dict[str, Any]]:
@@ -210,7 +216,12 @@ class MCPSession:
         self._require_ready()
         return self._tool_manifest
 
-    async def send_raw(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def send_raw(
+        self,
+        method: str,
+        payload: dict[str, Any],
+        override_headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         """Send an arbitrary JSON-RPC request to the server.
 
         Used by ProbeContext for non-standard methods not covered by
@@ -224,7 +235,7 @@ class MCPSession:
             If called before a successful start().
         """
         self._require_ready()
-        return await self._transport.send(method, payload)
+        return await self._transport.send(method, payload, override_headers=override_headers)
 
     async def close(self) -> None:
         self._status = SessionStatus.CLOSED

@@ -422,7 +422,7 @@ class TestMCPSession:
 
         call_order: list[str] = []
 
-        async def side_effect_send(method: str, params: dict) -> dict:
+        async def side_effect_send(method: str, params: dict, **kwargs) -> dict:
             call_order.append(method)
             if method == "initialize":
                 return _make_init_success()
@@ -455,7 +455,7 @@ class TestMCPSession:
         config = _public_config()
         mock_transport = create_autospec(Transport, instance=True)
 
-        async def side_effect_send(method: str, params: dict) -> dict:
+        async def side_effect_send(method: str, params: dict, **kwargs) -> dict:
             if method == "initialize":
                 return _make_init_success(protocol_version="2024-11-05")
             if method == "tools/list":
@@ -480,7 +480,7 @@ class TestMCPSession:
         mock_transport = create_autospec(Transport, instance=True)
         send_call_methods: list[str] = []
 
-        async def side_effect_send(method: str, params: dict) -> dict:
+        async def side_effect_send(method: str, params: dict, **kwargs) -> dict:
             send_call_methods.append(method)
             if method == "initialize":
                 return _make_init_success()
@@ -512,7 +512,7 @@ class TestMCPSession:
         config = _public_config()
         mock_transport = create_autospec(Transport, instance=True)
 
-        async def side_effect_send(method: str, params: dict) -> dict:
+        async def side_effect_send(method: str, params: dict, **kwargs) -> dict:
             if method == "initialize":
                 return _make_error_response(code=-32600, message="Unsupported version")
             return {}
@@ -558,7 +558,7 @@ class TestMCPSession:
 
         call_order: list[str] = []
 
-        async def side_effect_send(method: str, params: dict) -> dict:
+        async def side_effect_send(method: str, params: dict, **kwargs) -> dict:
             call_order.append(method)
             if method == "initialize":
                 return _make_init_success()
@@ -586,7 +586,7 @@ class TestMCPSession:
         config = _public_config()
         mock_transport = create_autospec(Transport, instance=True)
 
-        async def side_effect_send(method: str, params: dict) -> dict:
+        async def side_effect_send(method: str, params: dict, **kwargs) -> dict:
             if method == "initialize":
                 return _make_init_success(protocol_version="2024-11-05")
             if method == "tools/list":
@@ -621,7 +621,7 @@ class TestMCPSession:
         config = _public_config()
         mock_transport = create_autospec(Transport, instance=True)
 
-        async def side_effect_send(method: str, params: dict) -> dict:
+        async def side_effect_send(method: str, params: dict, **kwargs) -> dict:
             if method == "initialize":
                 return _make_init_success()
             if method == "tools/list":
@@ -694,7 +694,7 @@ class TestRegressionFindings:
         async def capture_notification(notification: dict) -> None:
             notification_calls.append(notification)
 
-        async def side_effect_send(method: str, params: dict) -> dict:
+        async def side_effect_send(method: str, params: dict, **kwargs) -> dict:
             if method == "initialize":
                 return _make_init_success()
             if method == "tools/list":
@@ -730,7 +730,7 @@ class TestRegressionFindings:
         config = _public_config()
         mock_transport = create_autospec(Transport, instance=True)
 
-        async def side_effect_send(method: str, params: dict) -> dict:
+        async def side_effect_send(method: str, params: dict, **kwargs) -> dict:
             if method == "initialize":
                 return _make_init_success()
             if method == "tools/list":
@@ -756,7 +756,7 @@ class TestRegressionFindings:
         config = _public_config()
         mock_transport = create_autospec(Transport, instance=True)
 
-        async def side_effect_send(method: str, params: dict) -> dict:
+        async def side_effect_send(method: str, params: dict, **kwargs) -> dict:
             if method == "initialize":
                 return _make_init_success()
             if method == "tools/list":
@@ -783,7 +783,7 @@ class TestRegressionFindings:
         config = _public_config()
         mock_transport = create_autospec(Transport, instance=True)
 
-        async def side_effect_send(method: str, params: dict) -> dict:
+        async def side_effect_send(method: str, params: dict, **kwargs) -> dict:
             if method == "initialize":
                 return _make_init_success(protocol_version="2099-01-01")
             if method == "tools/list":

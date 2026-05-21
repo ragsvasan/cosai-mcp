@@ -173,16 +173,30 @@ class StreamableHTTPTransport(Transport):
     # Core send/recv/send_notification
     # ------------------------------------------------------------------
 
-    async def send(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        """POST a JSON-RPC request; return the parsed response."""
+    async def send(
+        self,
+        method: str,
+        params: dict[str, Any],
+        override_headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """POST a JSON-RPC request; return the parsed response.
+
+        ``override_headers`` are merged on top of the standard headers for this
+        single call only.  Used by probe execution to inject per-probe headers
+        (e.g. a crafted Authorization token) without affecting the initialize
+        handshake that precedes it.
+        """
         if self._client is None:
             raise RuntimeError("Transport not connected — call connect() first")
 
+        headers = self._build_headers()
+        if override_headers:
+            headers.update(override_headers)
         payload = self._make_rpc(method, params)
         response = await self._client.post(
             self._endpoint,
             content=json.dumps(payload).encode(),
-            headers=self._build_headers(),
+            headers=headers,
         )
 
         check_redirect(response.status_code)

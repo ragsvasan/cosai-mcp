@@ -163,7 +163,12 @@ class LegacySSETransport(Transport):
     # Core send/recv/send_notification
     # ------------------------------------------------------------------
 
-    async def send(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+    async def send(
+        self,
+        method: str,
+        params: dict[str, Any],
+        override_headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         """POST JSON-RPC to /message; wait for the matching response via the SSE Future."""
         if self._client is None:
             raise RuntimeError("Transport not connected — call connect() first")
@@ -171,6 +176,10 @@ class LegacySSETransport(Transport):
         payload = self._make_rpc(method, params)
         request_id = str(payload["id"])
         url = f"{self._base_url}/message"
+
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if override_headers:
+            headers.update(override_headers)
 
         # Register the future BEFORE posting so _sse_listener can never miss it
         loop = asyncio.get_event_loop()
@@ -181,7 +190,7 @@ class LegacySSETransport(Transport):
             post_response = await self._client.post(
                 url,
                 content=json.dumps(payload).encode(),
-                headers={"Content-Type": "application/json"},
+                headers=headers,
             )
             check_redirect(post_response.status_code)
 

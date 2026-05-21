@@ -242,14 +242,10 @@ def _probe_subprocess_entry(
                 auth_header=None,
             )
 
-        # Apply probe_headers: merge into extra_request_headers for this probe.
-        if probe.probe_headers:
-            merged = dict(effective_config.extra_request_headers or {})
-            merged.update(probe.probe_headers)
-            effective_config = dataclasses.replace(
-                effective_config,
-                extra_request_headers=merged,
-            )
+        # probe_headers are applied per-call in ProbeContext.execute_probe() via
+        # override_headers — NOT merged here.  Merging into extra_request_headers
+        # would apply them to the initialize handshake as well, which breaks probes
+        # like T07-002/T07-003 that override the Authorization header.
 
         # Finding 6: dispatch on probe.transport, not hardcoded HTTP
         transport_type = probe_dict.get("transport", "http")
@@ -458,14 +454,33 @@ class ProbeRunner:
             daemon=True,
         )
 
+        import queue as _stdlib_queue
+
         start = time.monotonic()
         process.start()
-        process.join(timeout=timeout)
+
+        # Read the result BEFORE joining the process.  The result dict can
+        # exceed the OS pipe buffer (64 KB on macOS / Linux), which causes the
+        # subprocess's background feeder thread to block on q.put() — the
+        # process never exits, and p.join(timeout) deadlocks until it fires.
+        # Reading first unblocks the feeder thread so the process can exit.
+        try:
+            raw = result_queue.get(timeout=timeout)
+            got_result = True
+        except _stdlib_queue.Empty:
+            raw = None
+            got_result = False
+
         elapsed = time.monotonic() - start
 
+        # Give the subprocess a short grace period to exit cleanly now that
+        # the pipe is drained.
+        process.join(timeout=2.0)
         if process.is_alive():
             process.kill()
             process.join()
+
+        if not got_result:
             return make_probe_result(
                 probe_id=probe.id,
                 threat_id=threat.id,
@@ -475,7 +490,7 @@ class ProbeRunner:
                 duration_seconds=elapsed,
             )
 
-        if result_queue.empty():
+        if raw is None:
             return make_probe_result(
                 probe_id=probe.id,
                 threat_id=threat.id,
@@ -484,8 +499,6 @@ class ProbeRunner:
                 error="Probe subprocess exited without producing a result",
                 duration_seconds=elapsed,
             )
-
-        raw = result_queue.get_nowait()
         try:
             validated = _validate_raw_result(raw)
         except ValueError as exc:
