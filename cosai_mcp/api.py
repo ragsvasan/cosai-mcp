@@ -7,6 +7,7 @@ import hashlib
 import os
 import re
 import socket
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -132,6 +133,34 @@ def _apply_env_scrub() -> None:
             continue  # cosai's own config — needed in-process (e.g. WP6 key)
         if any(p.match(key) for p in _SCRUB_PATTERNS):
             del os.environ[key]
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit backoff helper
+# ---------------------------------------------------------------------------
+
+_RETRY_AFTER_RE: re.Pattern[str] = re.compile(
+    r"retry_after['\"]?\s*:\s*(\d+(?:\.\d+)?)", re.IGNORECASE
+)
+
+
+def _extract_retry_after(results: list) -> float | None:
+    """Return retry_after seconds from the first -32029 result, or None.
+
+    result.error is HTML-escaped at ingestion (html.escape(quote=True)), so
+    single-quotes become &#x27;.  Unescape before regex matching — the -32029
+    digit check is safe on the escaped form since digits/minus are never escaped.
+    """
+    import html as _html_mod
+    for r in results:
+        err: str | None = getattr(r, "error", None)
+        if err and "-32029" in err:
+            m = _RETRY_AFTER_RE.search(_html_mod.unescape(err))
+            if m:
+                return float(m.group(1))
+        if getattr(r, "status_code", None) == 429:
+            return None  # HTTP 429 without retry_after — caller uses probe_delay
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -597,9 +626,13 @@ def _run_scan(
                 discovered_tool=active_discovered_tool,
             )
 
-            if config.probe_delay_seconds > 0:
-                import time as _time
-                _time.sleep(config.probe_delay_seconds)
+            # Honour retry_after from any -32029 rate-limit response so
+            # subsequent probes don't immediately hit the active rate limiter.
+            # Falls back to probe_delay_seconds when no rate-limit was seen.
+            retry_after = _extract_retry_after(raw_results)
+            delay = retry_after if retry_after is not None else config.probe_delay_seconds
+            if delay > 0:
+                time.sleep(delay)
 
             if is_adversarial_threat and canary is not None:
                 import html as _html_mod

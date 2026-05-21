@@ -270,3 +270,47 @@ class TestHtmlRegressions:
         b = _builder()
         report = b.build()
         assert "style-src 'self'" not in report
+
+
+class TestInconclusiveScenarioRendering:
+    """Scenarios with inconclusive_reason must render as INCONCLUSIVE, not FINDING."""
+
+    def test_regression_html_inconclusive_scenario_status(self):
+        """An inconclusive scenario must show st-inconclusive CSS class, not st-finding.
+
+        Before the fix, the renderer only checked sc.passed — any non-passing
+        scenario (including inconclusive) was rendered with st-finding / FINDING.
+        """
+        from cosai_mcp.report.html import HtmlScenarioSection, HtmlReportBuilder
+
+        sc = HtmlScenarioSection(
+            scenario_id="T2-SC-001",
+            scenario_name="Privilege escalation via direct tool call",
+            category="T2",
+            passed=False,
+            steps=[],
+            inconclusive_reason="Scenario requires tool(s) not present on this server: admin_delete",
+        )
+        b = HtmlReportBuilder(target_url="http://localhost:8000", scan_timestamp="2026-05-21T00:00:00Z")
+        b.add_scenario(sc)
+        report = b.build()
+        assert "st-inconclusive" in report, "inconclusive scenario must use st-inconclusive CSS class"
+        assert "INCONCLUSIVE" in report, "inconclusive scenario must display INCONCLUSIVE status"
+
+    def test_regression_html_failed_scenario_still_finding(self):
+        """A genuinely failed scenario (no inconclusive_reason) must still render as FINDING."""
+        from cosai_mcp.report.html import HtmlScenarioSection, HtmlReportBuilder
+
+        sc = HtmlScenarioSection(
+            scenario_id="T6-SC-001",
+            scenario_name="Tool shadowing — manifest drift",
+            category="T6",
+            passed=False,
+            steps=[],
+            inconclusive_reason=None,
+        )
+        b = HtmlReportBuilder(target_url="http://localhost:8000", scan_timestamp="2026-05-21T00:00:00Z")
+        b.add_scenario(sc)
+        report = b.build()
+        assert "st-finding" in report
+        assert "FINDING" in report

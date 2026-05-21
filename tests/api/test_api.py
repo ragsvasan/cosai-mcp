@@ -760,3 +760,67 @@ class TestT1AuthProbeNoAuthHeader:
                 f"T1 no_auth_config still has auth_header={cfg.auth_header!r}; "
                 "unauthenticated probe would silently use valid credentials"
             )
+
+
+# ---------------------------------------------------------------------------
+# _extract_retry_after — rate-limit backoff helper
+# ---------------------------------------------------------------------------
+
+class TestExtractRetryAfter:
+    """_extract_retry_after must parse retry_after from HTML-escaped -32029 errors."""
+
+    from cosai_mcp.api import _extract_retry_after
+    from cosai_mcp.harness.result import make_probe_result
+
+    def _rate_limit_result(self, retry_after: int | None = 60) -> object:
+        from cosai_mcp.harness.result import make_probe_result
+        # Simulate the exact error string produced by the subprocess runner
+        # when Mnemo returns -32029.  make_probe_result HTML-escapes this,
+        # turning single-quotes into &#x27; — the regex must survive that.
+        data = f"{{'retry_after': {retry_after}}}" if retry_after is not None else "{}"
+        raw = f"Subprocess error: Server rejected initialize: {{'code': -32029, 'message': 'Rate limit exceeded', 'data': {data}}}"
+        return make_probe_result(
+            probe_id="T10-004-p1",
+            threat_id="T10",
+            passed=False,
+            assertions=(),
+            error=raw,
+        )
+
+    def test_regression_extract_retry_after_html_escaped(self):
+        """HTML-escaped error (&#x27; for quotes) must still yield retry_after."""
+        from cosai_mcp.api import _extract_retry_after
+        result = self._rate_limit_result(retry_after=60)
+        assert "&#x27;" in result.error, "precondition: error must be HTML-escaped"
+        assert _extract_retry_after([result]) == 60.0
+
+    def test_regression_extract_retry_after_fractional(self):
+        """Fractional retry_after (e.g. 30.5) must be returned as float."""
+        from cosai_mcp.api import _extract_retry_after
+        from cosai_mcp.harness.result import make_probe_result
+        raw = "Subprocess error: Server rejected initialize: {'code': -32029, 'data': {'retry_after': 30.5}}"
+        result = make_probe_result(probe_id="T10", threat_id="T10", passed=False, assertions=(), error=raw)
+        assert _extract_retry_after([result]) == 30.5
+
+    def test_regression_extract_retry_after_no_retry_after_field(self):
+        """-32029 with no retry_after key must return None (fall back to probe_delay)."""
+        from cosai_mcp.api import _extract_retry_after
+        result = self._rate_limit_result(retry_after=None)
+        assert _extract_retry_after([result]) is None
+
+    def test_regression_extract_retry_after_unrelated_error(self):
+        """Non-rate-limit error must return None."""
+        from cosai_mcp.api import _extract_retry_after
+        from cosai_mcp.harness.result import make_probe_result
+        result = make_probe_result(
+            probe_id="T01", threat_id="T01", passed=False, assertions=(),
+            error="Connection refused",
+        )
+        assert _extract_retry_after([result]) is None
+
+    def test_regression_extract_retry_after_first_wins(self):
+        """First -32029 result with retry_after is returned; later results ignored."""
+        from cosai_mcp.api import _extract_retry_after
+        r1 = self._rate_limit_result(retry_after=45)
+        r2 = self._rate_limit_result(retry_after=90)
+        assert _extract_retry_after([r1, r2]) == 45.0

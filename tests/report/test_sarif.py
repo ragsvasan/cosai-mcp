@@ -541,3 +541,35 @@ class TestSarifFrameworkMetadata:
         # WP8: ATLAS mapping removed — must not survive serialisation.
         assert "atlas_techniques" not in rule["properties"]
         assert "AML.T0" not in sarif_json
+
+
+class TestInconclusiveOmitted:
+    """Inconclusive ProbeResults must not appear as SARIF findings."""
+
+    def test_regression_sarif_inconclusive_omitted(self):
+        """A probe marked inconclusive must be silently dropped from SARIF results.
+
+        Before the fix, the inconclusive guard was missing; the probe would fall
+        through to write 'Probe failed (no assertion details)' into SARIF.
+        """
+        result = make_probe_result(
+            probe_id="T02-005-p1",
+            threat_id="T02",
+            passed=False,
+            assertions=(),
+            error=None,
+            inconclusive_reason="probe_token='read' requires --read-token to be configured",
+        )
+        b = SarifBuilder(_context())
+        b.add_result(
+            result,
+            severity=Severity.HIGH,
+            rule_id="T02-005",
+            rule_name="Missing Access Control",
+            rule_description="Scope enforcement.",
+        )
+        doc = b.build()
+        findings = doc["runs"][0].get("results", [])
+        assert findings == [], (
+            f"Inconclusive probe must not appear in SARIF findings; got: {findings}"
+        )
