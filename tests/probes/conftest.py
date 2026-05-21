@@ -39,14 +39,22 @@ async def run_probe(
     threat: ThreatDefinition,
     mock_server: MockMCPServer,
     variables: dict[str, str] | None = None,
+    base_headers: dict[str, str] | None = None,
 ) -> ProbeResult:
     """Execute a probe against a running MockMCPServer and return the result."""
     target_url = f"http://127.0.0.1:{mock_server.port}"
+    # Mirror runner.py:245 — merge probe_headers over base_headers so that
+    # catalog-level headers (e.g. Authorization, Origin) reach the mock and
+    # probe headers always win over any caller-supplied base headers.
+    merged: dict[str, str] = dict(base_headers or {})
+    if probe.probe_headers:
+        merged.update(probe.probe_headers)
     config = ScanConfig(
         target_host="127.0.0.1",
         target_port=mock_server.port,
         allow_private_targets=True,
         probe_timeout_seconds=10.0,
+        extra_request_headers=merged or None,
     )
     transport = StreamableHTTPTransport(target_url, config)
     await transport.connect()

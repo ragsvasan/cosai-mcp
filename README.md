@@ -6,7 +6,7 @@
 
 Open-source MCP security framework for the 12 CoSAI threat categories (T1–T12): **9 categories with zero-config black-box/stateful coverage; 3 (T4, T9, T12) require the cosai-mcp middleware deployed in the target.**
 
-**Status:** Alpha — 1097 tests passing, Apache 2.0. Zero-config scan covers 9 categories (T1–T3, T5–T8, T10–T11). T4/T9/T12 detection needs the middleware in the target's call path. Middleware coverage is partial: the `auth`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, and `audit` modules are implemented; `authz` (T2), `validation` (T3), `session` (T7), and `supply_chain` (T11) are not yet implemented (they raise `NotImplementedError`).
+**Status:** Alpha — 1182 tests passing, Apache 2.0. Zero-config scan covers 9 categories (T1–T3, T5–T8, T10–T11). T4/T9/T12 detection needs the middleware in the target's call path. Middleware coverage is partial: the `auth`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, and `audit` modules are implemented; `authz` (T2), `validation` (T3), `session` (T7), and `supply_chain` (T11) are not yet implemented (they raise `NotImplementedError`).
 
 ```bash
 # Try without installing

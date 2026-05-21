@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "id": "T07-003",
+  "category": "T7",
+  "severity": "high",
+  "cosai_ref": "T7",
+  "owasp_ref": "MCP-Top10-A07",
+  "cwe": ["CWE-863"],
+  "probes": [
+    {
+      "id": "T07-003-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "description": "Call a sensitive tool with a valid-scope Bearer token but without a confirmation=true argument. A secure server honors the OAuth scope and processes the request. A vulnerable server rejects the call because confirmation is absent, indicating the server treats confirmation as the authorization gate rather than checking OAuth scope first.",
+      "probe_headers": {
+        "Authorization": "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ0ZXN0LWFnZW50Iiwic2NvcGUiOiJ0b29sczp3cml0ZSIsImV4cCI6OTk5OTk5OTk5OX0."
+      },
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "data": "cosai-probe"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": false,
+          "description": "Server must accept a tool call from a properly scoped token even when no confirmation flag is present. OAuth scope is the authorization gate; confirmation is a UX safeguard that may accompany it but must not replace it."
+        }
+      ]
+    }
+  ],
+  "remediation": "OAuth scope must be evaluated as the authoritative authorization signal for every tool call. MCP UI confirmation (confirmation=true) is an optional additional safeguard for user-facing flows and must not be the sole condition that gates access. A server that rejects a valid-scope call solely because confirmation is absent has inverted its authorization model. Per IETF draft-klrc-aiagent-auth-01: authorization decisions must be deterministic server policy, never delegated to UI state.",
+  "references": [
+    "https://cosai.org/T7",
+    "https://datatracker.ietf.org/doc/draft-klrc-aiagent-auth/",
+    "https://cwe.mitre.org/data/definitions/863.html"
+  ]
+}

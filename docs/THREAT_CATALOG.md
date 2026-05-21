@@ -14,7 +14,7 @@ Reference for all 12 CoSAI threat categories, their attack patterns, what cosai-
 | T4 | Data/Control Boundary | Middleware instrumentation | Done — requires middleware in target server |
 | T5 | Inadequate Data Protection | Black-box prober | Done — PII pattern detection, credential pattern detection in tool responses |
 | T6 | Integrity/Verification | Black-box prober + stateful harness | Done — BB: typosquat detection; Stateful: mid-session manifest diff (rug pull) |
-| T7 | Session Security Failures | Stateful harness + black-box prober | Done — Stateful: session fixation, token-in-URL, cross-session replay, revocation (T7-SC-002); BB: CORS wildcard detection (T07-001) |
+| T7 | Session Security Failures | Stateful harness + black-box prober | Done — Stateful: session fixation, token-in-URL, cross-session replay, revocation (T7-SC-002); BB: CORS wildcard (T07-001), MCP confirmation bypass (T07-002, critical), scope-before-confirmation (T07-003, high) |
 | T8 | Network Binding Failures | Black-box prober | Done — 0.0.0.0 binding, SSRF (RFC1918/link-local/loopback), shadow server detection |
 | T9 | Trust Boundary Failures | Middleware instrumentation | Done — requires middleware in target server |
 | T10 | Resource Management | Black-box prober | Done — rate limiting with probe_count (T10-004), response size limits, recursive depth, heartbeat |
@@ -207,6 +207,8 @@ Weak binding of MCP sessions to user identity. Session tokens that can be fixed 
 - **Cross-transport session replay:** session token issued over HTTPS reused over a downgraded connection
 - **Context-bleed:** shared SSE event queue allows session N's events to appear in session M
 - **Token revocation bypass:** server does not honour explicit token revocation; a revoked credential issued before a privilege change continues to grant access after the change takes effect
+- **MCP confirmation as authorization bypass:** server treats `confirmation=true` in tool arguments as sufficient authorization, skipping OAuth scope validation. An attacker who can influence tool arguments (e.g. via prompt injection) can invoke privileged tools without a valid OAuth scope. Per IETF draft-klrc-aiagent-auth-01: "The agent MUST NOT treat local UI confirmation alone as sufficient authorization."
+- **Inverted authorization model:** server requires `confirmation=true` even when the caller holds a valid OAuth scope, effectively delegating the authorization decision to the MCP UI layer rather than to the OAuth authorization server. This is both a usability failure and a security anti-pattern — it makes the server's access control dependent on client-side state.
 
 ### What cosai-mcp tests (stateful harness + black-box prober)
 - Client-supplied session ID accepted without server regeneration → FAIL
@@ -215,6 +217,8 @@ Weak binding of MCP sessions to user identity. Session tokens that can be fixed 
 - Concurrent sessions sharing any context → FAIL
 - **Revocation scenario (T7-SC-002):** initialize session → call `tools/list` (assert success) → signal revocation via DELETE `/session/{id}` or equivalent → call `tools/list` again using the same session token → must return 401/error (PASS) or continues succeeding (FAIL — revocation not honoured)
 - **Black-box (T07-001):** send `Origin: https://evil.example.com` with `tools/list` and `tools/call`; if server echoes `Access-Control-Allow-Origin: *`, any web page can make credentialed MCP requests on behalf of an authenticated user — CORS wildcard must not appear on MCP endpoints (G-02). Uses `probe_headers: {"Origin": "..."}` and `response.header.access-control-allow-origin` assertion target.
+- **Black-box (T07-002, critical):** call a sensitive tool with `confirmation=true` in arguments but with a Bearer token whose OAuth scope does not include the tool's required permission. A vulnerable server accepts the call; a secure server returns 403. Two probes: (p1) wrong-scope token + confirmation=true; (p2) no Authorization header + confirmation=true. Both must be rejected. References IETF draft-klrc-aiagent-auth-01.
+- **Black-box (T07-003, high):** call a sensitive tool with a valid-scope Bearer token but without a `confirmation=true` argument. A secure server honors the OAuth scope and processes the request; a vulnerable server rejects the call because confirmation is absent, indicating it has inverted its authorization model (confirmation is the gate, not scope).
 
 ### Remediation
 - Always generate session IDs server-side using a CSPRNG; reject client-supplied session IDs
@@ -223,6 +227,8 @@ Weak binding of MCP sessions to user identity. Session tokens that can be fixed 
 - Implement per-session SSE streams; never share a queue between sessions
 - Short-lived session tokens (15–60 minutes); refresh via RFC 8693 token exchange
 - Implement and test explicit token revocation; a POST to an OAuth revocation endpoint must immediately invalidate all active sessions backed by that token
+- **OAuth scope is the authorization gate.** Enforce it on every tool call, evaluated before (not instead of) any MCP UI confirmation check. `confirmation=true` in tool arguments is a UX safeguard that may accompany scope validation but must never replace it.
+- Never delegate authorization decisions to client-side state (`confirmation` flag, user-visible dialogs). Authorization must be deterministic server policy backed by the OAuth authorization server.
 
 ---
 

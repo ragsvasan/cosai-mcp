@@ -14,6 +14,7 @@ Usage::
 """
 from __future__ import annotations
 
+import base64
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -101,6 +102,19 @@ class MockMCPServer:
         Set of tool names that require the ``X-Privileged: true`` request
         header.  Calls without the header receive a JSON-RPC error response.
         Used to test access-control enforcement (T2).
+    scope_guarded_tools:
+        Mapping of tool name → required OAuth scope string.  When set, the
+        server decodes the Bearer token from the ``Authorization`` header and
+        checks that the token's ``scope`` claim contains the required scope.
+        Used to test T7-002 and T7-003 (CIBA / MCP confirmation vs OAuth scope).
+    confirmation_bypasses_scope:
+        If True, a ``confirmation=true`` argument in the tool call bypasses the
+        scope check entirely — simulating the vulnerable "confirmation as auth"
+        pattern that T07-002 detects.  Default False (secure).
+    confirmation_gates_access:
+        If True, the server requires ``confirmation=true`` in arguments even
+        when the OAuth scope is valid — simulating the inverted authorization
+        model that T07-003 detects.  Default False (secure).
     """
 
     def __init__(
@@ -111,6 +125,9 @@ class MockMCPServer:
         port: int = 0,
         tools_list_sequence: list[list[dict[str, Any]]] | None = None,
         privileged_tools: set[str] | None = None,
+        scope_guarded_tools: dict[str, str] | None = None,
+        confirmation_bypasses_scope: bool = False,
+        confirmation_gates_access: bool = False,
     ) -> None:
         self._tools = tools if tools is not None else list(_DEFAULT_TOOLS)
         self._tools_call_response = tools_call_response
@@ -124,6 +141,9 @@ class MockMCPServer:
         self._tools_list_sequence = tools_list_sequence
         self._tools_list_call_count: int = 0
         self._privileged_tools: set[str] = privileged_tools or set()
+        self._scope_guarded_tools: dict[str, str] = scope_guarded_tools or {}
+        self._confirmation_bypasses_scope = confirmation_bypasses_scope
+        self._confirmation_gates_access = confirmation_gates_access
         self._last_request_headers: dict[str, str] = {}
 
     @property
@@ -217,6 +237,38 @@ class MockMCPServer:
                         },
                     }
 
+            # Check OAuth scope-guarded tool access (T07-002 / T07-003)
+            if name in self._scope_guarded_tools:
+                required_scope = self._scope_guarded_tools[name]
+                request_headers = headers or {}
+                auth = request_headers.get("Authorization", "")
+                token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
+                args = params.get("arguments", {})
+                has_confirmation = args.get("confirmation") is True
+
+                if self._confirmation_gates_access and not has_confirmation:
+                    # Vulnerable: confirmation is the access gate (T07-003 detection)
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "error": {
+                            "code": -32001,
+                            "message": "Confirmation required to call this tool",
+                        },
+                    }
+
+                if self._confirmation_bypasses_scope and has_confirmation:
+                    pass  # Vulnerable: confirmation bypasses scope check (T07-002 detection)
+                elif not self._token_has_scope(token, required_scope):
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "error": {
+                            "code": -32001,
+                            "message": f"Insufficient scope: {required_scope!r} required",
+                        },
+                    }
+
             if self._tools_call_response is not None:
                 response = dict(self._tools_call_response)
                 response["id"] = req_id
@@ -240,6 +292,28 @@ class MockMCPServer:
             "id": req_id,
             "error": {"code": -32601, "message": f"Method not found: {method!r}"},
         }
+
+    def _token_has_scope(self, token: str, required: str) -> bool:
+        """Return True if the Bearer token's scope claim contains required.
+
+        Decodes the JWT payload without signature verification — safe for the
+        test harness because mock servers are not production code.  Returns
+        False on any parse failure (treat malformed / absent token as no scope).
+        """
+        if not token:
+            return False
+        try:
+            parts = token.split(".")
+            if len(parts) >= 2:
+                padding = (4 - len(parts[1]) % 4) % 4
+                payload = json.loads(
+                    base64.urlsafe_b64decode(parts[1] + "=" * padding)
+                )
+                scope_str: str = payload.get("scope", "")
+                return required in scope_str.split()
+        except Exception:
+            pass
+        return False
 
     def _get_tools_for_call(self) -> list[dict[str, Any]]:
         """Return the appropriate tools list for this tools/list call."""

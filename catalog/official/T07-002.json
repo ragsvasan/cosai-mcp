@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0",
+  "id": "T07-002",
+  "category": "T7",
+  "severity": "critical",
+  "cosai_ref": "T7",
+  "owasp_ref": "MCP-Top10-A07",
+  "cwe": ["CWE-863", "CWE-285"],
+  "probes": [
+    {
+      "id": "T07-002-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "description": "Call a sensitive tool with confirmation=true in the arguments but with a Bearer token whose OAuth scope does not include the tool's required permission. A vulnerable server accepts the call (treating confirmation=true as sufficient authorization). A secure server rejects it with an authorization error regardless of the confirmation flag.",
+      "probe_headers": {
+        "Authorization": "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ0ZXN0LWFnZW50Iiwic2NvcGUiOiJyZWFkOm90aGVyIiwiZXhwIjo5OTk5OTk5OTk5fQ."
+      },
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "confirmation": true,
+          "data": "cosai-probe"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true,
+          "description": "Server must reject the tool call despite confirmation=true when the OAuth scope is insufficient. MCP UI confirmation does not constitute authorization (IETF draft-klrc-aiagent-auth-01)."
+        }
+      ]
+    },
+    {
+      "id": "T07-002-p2",
+      "transport": "http",
+      "method": "tools/call",
+      "description": "Call a sensitive tool with confirmation=true but with no Authorization header at all. A secure server must reject unauthenticated calls regardless of the confirmation flag.",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "confirmation": true,
+          "data": "cosai-probe"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true,
+          "description": "Server must reject completely unauthenticated tool calls even when confirmation=true is present in the arguments."
+        }
+      ]
+    }
+  ],
+  "remediation": "Authorization must be enforced via OAuth scope on every tool call, evaluated before (not instead of) any MCP UI confirmation check. The server must never treat the presence of a confirmation=true argument as a substitute for a valid, scoped OAuth token. Per IETF draft-klrc-aiagent-auth-01: 'The agent MUST NOT treat local UI confirmation alone as sufficient authorization.'",
+  "references": [
+    "https://cosai.org/T7",
+    "https://datatracker.ietf.org/doc/draft-klrc-aiagent-auth/",
+    "https://cwe.mitre.org/data/definitions/863.html",
+    "https://cwe.mitre.org/data/definitions/285.html"
+  ]
+}
