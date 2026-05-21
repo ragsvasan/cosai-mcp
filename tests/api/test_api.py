@@ -824,3 +824,64 @@ class TestExtractRetryAfter:
         r1 = self._rate_limit_result(retry_after=45)
         r2 = self._rate_limit_result(retry_after=90)
         assert _extract_retry_after([r1, r2]) == 45.0
+
+    def test_regression_extract_retry_after_response_body(self):
+        """-32029 in response_body (assertion failure, not subprocess crash) is detected.
+
+        T10-002 hits the rate limiter and the server returns -32029 as a JSON-RPC
+        error response — this ends up in result.response_body, not result.error.
+        """
+        from cosai_mcp.api import _extract_retry_after
+        from cosai_mcp.harness.result import make_probe_result
+        body = "{'jsonrpc':'2.0','id':1,'error':{'code': -32029,'data':{'retry_after': 60}}}"
+        result = make_probe_result(
+            probe_id="T10-002-p1",
+            threat_id="T10",
+            passed=False,
+            assertions=(),
+            response={"_body": body, "_status_code": 200},
+        )
+        assert _extract_retry_after([result]) == 60.0
+
+
+class TestDetermineExitCode:
+    """_determine_exit_code must not return 2 for timeouts or rate-limit errors."""
+
+    def _timeout_result(self) -> object:
+        from cosai_mcp.harness.result import make_probe_result
+        return make_probe_result(
+            probe_id="T02-004-p1", threat_id="T02", passed=False, assertions=(),
+            error="Probe timed out after 30.0s",
+        )
+
+    def _rate_limit_error_result(self) -> object:
+        from cosai_mcp.harness.result import make_probe_result
+        return make_probe_result(
+            probe_id="T11-001-p1", threat_id="T11", passed=False, assertions=(),
+            error="Subprocess error: Server rejected initialize: {'code': -32029, 'message': 'Rate limit exceeded', 'data': {'retry_after': 60}}",
+        )
+
+    def _crash_result(self) -> object:
+        from cosai_mcp.harness.result import make_probe_result
+        return make_probe_result(
+            probe_id="T01-001-p1", threat_id="T01", passed=False, assertions=(),
+            error="Probe subprocess exited without producing a result",
+        )
+
+    def test_regression_timeout_not_exit_2(self):
+        """A probe timeout must not trigger exit code 2 (it is operational, not a crash)."""
+        from cosai_mcp.api import _determine_exit_code
+        code = _determine_exit_code([self._timeout_result()], [], "critical")
+        assert code != 2, f"timeout should not be exit 2, got {code}"
+
+    def test_regression_rate_limit_error_not_exit_2(self):
+        """-32029 subprocess error must not trigger exit code 2."""
+        from cosai_mcp.api import _determine_exit_code
+        code = _determine_exit_code([self._rate_limit_error_result()], [], "critical")
+        assert code != 2, f"rate-limit error should not be exit 2, got {code}"
+
+    def test_regression_crash_still_exit_2(self):
+        """A genuine subprocess crash must still trigger exit code 2."""
+        from cosai_mcp.api import _determine_exit_code
+        code = _determine_exit_code([self._crash_result()], [], "critical")
+        assert code == 2, f"subprocess crash must be exit 2, got {code}"

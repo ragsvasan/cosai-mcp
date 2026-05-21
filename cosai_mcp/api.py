@@ -147,17 +147,19 @@ _RETRY_AFTER_RE: re.Pattern[str] = re.compile(
 def _extract_retry_after(results: list) -> float | None:
     """Return retry_after seconds from the first -32029 result, or None.
 
-    result.error is HTML-escaped at ingestion (html.escape(quote=True)), so
-    single-quotes become &#x27;.  Unescape before regex matching — the -32029
-    digit check is safe on the escaped form since digits/minus are never escaped.
+    Checks both result.error (subprocess-level rejection during initialize) and
+    result.response_body (server returned -32029 as a JSON-RPC error response).
+    Both fields are HTML-escaped at ingestion, so unescape before matching.
+    The -32029 digit check itself is safe on the escaped form (digits/minus
+    are never HTML-escaped).
     """
     import html as _html_mod
     for r in results:
-        err: str | None = getattr(r, "error", None)
-        if err and "-32029" in err:
-            m = _RETRY_AFTER_RE.search(_html_mod.unescape(err))
-            if m:
-                return float(m.group(1))
+        for raw in (getattr(r, "error", None), getattr(r, "response_body", None)):
+            if raw and "-32029" in raw:
+                m = _RETRY_AFTER_RE.search(_html_mod.unescape(raw))
+                if m:
+                    return float(m.group(1))
         if getattr(r, "status_code", None) == 429:
             return None  # HTTP 429 without retry_after — caller uses probe_delay
     return None
@@ -407,8 +409,18 @@ def _determine_exit_code(
     if any(r.status == "scan-incomplete" for r in scenario_results):
         return 2
 
-    # Probe errors (scanner crash in subprocess) → exit 2
-    if any(r.error is not None for r in probe_results):
+    # Probe errors (scanner crash in subprocess) → exit 2.
+    # Timeouts and server-side rate-limit rejections are operational, not crashes —
+    # the scanner ran correctly; the probe simply couldn't complete.  Exclude them
+    # so a slow or rate-limiting server doesn't suppress real findings under exit 2.
+    _OPERATIONAL_ERROR_MARKERS = ("timed out", "-32029")
+
+    def _is_crash(r: "ProbeResult") -> bool:
+        if r.error is None:
+            return False
+        return not any(m in r.error for m in _OPERATIONAL_ERROR_MARKERS)
+
+    if any(_is_crash(r) for r in probe_results):
         return 2
 
     threshold = _SEVERITY_RANK.get(fail_on.lower(), _SEVERITY_RANK["critical"])
