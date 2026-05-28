@@ -440,6 +440,23 @@ def _determine_exit_code(
             and _above_threshold(r)
             for r in probe_results
         )
+
+        # Nothing verified: no clean pass exists above threshold AND every
+        # non-passing probe above threshold errored (timed out / crashed).
+        # Inconclusive probes are excluded — "couldn't test this condition" is
+        # different from "scanner could not run". A single passed=True probe
+        # above threshold (clean verdict) prevents exit 2.
+        has_clean = any(
+            r.passed and not r.suppressed and _above_threshold(r)
+            for r in probe_results
+        )
+        if not has_clean:
+            qualifying = [
+                r for r in probe_results
+                if not r.suppressed and not r.passed and _above_threshold(r)
+            ]
+            if qualifying and all(r.error is not None for r in qualifying):
+                return 2
     else:
         failed_probes = any(
             not r.passed
@@ -448,6 +465,12 @@ def _determine_exit_code(
             and not r.suppressed              # WP2: baseline-accepted ≠ gating
             for r in probe_results
         )
+
+        has_clean = any(r.passed and not r.suppressed for r in probe_results)
+        if not has_clean:
+            qualifying = [r for r in probe_results if not r.suppressed and not r.passed]
+            if qualifying and all(r.error is not None for r in qualifying):
+                return 2
 
     # inconclusive scenarios don't trigger exit 1 — they weren't tested
     failed_scenarios = any(

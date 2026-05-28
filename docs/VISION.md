@@ -22,8 +22,8 @@ It ships three things:
 **1. An exhaustive black-box test suite**
 Point it at any MCP server — in any language, on any framework — and it tells you which of the 12 CoSAI threat categories you are exposed to. No installation required on the target. No agent. No SDK. Just an HTTP endpoint.
 
-**2. A composable Python middleware stack**
-Drop `CoSAIStack` into any FastAPI or FastMCP server and get all 12 controls enforced at runtime. One import, one middleware registration.
+**2. A composable Python middleware stack** *(partially implemented — see Implementation Status below)*
+Individual middleware modules (`auth`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, `audit`) are implemented. `CoSAIStack` (the unified ASGI wrapper) and four modules (`authz`, `validation`, `session`, `supply_chain`) are not yet available. The target interface: drop `CoSAIStack` into any FastAPI or FastMCP server and get all 12 controls enforced at runtime with one import and one middleware registration.
 
 **3. A JSON-extensible threat catalog**
 New vulnerability discovered? Add a JSON file. Existing threat updated? Edit a JSON file. No code changes, no releases required. The catalog is cryptographically signed — new definitions are trusted only when signed by the project keypair.
@@ -121,13 +121,14 @@ cosai-mcp scan https://vendor.example.com/mcp \
 
 ---
 
-### 4. Middleware enforcement in production
+### 4. Middleware enforcement in production *(planned — `CoSAIStack` not yet implemented)*
 
 **Who:** Python/FastAPI teams who want runtime enforcement, not just pre-deployment scanning.
 
-**What:** Add `CoSAIStack` as ASGI middleware. It enforces session binding (T7), confused deputy prevention (T2), tool signature verification (T6), resource budgets (T10), and execution trace logging (T12) on every request.
+**What:** Add `CoSAIStack` as ASGI middleware. It will enforce session binding (T7), confused deputy prevention (T2), tool signature verification (T6), resource budgets (T10), and execution trace logging (T12) on every request. Individual modules (`boundary`, `trust`, `resources`, `audit`) are available today; `CoSAIStack` and the `authz`, `validation`, `session`, and `supply_chain` modules are not yet implemented.
 
 ```python
+# Planned interface — CoSAIStack does not exist yet
 from cosai_mcp.middleware import CoSAIStack
 
 app.add_middleware(CoSAIStack, config=CoSAIConfig(

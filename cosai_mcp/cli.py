@@ -364,6 +364,13 @@ def scan(
             click.echo(f"[ERROR] Invalid target URL: {exc}", err=True)
             sys.exit(2)
 
+    if allow_custom_catalog:
+        click.echo(
+            "[WARNING] --allow-custom-catalog is set: custom catalog files are loaded "
+            "without Ed25519 signature verification and will be marked UNTRUSTED in reports.",
+            err=True,
+        )
+
     # -- Run scan (exit 2 on scanner internal error) --
     try:
         result = _run_scan(

@@ -300,19 +300,26 @@ cosai scan http://localhost:8080 --mcp-path /v1/mcp
 
 ## Using the Middleware (T4, T9, T12)
 
+> **Status: Partially implemented.** Several middleware modules are not yet available.
+> `CoSAIStack` (the unified ASGI wrapper) does not exist yet — `cosai_mcp/middleware/__init__.py` is empty.
+> `authz.py` (T2), `validation.py` (T3), `session.py` (T7), and `supply_chain.py` (T11) raise
+> `NotImplementedError` and cannot be used. The `auth`, `boundary`, `protection`, `integrity`,
+> `network`, `trust`, `resources`, and `audit` modules are implemented.
+> The example below shows the planned interface once `CoSAIStack` is implemented.
+
 For T4 (indirect prompt injection), T9 (LLM trust boundaries), and T12 (execution traces), deploy the middleware in your MCP server. The middleware IS the detection mechanism for these categories.
 
-### FastAPI / FastMCP
+### FastAPI / FastMCP (planned interface — `CoSAIStack` not yet implemented)
 
 ```python
-from cosai_mcp.middleware import CoSAIStack, CoSAIConfig
+from cosai_mcp.middleware import CoSAIStack, CoSAIConfig  # CoSAIStack not yet available
 
 app.add_middleware(CoSAIStack, config=CoSAIConfig(
     # T1: Session-bound identity
     session_binding=True,
     dpop_required=True,
 
-    # T2: Per-tool authorization
+    # T2: Per-tool authorization (authz.py not yet implemented)
     tool_allowlist=["read_file", "search_db", "send_email"],
     confused_deputy_prevention=True,
 
@@ -382,7 +389,7 @@ The target did not complete the MCP `initialize`/`initialized` lifecycle. This i
 An internal error occurred. Run with `--debug` for the full traceback. This is always treated as a failure in CI — it never produces a clean result.
 
 **All T4/T9/T12 findings show `middleware-only`**
-These categories require cosai-mcp middleware deployed in the target server. Deploy `CoSAIStack` and re-run the scan.
+These categories require cosai-mcp middleware deployed in the target server. `CoSAIStack` is not yet implemented — individual modules (`boundary`, `trust`, `audit`) can be used directly in the interim. See the middleware section above for current status.
 
 **Custom catalog not loading**
 Custom catalogs require `--allow-custom-catalog`. If your custom catalog uses `matches_regex`, also add `--allow-regex-in-custom`.

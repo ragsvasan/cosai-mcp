@@ -845,7 +845,7 @@ class TestExtractRetryAfter:
 
 
 class TestDetermineExitCode:
-    """_determine_exit_code must not return 2 for timeouts or rate-limit errors."""
+    """_determine_exit_code exit-code semantics for timeouts and rate-limit errors."""
 
     def _timeout_result(self) -> object:
         from cosai_mcp.harness.result import make_probe_result
@@ -868,17 +868,35 @@ class TestDetermineExitCode:
             error="Probe subprocess exited without producing a result",
         )
 
-    def test_regression_timeout_not_exit_2(self):
-        """A probe timeout must not trigger exit code 2 (it is operational, not a crash)."""
+    def _passing_result(self, probe_id: str = "T02-004-p2", threat_id: str = "T02") -> object:
+        from cosai_mcp.harness.result import make_probe_result
+        return make_probe_result(
+            probe_id=probe_id, threat_id=threat_id, passed=True, assertions=(), error=None,
+        )
+
+    def test_regression_timeout_alongside_pass_not_exit_2(self):
+        """A timeout probe does not corrupt a scan where another probe passed cleanly."""
+        from cosai_mcp.api import _determine_exit_code
+        code = _determine_exit_code([self._timeout_result(), self._passing_result()], [], "critical")
+        assert code == 0, f"timeout + passing probe should be exit 0, got {code}"
+
+    def test_regression_timeout_sole_probe_is_exit_2(self):
+        """A scan where the only probe timed out is scan-incomplete (nothing was verified)."""
         from cosai_mcp.api import _determine_exit_code
         code = _determine_exit_code([self._timeout_result()], [], "critical")
-        assert code != 2, f"timeout should not be exit 2, got {code}"
+        assert code == 2, f"sole timeout probe should be exit 2 (scan-incomplete), got {code}"
 
-    def test_regression_rate_limit_error_not_exit_2(self):
-        """-32029 subprocess error must not trigger exit code 2."""
+    def test_regression_rate_limit_alongside_pass_not_exit_2(self):
+        """-32029 rate-limit error alongside a passing probe is not scan-incomplete."""
+        from cosai_mcp.api import _determine_exit_code
+        code = _determine_exit_code([self._rate_limit_error_result(), self._passing_result()], [], "critical")
+        assert code == 0, f"rate-limit + passing probe should be exit 0, got {code}"
+
+    def test_regression_rate_limit_sole_probe_is_exit_2(self):
+        """A scan where the only probe was rate-limited is scan-incomplete (nothing verified)."""
         from cosai_mcp.api import _determine_exit_code
         code = _determine_exit_code([self._rate_limit_error_result()], [], "critical")
-        assert code != 2, f"rate-limit error should not be exit 2, got {code}"
+        assert code == 2, f"sole rate-limit probe should be exit 2 (scan-incomplete), got {code}"
 
     def test_regression_crash_still_exit_2(self):
         """A genuine subprocess crash must still trigger exit code 2."""

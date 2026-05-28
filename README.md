@@ -126,6 +126,20 @@ cosai scan http://localhost:8000 --auth-token "$WRITE_TOKEN" --read-token "$READ
 pytest --cosai-target=http://localhost:8000 --cosai-severity=critical
 ```
 
+## Implementation Status
+
+| Feature | Status |
+|---|---|
+| Black-box prober (T1, T3, T5, T8, T10, T11) | Shipped |
+| Stateful conformance harness (T2, T6, T7) | Shipped |
+| T4 passive manifest scan (adversarial canary mode) | Shipped |
+| Middleware: `auth`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, `audit` | Shipped |
+| Middleware: `authz` (T2), `validation` (T3), `session` (T7), `supply_chain` (T11) | Planned (raise `NotImplementedError`) |
+| `CoSAIStack` ASGI middleware wrapper | Planned (`cosai_mcp/middleware/__init__.py` is empty) |
+| Static tool definition analyzer (`cosai_mcp/scanner/`) | Planned (`__init__.py` is 0 bytes) |
+
+The scanner (black-box prober + stateful harness) covers 9 of 12 categories zero-config. The four planned middleware modules and `CoSAIStack` exist as stubs — they are not usable yet.
+
 ## Documentation
 
 New to cosai-mcp? Start with [docs/VISION.md](docs/VISION.md) — it covers what this is, why no existing tool fills the gap, why the scanner itself can be trusted, and the primary use cases.
