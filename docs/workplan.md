@@ -431,7 +431,7 @@ pytest tests/probes/t02_* tests/probes/t06_* tests/probes/t11_* -v
 
 ### T1 Additional Probes (T01-003, T01-004)
 
-**Context:** Gap analysis found replay attack (jti validation) and DPoP binding probes missing. `auth.py` middleware is a stub.
+**Context:** Gap analysis found replay attack (jti validation) and DPoP binding probes missing. (Note: `auth.py` middleware was a stub at the time of this phase; it is now fully implemented.)
 
 **Delivers:**
 - `catalog/official/T01-003.json` — token replay probe: send same `Authorization: Bearer <token>` twice in two separate requests to the same endpoint; assert second request is rejected (`401` or error code in [-32600, -32601])

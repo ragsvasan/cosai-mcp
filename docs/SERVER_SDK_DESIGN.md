@@ -317,10 +317,10 @@ The existing scanner middleware files have the correct internals. The server SDK
 | `CoSAIGuard` composition class | Assembles engine chain, drives hooks |
 | `CoSAIContext` ContextVar | Async-safe shared per-request state |
 | `ProtectionEngine` protocol | Standard interface all engines implement |
-| `validation.py` (stub) | T3 JSON schema strict mode + injection guards |
-| `authz.py` (stub) | T2 per-tool RBAC, caller identity check |
-| `session.py` (stub) | T7 cryptographic session binding |
-| `supply_chain.py` (stub) | T11 tool allowlist + registry signature check |
+| `validation.py` | T3 JSON schema strict mode + 7-pattern injection guard |
+| `authz.py` | T2 per-tool RBAC + confused deputy prevention |
+| `session.py` | T7 CSPRNG session IDs, JWT validation (alg-pinned + JTI replay cache), DPoP (RFC 9449) |
+| `supply_chain.py` | T11 allowlist enforcer, Levenshtein ≤1 typosquat detection, Ed25519 registry signatures |
 | Config loader | `cosai.yaml` → typed frozen policy objects |
 | Framework adapters | FastMCP, FastAPI/ASGI, raw JSON-RPC dispatcher |
 | Exception hierarchy | `CoSAIException` base + 12 typed subclasses |

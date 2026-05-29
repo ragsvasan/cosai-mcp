@@ -300,40 +300,52 @@ cosai scan http://localhost:8080 --mcp-path /v1/mcp
 
 ## Using the Middleware (T4, T9, T12)
 
-> **Status: Partially implemented.** Several middleware modules are not yet available.
-> `CoSAIStack` (the unified ASGI wrapper) does not exist yet — `cosai_mcp/middleware/__init__.py` is empty.
-> `authz.py` (T2), `validation.py` (T3), `session.py` (T7), and `supply_chain.py` (T11) raise
-> `NotImplementedError` and cannot be used. The `auth`, `boundary`, `protection`, `integrity`,
-> `network`, `trust`, `resources`, and `audit` modules are implemented.
-> The example below shows the planned interface once `CoSAIStack` is implemented.
+All 12 middleware modules are implemented and composable via `CoSAIStack`. For T4 (indirect prompt injection), T9 (LLM trust boundaries), and T12 (execution traces), deploy the middleware in your MCP server — the middleware IS the detection mechanism for these categories.
 
-For T4 (indirect prompt injection), T9 (LLM trust boundaries), and T12 (execution traces), deploy the middleware in your MCP server. The middleware IS the detection mechanism for these categories.
-
-### FastAPI / FastMCP (planned interface — `CoSAIStack` not yet implemented)
+### FastAPI / FastMCP
 
 ```python
-from cosai_mcp.middleware import CoSAIStack, CoSAIConfig  # CoSAIStack not yet available
+from cosai_mcp.middleware import CoSAIStack
+from cosai_mcp.middleware.authz import AuthzEnforcer, ToolPolicy
+from cosai_mcp.middleware.supply_chain import SupplyChainEnforcer
+from cosai_mcp.middleware.session import SessionManager
+from cosai_mcp.middleware.audit import AuditLogger
 
-app.add_middleware(CoSAIStack, config=CoSAIConfig(
-    # T1: Session-bound identity
-    session_binding=True,
-    dpop_required=True,
+# Build the stack
+stack = CoSAIStack(
+    # T11: allowlist + typosquat prevention + Ed25519 registry signatures
+    supply_chain_enforcer=SupplyChainEnforcer(
+        allowlist=frozenset(["read_file", "search_db", "send_email"]),
+    ),
 
-    # T2: Per-tool authorization (authz.py not yet implemented)
-    tool_allowlist=["read_file", "search_db", "send_email"],
-    confused_deputy_prevention=True,
+    # T2: per-tool RBAC + confused deputy prevention
+    authz_enforcer=AuthzEnforcer(),
 
-    # T4: Data/control boundary
-    prompt_injection_detection=True,
+    # T7: JWT validation (alg-pinned, JTI replay cache) + DPoP proof verification
+    session_manager=SessionManager(
+        expected_issuer="https://auth.example.com",
+        expected_audience="mcp-server",
+    ),
 
-    # T10: Resource budgets
-    execution_budget_seconds=30,
-    max_tool_calls_per_session=100,
+    # T12: append-only hash-chained audit log
+    audit_logger=AuditLogger("/var/log/cosai/traces/audit.jsonl"),
+)
 
-    # T12: Execution traces
-    audit_log_path="/var/log/cosai/traces",
-    audit_chain_verify=True,
-))
+# At startup — after tools/list (T11 + T4 tool-poisoning scan)
+stack.check_manifest(tools, session_id=session_id)
+
+# On every tools/call (T3 → T2 → T7 → T12)
+stack.check_tool_call(
+    tool_name=request.tool_name,
+    arguments=request.arguments,
+    authz_context=build_authz_context(request),
+    session_id=session_id,
+    jwt_token=request.headers.get("Authorization", "").removeprefix("Bearer "),
+    jwt_keyset=keyset,
+)
+
+# After tool returns (T4/T9 response boundary scan)
+stack.check_response(response_body, session_id=session_id)
 ```
 
 With middleware deployed, run the scan again — T4, T9, T12 findings will now be detectable.
@@ -389,7 +401,7 @@ The target did not complete the MCP `initialize`/`initialized` lifecycle. This i
 An internal error occurred. Run with `--debug` for the full traceback. This is always treated as a failure in CI — it never produces a clean result.
 
 **All T4/T9/T12 findings show `middleware-only`**
-These categories require cosai-mcp middleware deployed in the target server. `CoSAIStack` is not yet implemented — individual modules (`boundary`, `trust`, `audit`) can be used directly in the interim. See the middleware section above for current status.
+These categories require cosai-mcp middleware deployed in the target server. Deploy `CoSAIStack` (see the middleware section above) — it provides detection for T4, T9, and T12 from inside the call path.
 
 **Custom catalog not loading**
 Custom catalogs require `--allow-custom-catalog`. If your custom catalog uses `matches_regex`, also add `--allow-regex-in-custom`.
