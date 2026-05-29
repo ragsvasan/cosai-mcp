@@ -6,7 +6,7 @@
 
 Open-source MCP security framework for the 12 CoSAI threat categories (T1–T12): **9 categories with zero-config black-box/stateful coverage; 3 (T4, T9, T12) require the cosai-mcp middleware deployed in the target.**
 
-**Status:** Alpha — 1182 tests passing, Apache 2.0. Zero-config scan covers 9 categories (T1–T3, T5–T8, T10–T11). T4/T9/T12 detection needs the middleware in the target's call path. Middleware coverage is partial: the `auth`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, and `audit` modules are implemented; `authz` (T2), `validation` (T3), `session` (T7), and `supply_chain` (T11) are not yet implemented (they raise `NotImplementedError`).
+**Status:** Alpha — 1263 tests passing, Apache 2.0. Zero-config scan covers 9 categories (T1–T3, T5–T8, T10–T11). T4/T9/T12 detection needs the middleware in the target's call path. All 12 middleware modules are implemented: `auth`, `authz`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, `audit`, `validation`, `session`, and `supply_chain`.
 
 ```bash
 # Try without installing
@@ -24,7 +24,7 @@ cosai scan http://localhost:8000
 `cosai-mcp` is the runnable reference implementation of the [CoSAI/OASIS January 2026 MCP Security whitepaper](https://github.com/cosai-oasis/ws4-secure-design-agentic-systems/blob/main/model-context-protocol-security.md). It ships three things:
 
 - **Exhaustive test suite** — black-box probes + stateful conformance harness with zero-config coverage of 9 categories (T1–T3, T5–T8, T10–T11); point at any MCP server, get a SARIF report
-- **Composable Python middleware** — drop `CoSAIStack` into FastAPI/FastMCP for runtime enforcement (8 of 12 modules implemented; `authz`, `validation`, `session`, `supply_chain` are not-yet-implemented stubs)
+- **Composable Python middleware** — drop `CoSAIStack` into FastAPI/FastMCP for runtime enforcement (all 12 modules implemented: T1–T12 enforcement, JWT/DPoP validation, RBAC, supply-chain verification)
 - **JSON-extensible threat catalog** — add new threats by dropping a signed JSON file; no code changes
 
 ## Key capabilities
@@ -134,11 +134,11 @@ pytest --cosai-target=http://localhost:8000 --cosai-severity=critical
 | Stateful conformance harness (T2, T6, T7) | Shipped |
 | T4 passive manifest scan (adversarial canary mode) | Shipped |
 | Middleware: `auth`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, `audit` | Shipped |
-| Middleware: `authz` (T2), `validation` (T3), `session` (T7), `supply_chain` (T11) | Planned (raise `NotImplementedError`) |
-| `CoSAIStack` ASGI middleware wrapper | Planned (`cosai_mcp/middleware/__init__.py` is empty) |
+| Middleware: `authz` (T2), `validation` (T3), `session` (T7), `supply_chain` (T11) | Shipped |
+| `CoSAIStack` middleware orchestrator | Shipped (`cosai_mcp/middleware/__init__.py`) |
 | Static tool definition analyzer (`cosai_mcp/scanner/`) | Planned (`__init__.py` is 0 bytes) |
 
-The scanner (black-box prober + stateful harness) covers 9 of 12 categories zero-config. The four planned middleware modules and `CoSAIStack` exist as stubs — they are not usable yet.
+The scanner (black-box prober + stateful harness) covers 9 of 12 categories zero-config. All 12 middleware modules are implemented and composable via `CoSAIStack`.
 
 ## Documentation
 

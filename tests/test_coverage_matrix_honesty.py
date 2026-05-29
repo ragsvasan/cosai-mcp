@@ -27,11 +27,12 @@ ANALYSIS = REPO_ROOT / "docs" / "ANALYSIS_AND_RATIONALE.md"
 # is structurally wrong for them.
 _EXPECTED_MIDDLEWARE_ONLY = frozenset({"T4", "T9", "T12"})
 
-# Locked truth: these four middleware modules are not-yet-implemented stubs.
-_STUB_MODULES = ("authz", "validation", "session", "supply_chain")
+# All middleware modules are now implemented.
+_STUB_MODULES: tuple[str, ...] = ()
 _IMPLEMENTED_MODULES = (
     "auth", "boundary", "protection", "integrity",
     "network", "trust", "resources", "audit",
+    "authz", "validation", "session", "supply_chain",
 )
 
 
@@ -71,13 +72,15 @@ class TestMiddlewareStubStatusMatchesDocs:
         txt = README.read_text()
         for mod in _STUB_MODULES:
             assert mod in txt, f"README must disclose stub module {mod!r}"
-        assert "NotImplementedError" in txt
+        if _STUB_MODULES:
+            assert "NotImplementedError" in txt
 
     def test_analysis_lists_every_stub_module_as_not_implemented(self) -> None:
         txt = ANALYSIS.read_text()
         for mod in _STUB_MODULES:
             assert mod in txt, f"ANALYSIS must disclose stub module {mod!r}"
-        assert "NotImplementedError" in txt
+        if _STUB_MODULES:
+            assert "NotImplementedError" in txt
 
 
 class TestNoOverclaimingHeadline:

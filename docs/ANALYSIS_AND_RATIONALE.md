@@ -81,7 +81,7 @@ A runtime conformance scanner that:
 - **Runs three scan engines** across the CoSAI taxonomy (9 categories zero-config; T4/T9/T12 require the middleware in the target call path):
   - *Black-box prober*: one-shot JSON-RPC probes (T1, T3, T5, T8, T10, partial T2/T6/T11)
   - *Stateful conformance harness*: multi-turn scripted scenarios (T2, T6, T7)
-  - *Middleware instrumentation*: detection-from-inside the call path (T4, T9, T12). Implemented modules: `auth`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, `audit`. Not yet implemented (raise `NotImplementedError`): `authz` (T2), `validation` (T3), `session` (T7), `supply_chain` (T11).
+  - *Middleware instrumentation*: detection-from-inside the call path (T4, T9, T12). All 12 modules implemented: `auth`, `authz`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, `audit`, `validation`, `session`, `supply_chain`. Compose via `CoSAIStack`.
 - **Outputs SARIF 2.1.0** for GitHub's native security findings tab
 - **Exits with a deterministic code** (0 = clean, 1 = findings above threshold, 2 = scanner error, 3 = unreachable) — CI-gate-safe
 
