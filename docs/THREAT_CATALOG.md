@@ -269,6 +269,9 @@ Delegating security-critical validation to the LLM's judgment. A model may be de
 - **Semantic bypass:** attacker rephrases a malicious request in a way that reads as benign to the model
 - **Context overflow:** flooding the context window with benign content pushes safety instructions out of the model's effective window
 
+### What cosai-mcp tests (passive manifest scan — Totem layer)
+The scanner passively inspects `tools/list` for **Totem violations**: destructive tools that lack a two-stage commit pattern. A tool is flagged when its name contains an unambiguously-destructive verb (delete, remove, drop, destroy, wipe, purge, reset, revoke, terminate, cancel, truncate, flush, erase, uninstall, deactivate, deregister) and it has neither a `confirmed`/`dry_run` boolean parameter nor a `_preview`/`_plan` sibling tool. This is the structural check for TKA Totem compliance — the first layer of the CoSAI WS4 T9 contribution: *no probabilistic component holds commit authority over irreversible state without explicit human confirmation*. Findings surface as SARIF rule `T09-001` at HIGH severity.
+
 ### What cosai-mcp tests (middleware instrumentation)
 T9 requires observing the agent's decision-making. The middleware instruments:
 - Whether validation is deterministic (schema-based) or model-delegated

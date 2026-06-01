@@ -48,12 +48,12 @@ cosai scan http://localhost:8000
 | T6 | Integrity/Verification | Stateful harness |
 | T7 | Session Security Failures | Stateful harness + black-box prober |
 | T8 | Network Binding Failures | Black-box prober |
-| T9 | Trust Boundary Failures | Middleware (deploy in target) |
+| T9 | Trust Boundary Failures | Passive manifest scan + Middleware |
 | T10 | Resource Management | Black-box prober |
 | T11 | Supply Chain/Lifecycle | Black-box prober |
 | T12 | Insufficient Logging | Middleware (deploy in target) |
 
-T4, T9, T12 require the cosai-mcp middleware deployed in the target server — black-box probing cannot detect prompt injection, LLM trust violations, or audit log tampering from outside the call path. See [docs/THREAT_CATALOG.md](docs/THREAT_CATALOG.md) for the full rationale.
+T4 and T9 each have a passive manifest-scan layer: T4 detects tool-description poisoning in `tools/list`; T9 detects destructive tools missing two-stage commit (the TKA Totem structural check). Full T4/T9/T12 coverage requires the cosai-mcp middleware deployed in the target. See [docs/THREAT_CATALOG.md](docs/THREAT_CATALOG.md) for the full rationale.
 
 ## Front door — detect tool drift in CI
 
@@ -182,7 +182,7 @@ Those are runtime proxies — they sit in front of a production server and monit
 Static analyzers test what you wrote — the source code. We test what you shipped — the running server. An MCP server can pass every static check and still echo raw arguments into a shell at runtime. You need both.
 
 **T4, T9, T12 need middleware — what's the black-box coverage story there?**
-For T4, adversarial mode with canary tokens catches exfiltration and prompt injection echoing from outside. For T9 and T12, we detect the absence of controls — probing whether logging endpoints exist and whether audit trails are present. But detecting that something happened requires being in the call path. That's what the middleware engine handles.
+T4 and T9 each have a passive manifest-scan layer that runs zero-config. T4 detects tool-description poisoning hidden in `tools/list`. T9 detects destructive tools missing two-stage commit (delete/drop/wipe/revoke/etc. tools without a `confirmed` param or `_preview` sibling) — the structural Totem check from the CoSAI WS4 T9 contribution. T4 adversarial mode with canary tokens additionally catches exfiltration from outside. For T9 and T12, full coverage requires the middleware in the call path — detecting that LLM judgment drove an authorization decision or that an audit log entry was missing requires being instrumented inside the server.
 
 **Is this ready for others to use?**
 885 passing tests, Apache 2.0, installs with pip. The catalog format and taxonomy coverage are stable. Reference-implementation quality — solid enough to standardize the probe catalog schema against, not yet production-hardened for enterprise deployment at scale.

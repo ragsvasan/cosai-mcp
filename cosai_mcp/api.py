@@ -38,12 +38,12 @@ COVERAGE_MATRIX: dict[str, str] = {
     "T1":  "black-box-prober",
     "T2":  "black-box-partial+stateful",
     "T3":  "black-box-prober",
-    "T4":  "middleware-only",
+    "T4":  "middleware-only+manifest",
     "T5":  "black-box-partial",
     "T6":  "black-box-partial+stateful",
     "T7":  "stateful",
     "T8":  "black-box-prober",
-    "T9":  "middleware-only",
+    "T9":  "middleware-only+manifest",
     "T10": "black-box-prober",
     "T11": "black-box-partial",
     "T12": "middleware-only",
@@ -605,6 +605,11 @@ def _run_scan(
         if effective_categories is None or "T4" in effective_categories:
             probe_results.extend(_scan_manifest_t4(tuple(discovered_tools) if discovered_tools else ()))
 
+        # T9: passive Totem manifest scan — flags destructive tools missing two-stage commit.
+        # Runs whenever T9 is in scope (no category filter, or T9 explicitly requested).
+        if effective_categories is None or "T9" in effective_categories:
+            probe_results.extend(_scan_manifest_t9(tuple(discovered_tools) if discovered_tools else ()))
+
         # Profile: remap discovered tool name through tool_name_map if present.
         # This ensures probes use the real server tool name instead of the
         # catalog placeholder ("ping") when the server uses a different name.
@@ -769,6 +774,91 @@ def _scan_manifest_t4(
             duration_seconds=0.0,
             inconclusive_reason=None,
         ))
+    return results
+
+
+def _scan_manifest_t9(
+    discovered_tools: tuple,
+) -> list[ProbeResult]:
+    """Scan tools/list manifest for T9 Totem violations — destructive tools missing two-stage commit.
+
+    A tool is flagged when:
+      - Its NAME (split on _ / - / space) contains a clearly-destructive verb, AND
+      - It lacks a confirmed/dry_run/preview boolean parameter AND has no sibling
+        plan/preview/dry-run tool in the manifest.
+
+    Name-only matching (no description scanning) keeps false-positive rate low.
+    Ambiguous verbs (run, execute, send, trigger) are intentionally excluded; only
+    verbs that are unambiguously irreversible (delete, wipe, purge, etc.) are used.
+
+    This is the passive structural check for TKA Totem compliance: no probabilistic
+    component should hold commit authority over irreversible state without an explicit
+    human confirmation step.
+    """
+    from cosai_mcp.harness.result import ProbeResult as _ProbeResult
+
+    if not discovered_tools:
+        return []
+
+    # Clearly-destructive verbs only — ambiguous verbs (run, execute, send, publish,
+    # trigger) excluded to keep false-positive rate low. A tool named "send_email"
+    # may be write-only but is not unambiguously irreversible.
+    _DESTRUCTIVE_VERBS: frozenset[str] = frozenset({
+        "delete", "remove", "drop", "destroy", "wipe", "purge", "reset",
+        "revoke", "terminate", "shutdown", "cancel", "truncate", "flush", "erase",
+        "uninstall", "deactivate", "deregister",
+    })
+
+    _CONFIRM_PARAMS: frozenset[str] = frozenset({
+        "confirmed", "confirm", "dry_run", "dryrun", "preview", "plan_only",
+    })
+
+    tool_names: frozenset[str] = frozenset(t.name for t in discovered_tools)
+    results: list[ProbeResult] = []
+
+    for i, tool in enumerate(discovered_tools):
+        name_parts = re.split(r"[_\-\s/]", tool.name.lower())
+
+        # Skip tools that ARE the preview/plan/dry-run variant — they are governance artifacts
+        _PLAN_MARKERS = frozenset({"preview", "plan", "dry", "dryrun", "simulate", "check"})
+        if any(part in _PLAN_MARKERS for part in name_parts):
+            continue
+
+        is_destructive = any(part in _DESTRUCTIVE_VERBS for part in name_parts)
+
+        if not is_destructive:
+            continue
+
+        # Use the pre-computed boolean_params from discovery (avoids MappingProxyType issues)
+        has_confirm_param = any(p.lower() in _CONFIRM_PARAMS for p in tool.boolean_params)
+
+        sibling_candidates = [
+            f"{tool.name}_preview", f"preview_{tool.name}",
+            f"{tool.name}_plan", f"plan_{tool.name}",
+            f"{tool.name}_dry_run",
+        ]
+        has_sibling = any(s in tool_names for s in sibling_candidates)
+
+        if not has_confirm_param and not has_sibling:
+            excerpt = (
+                f"Tool '{tool.name}' performs destructive operations but "
+                f"lacks a two-stage commit pattern (no confirmed/dry_run parameter "
+                f"and no preview/plan sibling tool). "
+                f"Remediation: add a confirmed: boolean parameter or expose a "
+                f"'{tool.name}_preview' tool that returns a description without executing."
+            )
+            results.append(_ProbeResult(
+                probe_id=f"T09-manifest-p{i + 1}",
+                threat_id="T09",
+                passed=False,
+                status_code=None,
+                response_body=excerpt,
+                error=None,
+                assertions=(),
+                duration_seconds=0.0,
+                inconclusive_reason=None,
+            ))
+
     return results
 
 

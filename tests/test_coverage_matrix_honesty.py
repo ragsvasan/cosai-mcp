@@ -23,8 +23,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 README = REPO_ROOT / "README.md"
 ANALYSIS = REPO_ROOT / "docs" / "ANALYSIS_AND_RATIONALE.md"
 
-# Locked truth (CLAUDE.md): T4/T9/T12 are middleware-only; black-box probing
-# is structurally wrong for them.
+# Locked truth (CLAUDE.md): T4/T9/T12 cannot be black-box probed; detection
+# requires being in the call path. T4 and T9 also have passive manifest scans
+# ("middleware-only+manifest"); T12 has no manifest-level signal.
 _EXPECTED_MIDDLEWARE_ONLY = frozenset({"T4", "T9", "T12"})
 
 # All middleware modules are now implemented.
@@ -41,15 +42,17 @@ class TestMatrixInternalConsistency:
         assert set(COVERAGE_MATRIX) == {f"T{i}" for i in range(1, 13)}
 
     def test_middleware_only_set_matches_matrix(self) -> None:
+        # "middleware-only+manifest" categories also belong to MIDDLEWARE_ONLY_CATEGORIES —
+        # the manifest scan is passive analysis of already-fetched data, not a black-box probe.
         derived = {
             cat for cat, eng in COVERAGE_MATRIX.items()
-            if eng == "middleware-only"
+            if eng.startswith("middleware-only")
         }
         assert derived == MIDDLEWARE_ONLY_CATEGORIES == _EXPECTED_MIDDLEWARE_ONLY
 
     def test_zero_config_count_is_nine(self) -> None:
         zero_config = [
-            c for c, e in COVERAGE_MATRIX.items() if e != "middleware-only"
+            c for c, e in COVERAGE_MATRIX.items() if not e.startswith("middleware-only")
         ]
         assert len(zero_config) == 9
 

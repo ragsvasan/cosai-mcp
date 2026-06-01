@@ -219,10 +219,14 @@ class TestCoverageMatrix:
         assert set(COVERAGE_MATRIX.keys()) == expected
 
     def test_middleware_only_categories(self) -> None:
-        """T4, T9, T12 must be middleware-only (locked architecture decision)."""
+        """T4, T9, T12 cannot be black-box probed (locked architecture decision).
+
+        T4 and T9 also have passive manifest scans ('middleware-only+manifest');
+        T12 has no manifest-level signal and remains purely middleware-only.
+        """
         assert MIDDLEWARE_ONLY_CATEGORIES == frozenset({"T4", "T9", "T12"})
         for cat in ("T4", "T9", "T12"):
-            assert COVERAGE_MATRIX[cat] == "middleware-only"
+            assert COVERAGE_MATRIX[cat].startswith("middleware-only")
 
 
 # ---------------------------------------------------------------------------

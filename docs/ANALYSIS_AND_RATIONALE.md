@@ -81,11 +81,12 @@ A runtime conformance scanner that:
 - **Runs three scan engines** across the CoSAI taxonomy (9 categories zero-config; T4/T9/T12 require the middleware in the target call path):
   - *Black-box prober*: one-shot JSON-RPC probes (T1, T3, T5, T8, T10, partial T2/T6/T11)
   - *Stateful conformance harness*: multi-turn scripted scenarios (T2, T6, T7)
+  - *Passive manifest scan*: structural analysis of `tools/list` without sending probes (T4 tool-description poisoning; T9 Totem violations — destructive tools missing two-stage commit)
   - *Middleware instrumentation*: detection-from-inside the call path (T4, T9, T12). All 12 modules implemented: `auth`, `authz`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, `audit`, `validation`, `session`, `supply_chain`. Compose via `CoSAIStack`.
 - **Outputs SARIF 2.1.0** for GitHub's native security findings tab
 - **Exits with a deterministic code** (0 = clean, 1 = findings above threshold, 2 = scanner error, 3 = unreachable) — CI-gate-safe
 
-**Why three engines?** Black-box probing is structurally wrong for T4 (tool poisoning / indirect prompt injection), T9 (LLM trust boundary), and T12 (audit logging). These require being *in the call path* — you can't detect prompt injection from outside the server. The three-engine split is what makes full T1–T12 coverage possible.
+**Why three engines?** Black-box probing is structurally wrong for T4 (tool poisoning / indirect prompt injection), T9 (LLM trust boundary), and T12 (audit logging). These require being *in the call path* — you can't detect prompt injection from outside the server. T4 and T9 each also have a passive manifest-scan layer that works zero-config: T4 detects tool-description poisoning; T9 detects destructive tools missing two-stage commit (TKA Totem, CoSAI WS4). The three-engine split — plus manifest scanning — is what makes full T1–T12 coverage possible.
 
 ### 3.2 Track A — Tool Inventory & Drift Detection
 

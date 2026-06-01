@@ -1292,6 +1292,57 @@ def _print_scan_summary(result: ScanResult, fail_on: str = "critical") -> None:
         click.echo("[ERROR] Scan completed with internal errors — treat as failure.", err=True)
 
 
+# ---------------------------------------------------------------------------
+# Manifest-scan stubs — metadata for T04/T09 passive findings that have no
+# catalog entry (catalog requires signing; manifest scans are code-driven).
+# ---------------------------------------------------------------------------
+
+def _make_manifest_stubs() -> tuple[dict, dict]:
+    """Build (sarif_stubs, html_stubs) for T04 and T09 manifest findings.
+
+    Both dicts are keyed by bare category code (e.g. "T09") because that is
+    what _scan_manifest_t4 and _scan_manifest_t9 write into ProbeResult.threat_id.
+    """
+    from cosai_mcp.catalog.models import Severity
+
+    sarif: dict = {
+        "T09": {
+            "rule_id": "T09-001",
+            "name": "T9 Totem Violation — Missing Two-Stage Commit",
+            "severity": Severity.HIGH,
+            "remediation": (
+                "Destructive tools must implement a two-stage commit pattern: "
+                "add a `confirmed: boolean` parameter (when False, return a "
+                "description of what would happen without executing), or expose "
+                "a `<tool>_preview` sibling tool. No irreversible action should "
+                "execute without explicit confirmation. Ref: TKA Totem layer, CoSAI T9."
+            ),
+            "owasp_ref": "MCP-Top10-A09",
+            "cwe": ("CWE-284",),
+        },
+        "T04": {
+            "rule_id": "T04-001",
+            "name": "T4 Tool Poisoning — Manifest Anomaly",
+            "severity": Severity.HIGH,
+            "remediation": (
+                "Tool descriptions must not contain instructions that redirect LLM "
+                "behavior or embed system-prompt-style directives. Use concise, "
+                "functional descriptions that describe what the tool does, not what "
+                "the LLM should do. Ref: CoSAI T4, MCP tool poisoning."
+            ),
+            "owasp_ref": "MCP-Top10-A04",
+            "cwe": ("CWE-74",),
+        },
+    }
+    html: dict = {
+        k: {**v, "references": ()} for k, v in sarif.items()
+    }
+    return sarif, html
+
+
+_MANIFEST_STUBS_SARIF, _MANIFEST_STUBS_HTML = _make_manifest_stubs()
+
+
 def _write_sarif_report(result: ScanResult, path: Path) -> None:
     from cosai_mcp.report.sarif import SarifBuilder, ScanContext
 
@@ -1310,6 +1361,21 @@ def _write_sarif_report(result: ScanResult, path: Path) -> None:
     for probe_result in result.probe_results:
         threat = threat_by_id.get(probe_result.threat_id)
         if threat is None:
+            # Manifest-scan results carry a bare category code (e.g. "T09", "T04")
+            # that has no catalog entry. Use the stub so findings appear in the report.
+            stub = _MANIFEST_STUBS_SARIF.get(probe_result.threat_id)
+            if stub is None:
+                continue
+            builder.add_result(
+                result=probe_result,
+                severity=stub["severity"],
+                rule_id=stub["rule_id"],
+                rule_name=stub["name"],
+                rule_description=stub["remediation"],
+                owasp_ref=stub.get("owasp_ref", ""),
+                cwe=stub.get("cwe", ()),
+                confidence="medium",
+            )
             continue
         builder.add_result(
             result=probe_result,
@@ -1413,6 +1479,22 @@ def _write_html_report(result: ScanResult, path: Path, report_mode: str = "full"
     for threat_id, probe_results in sorted(results_by_threat.items()):
         threat = threat_by_id.get(threat_id)
         if threat is None:
+            # Manifest-scan results carry a bare category code — use stub metadata.
+            stub = _MANIFEST_STUBS_HTML.get(threat_id)
+            if stub is None:
+                continue
+            passed = all(r.passed for r in probe_results)
+            section = HtmlReportSection(
+                threat_id=stub["rule_id"],
+                category=threat_id,
+                severity=stub["severity"],
+                passed=passed,
+                probe_results=probe_results,
+                remediation=stub["remediation"],
+                references=stub.get("references", ()),
+                probe_contexts=[None] * len(probe_results),
+            )
+            builder.add_section(section)
             continue
         passed = all(r.passed for r in probe_results)
 
