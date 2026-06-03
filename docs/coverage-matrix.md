@@ -12,10 +12,10 @@ Which engine covers which CoSAI threat category, and what is explicitly not cove
 | T6 | Integrity/Verification | Stateful harness + prober | Tool shadowing mid-session, manifest drift, typosquat detection (Levenshtein ≤ 2) | Code-level supply chain (use Snyk/Enkrypt pre-deploy) |
 | T7 | Session Security Failures | Stateful harness + black-box prober | Session fixation, token replay across sessions, session revocation bypass (T7-SC-002); BB: CORS wildcard (T07-001); OAuth scope vs MCP confirmation: confirmation-as-auth-bypass detection (T07-002), scope-before-confirmation enforcement (T07-003) | TLS MITM (infrastructure concern, not MCP-layer) |
 | T8 | Network Binding Failures | Black-box prober | 0.0.0.0 binding detection, SSRF via tool-initiated outbound, shadow server detection | Container network namespace isolation (infrastructure concern) |
-| T9 | Trust Boundary Failures | **Black-box prober (passive) + Middleware** | Passive manifest scan: T09-001 Totem check detects destructive tools without two-stage commit disclosure (HIGH). T09-002 notes absence of SVR advertisement at T9 trust boundary (INFO). Middleware: `LLMOutputSanitizer`, `TrustBoundaryChecker`, `SVRTrustGate` verify output before chaining. | Overreliance on LLM judgment requires LLM-in-the-loop (by design out of scope) |
+| T9 | Trust Boundary Failures | **Middleware only** | Scanner self-protection: all MCP response content sanitised before re-use | Overreliance on LLM judgment requires LLM-in-the-loop (by design out of scope) |
 | T10 | Resource Management | Black-box prober | Rate limit absence with multi-probe (T10-004, probe_count: 30), unbounded response size, recursive depth, heartbeat enforcement | Per-tenant quota accounting (application-layer concern) |
 | T11 | Supply Chain/Lifecycle | Black-box prober (partial) | Typosquatted tool names, unsigned tool definitions, unexpected registry origin | Code-level dependency CVEs (use Snyk/SCA pre-deploy) |
-| T12 | Insufficient Logging | **Middleware only** | Hash-chained audit log, DAG execution trace, `resources/read` context retrieval via `check_resource_read()`, tamper detection via `cosai audit verify` | Prompt/LLM reasoning trace (outside MCP layer; requires LLM host correlation) |
+| T12 | Insufficient Logging | **Middleware only** | Hash-chained audit log, DAG execution trace, tamper detection via `cosai audit verify` | Prompt/LLM reasoning trace (outside MCP layer); `resources/read` logged as ⚠️ partial |
 
 ## Engine Key
 

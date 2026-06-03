@@ -1,27 +1,5 @@
 """T9: Trust boundary enforcement — LLM output is untrusted, sanitize before re-feed.
 
-SVRTrustGate (Structural Verification Receipt):
-  Sits after ResponseBoundaryGuard in check_response().  If an MCP server
-  attaches a Signed Verification Receipt to its tool outputs, this gate
-  verifies the receipt before the output is allowed to continue downstream.
-
-  Four checks in order:
-    1. Structure     — required fields present
-    2. Ed25519 sig   — receipt was signed by the expected key (skipped when
-                       no public key is configured)
-    3. Input hash    — SHA-256 of tool_output matches receipt.input_hash
-    4. Verdict       — receipt.verdict.safe_to_rely is True
-
-  All four must pass.  Failed gates log to audit (never raise) — callers decide
-  whether to quarantine or reject flagged responses.
-
-  Usage::
-
-      gate = SVRTrustGate(public_key_hex="deadbeef...")
-      result = gate.verify_before_chain(receipt_dict, tool_output_text)
-      if not result.verified:
-          # quarantine or reject
-
 The core problem:
   When an MCP tool returns LLM-generated content (e.g. a summarisation tool,
   a code-generation tool, or an agent-to-agent call), that content must be
@@ -45,17 +23,11 @@ Usage::
 """
 from __future__ import annotations
 
-import base64
-import hashlib
 import html
-import json
 import re
 import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
-
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from cryptography.exceptions import InvalidSignature
 
 from cosai_mcp.middleware.boundary import ResponseBoundaryGuard, ScanResult
 
@@ -218,131 +190,3 @@ class TrustBoundaryViolation(Exception):
     Callers must catch this and quarantine or discard the content — never
     silently swallow it and use the original unsanitized text.
     """
-
-
-# ---------------------------------------------------------------------------
-# SVR Trust Gate — Structural Verification Receipt
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class SVRGateResult:
-    """Outcome of SVR receipt verification before downstream chaining."""
-    verified: bool          # True only if ALL four checks pass
-    receipt_id: str | None  # from receipt["receipt_id"]; None if absent/missing
-    verdict_safe: bool | None  # receipt.verdict.safe_to_rely; None if unreadable
-    structure_ok: bool
-    signature_ok: bool      # True when sig verified; True when no pubkey (not checked)
-    hash_match: bool
-    issues: tuple[str, ...]  # human-readable failure reasons, HTML-escaped
-
-
-_SVR_REQUIRED_FIELDS = frozenset({"receipt_id", "input_hash", "verdict", "signature"})
-
-
-class SVRTrustGate:
-    """Verify a Structural Verification Receipt before chaining tool output.
-
-    The gate enforces the T9 invariant: "verify before chain continues."
-    All four checks must pass for ``result.verified`` to be True.
-
-    Parameters
-    ----------
-    public_key_hex:
-        Hex-encoded raw 32-byte Ed25519 public key used to verify the
-        receipt's signature.  When ``None``, signature verification is
-        skipped (structure, hash, and verdict checks still run).
-    """
-
-    def __init__(self, public_key_hex: str | None = None) -> None:
-        self._pubkey: Ed25519PublicKey | None = None
-        if public_key_hex:
-            raw = bytes.fromhex(public_key_hex)
-            self._pubkey = Ed25519PublicKey.from_public_bytes(raw)
-
-    def verify_before_chain(
-        self,
-        receipt: dict[str, Any] | None,
-        tool_output: str,
-    ) -> SVRGateResult:
-        """Verify ``receipt`` against ``tool_output`` before downstream chaining.
-
-        Parameters
-        ----------
-        receipt:
-            Parsed receipt dict attached to the tool response.  May be
-            ``None`` or empty — both are treated as "receipt absent" failures.
-        tool_output:
-            The raw text content of the tool call response.  The gate
-            computes ``sha256:`` + hex-digest and compares it to
-            ``receipt["input_hash"]``.
-        """
-        if not receipt:
-            return SVRGateResult(
-                verified=False, receipt_id=None, verdict_safe=None,
-                structure_ok=False, signature_ok=False, hash_match=False,
-                issues=("receipt absent or empty",),
-            )
-
-        issues: list[str] = []
-
-        # 1. Structure check
-        missing = _SVR_REQUIRED_FIELDS - set(receipt.keys())
-        if missing:
-            for f in sorted(missing):
-                issues.append(html.escape(f"missing field: {f!r}", quote=True))
-            return SVRGateResult(
-                verified=False,
-                receipt_id=receipt.get("receipt_id"),
-                verdict_safe=None,
-                structure_ok=False,
-                signature_ok=False,
-                hash_match=False,
-                issues=tuple(issues),
-            )
-
-        receipt_id: str | None = receipt.get("receipt_id")
-        structure_ok = True
-
-        # 2. Ed25519 signature verification
-        signature_ok = True  # default: "not checked" when no pubkey
-        if self._pubkey is not None:
-            try:
-                sig_bytes = base64.b64decode(receipt["signature"])
-                payload = {k: v for k, v in receipt.items() if k != "signature"}
-                canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-                self._pubkey.verify(sig_bytes, canonical.encode())
-            except (InvalidSignature, Exception) as exc:
-                signature_ok = False
-                issues.append(html.escape(f"signature invalid: {exc}", quote=True))
-
-        # 3. Input hash match — sha256 of the tool output bytes
-        expected = "sha256:" + hashlib.sha256(tool_output.encode()).hexdigest()
-        actual = receipt.get("input_hash", "")
-        hash_match = actual == expected
-        if not hash_match:
-            issues.append(
-                html.escape(
-                    f"input_hash mismatch: receipt has {actual!r}, "
-                    f"expected {expected!r}",
-                    quote=True,
-                )
-            )
-
-        # 4. Verdict — safe_to_rely must be True
-        verdict = receipt.get("verdict")
-        verdict_safe: bool | None = (
-            verdict.get("safe_to_rely", False) if isinstance(verdict, dict) else False
-        )
-        if not verdict_safe:
-            issues.append(html.escape(f"verdict safe_to_rely={verdict_safe!r}", quote=True))
-
-        verified = structure_ok and signature_ok and hash_match and bool(verdict_safe)
-        return SVRGateResult(
-            verified=verified,
-            receipt_id=receipt_id,
-            verdict_safe=verdict_safe,
-            structure_ok=structure_ok,
-            signature_ok=signature_ok,
-            hash_match=hash_match,
-            issues=tuple(issues),
-        )

@@ -16,7 +16,7 @@ Reference for all 12 CoSAI threat categories, their attack patterns, what cosai-
 | T6 | Integrity/Verification | Black-box prober + stateful harness | Done — BB: typosquat detection; Stateful: mid-session manifest diff (rug pull) |
 | T7 | Session Security Failures | Stateful harness + black-box prober | Done — Stateful: session fixation, token-in-URL, cross-session replay, revocation (T7-SC-002); BB: CORS wildcard (T07-001), MCP confirmation bypass (T07-002, critical), scope-before-confirmation (T07-003, high) |
 | T8 | Network Binding Failures | Black-box prober | Done — 0.0.0.0 binding, SSRF (RFC1918/link-local/loopback), shadow server detection |
-| T9 | Trust Boundary Failures | Black-box prober (passive) + middleware instrumentation | Done — BB: T09-001 Totem passive scan (two-stage commit disclosure, HIGH) + T09-002 SVR advertisement check (INFO); Middleware: LLM output sanitization, SVRTrustGate for structural receipt verification |
+| T9 | Trust Boundary Failures | Middleware instrumentation | Done — requires middleware in target server |
 | T10 | Resource Management | Black-box prober | Done — rate limiting with probe_count (T10-004), response size limits, recursive depth, heartbeat |
 | T11 | Supply Chain/Lifecycle | Black-box prober | Done — tool allowlist, typosquat (Levenshtein ≤ 1), signature verification |
 | T12 | Insufficient Logging | Middleware + black-box prober | Done — middleware: hash-chained audit log; BB: T12-002 tool description transparency |
@@ -269,18 +269,14 @@ Delegating security-critical validation to the LLM's judgment. A model may be de
 - **Semantic bypass:** attacker rephrases a malicious request in a way that reads as benign to the model
 - **Context overflow:** flooding the context window with benign content pushes safety instructions out of the model's effective window
 
-### What cosai-mcp tests (black-box prober)
-
-**T09-001 (HIGH) — Totem passive scan:** The scanner passively inspects `tools/list` for **Totem violations**: destructive tools that lack a two-stage commit pattern. A tool is flagged when its name contains an unambiguously-destructive verb (delete, remove, drop, destroy, wipe, purge, reset, revoke, terminate, cancel, truncate, flush, erase, uninstall, deactivate, deregister) and it has neither a `confirmed`/`dry_run` boolean parameter nor a `_preview`/`_plan` sibling tool. This is the structural check for TKA Totem compliance — the first layer of the CoSAI WS4 T9 contribution: *no probabilistic component holds commit authority over irreversible state without explicit human confirmation*. Findings surface as SARIF rule `T09-001` at HIGH severity.
-
-**T09-002 (INFO) — SVR advertisement check:** Passive probe noting whether any tool description references structural verification or SVR receipts (`verify_claims`, `verify_graph`, `verification receipt`). INFO severity — absence is not a vulnerability but an observable gap at the T9 trust boundary. No remediation required; present as a signal for deployments evaluating deterministic output verification.
+### What cosai-mcp tests (passive manifest scan — Totem layer)
+The scanner passively inspects `tools/list` for **Totem violations**: destructive tools that lack a two-stage commit pattern. A tool is flagged when its name contains an unambiguously-destructive verb (delete, remove, drop, destroy, wipe, purge, reset, revoke, terminate, cancel, truncate, flush, erase, uninstall, deactivate, deregister) and it has neither a `confirmed`/`dry_run` boolean parameter nor a `_preview`/`_plan` sibling tool. This is the structural check for TKA Totem compliance — the first layer of the CoSAI WS4 T9 contribution: *no probabilistic component holds commit authority over irreversible state without explicit human confirmation*. Findings surface as SARIF rule `T09-001` at HIGH severity.
 
 ### What cosai-mcp tests (middleware instrumentation)
 T9 requires observing the agent's decision-making. The middleware instruments:
 - Whether validation is deterministic (schema-based) or model-delegated
 - Whether model output is sanitized before being re-fed as input to another tool call
 - Whether safety instructions are present and properly positioned in the context
-- **SVRTrustGate**: optional gate in `CoSAIStack.check_response()` that verifies a Structural Verification Receipt attached to tool responses before downstream chaining. Four checks: structure, Ed25519 signature, SHA-256 input hash match, and `safe_to_rely` verdict. Configure via `svr_gate=SVRTrustGate(public_key_hex=...)` on `CoSAIStack`.
 
 ### Remediation
 - Never use LLM judgment as a security gate; implement deterministic, schema-based validation
@@ -407,13 +403,13 @@ The CoSAI whitepaper describes a DAG that cryptographically links: **prompt → 
 | DAG causal chain (parent_id, nested/concurrent calls) | ✅ Yes | Built via parent_id field + `build_dag()` |
 | Session binding (session_id per entry) | ✅ Yes | Session token injected at middleware boundary |
 | Hash chain (tamper-evident append-only log) | ✅ Yes | SHA-256 chain, `cosai audit verify` |
-| `resources/read` context retrieval | ✅ Yes | `CoSAIStack.check_resource_read(uri, parent_id=tool_entry_id)` — links context retrieval back to the triggering tool call via DAG `parent_id`, closing the middle segment of the causal chain |
+| `resources/read` context retrieval | ⚠️ Gap | MCP middleware could log this; not yet implemented |
 | Original user prompt | ❌ Out of scope | Lives in the LLM host application, not MCP layer |
 | LLM internal reasoning ("thought") | ❌ Out of scope | LLM-internal; inaccessible to any middleware |
 
 **The prompt and reasoning pathway cannot be recorded by MCP middleware** — they exist entirely within the LLM host (e.g., Claude, GPT-4). No MCP scanner or middleware can reach them. Complying with the full CoSAI "flight recorder" concept requires the LLM host to emit a trace that is then *correlated* with the MCP-layer trace using the session ID.
 
-**The `resources/read` gap is closed.** `CoSAIStack.check_resource_read(uri, session_id, parent_id)` logs context retrieval as a first-class audit entry, linked to the triggering tool call via `parent_id`. This closes the middle segment of the causal chain: `prompt_hash → context_refs → tool_invocation`.
+**The `resources/read` gap is fixable.** Context retrieval via `resources/read` is an MCP-layer event that cosai-mcp middleware currently does not log. Adding it would close the middle segment of the causal chain (prompt_hash → context_refs → tool invocation) that the example JSON above already shows as populated. This is tracked as a P8 enhancement.
 
 ### Remediation
 - Implement hash-chained execution trace logging for all tool invocations
