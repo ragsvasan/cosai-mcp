@@ -8,6 +8,7 @@ from cosai_mcp.middleware.authz import AuthzContext, AuthzEnforcer, ToolPolicy
 from cosai_mcp.middleware.boundary import ResponseBoundaryGuard, ToolPoisoningDetector
 from cosai_mcp.middleware.session import SessionManager
 from cosai_mcp.middleware.supply_chain import SupplyChainEnforcer
+from cosai_mcp.middleware.trust import SVRTrustGate
 from cosai_mcp.middleware.validation import ParameterValidator
 
 
@@ -62,6 +63,7 @@ class CoSAIStack:
         authz_enforcer: AuthzEnforcer | None = None,
         session_manager: SessionManager | None = None,
         audit_logger: AuditLogger | None = None,
+        svr_gate: SVRTrustGate | None = None,
     ) -> None:
         self.validator = parameter_validator or ParameterValidator(allow_unknown_tools=True)
         self.supply_chain = supply_chain_enforcer or SupplyChainEnforcer()
@@ -70,6 +72,7 @@ class CoSAIStack:
         self.audit = audit_logger
         self._poisoning_detector = ToolPoisoningDetector()
         self._response_guard = ResponseBoundaryGuard()
+        self._svr_gate = svr_gate
 
     # -------------------------------------------------------------------------
     # Manifest-time checks — call once after tools/list
@@ -145,12 +148,30 @@ class CoSAIStack:
     # Response checks — call after tool returns
     # -------------------------------------------------------------------------
 
-    def check_response(self, body: str, session_id: str = "unknown") -> None:
+    def check_response(
+        self,
+        body: str,
+        session_id: str = "unknown",
+        svr_receipt: dict[str, Any] | None = None,
+    ) -> None:
         """Check a tool call response for indirect prompt injection (T4/T9).
 
         Logs findings to the audit log if one is configured.
         Does not raise — the caller decides whether to reject or redact.
+
+        Parameters
+        ----------
+        body:
+            The raw text content of the tool call response.
+        session_id:
+            The MCP session identifier.
+        svr_receipt:
+            Optional Structural Verification Receipt dict attached to the
+            response.  When ``svr_gate`` is configured on this stack, the
+            gate runs regardless — a missing receipt counts as a gate
+            failure and is logged to audit.
         """
+        # T4/T9: injection pattern scan
         scan = self._response_guard.check(body)
         if scan.flagged and self.audit is not None:
             for finding in scan.findings:
@@ -159,6 +180,60 @@ class CoSAIStack:
                     session_id=session_id,
                     params={"location": finding.location, "severity": finding.severity},
                 )
+
+        # T9: SVR structural verification gate (only runs when gate is configured)
+        if self._svr_gate is not None:
+            result = self._svr_gate.verify_before_chain(svr_receipt, body)
+            if not result.verified and self.audit is not None:
+                self.audit.log(
+                    method="check_response:svr_gate",
+                    session_id=session_id,
+                    params={
+                        "receipt_id": result.receipt_id or "",
+                        "issues": list(result.issues[:3]),
+                    },
+                )
+
+    # -------------------------------------------------------------------------
+    # Resource-read audit hook — closes T12 resources/read gap
+    # -------------------------------------------------------------------------
+
+    def check_resource_read(
+        self,
+        uri: str,
+        session_id: str = "unknown",
+        parent_id: str | None = None,
+    ) -> str | None:
+        """Log a resources/read call for T12 audit completeness.
+
+        Parameters
+        ----------
+        uri:
+            The resource URI being read (e.g. ``"file:///workspace/data.csv"``).
+        session_id:
+            The MCP session identifier.
+        parent_id:
+            entry_id of the parent tool call (for DAG edge construction).
+            Passing the tool-call's audit entry_id here links the resource
+            read to the tool invocation that triggered it, closing the
+            ``prompt_hash → context_refs → tool_invocation`` causal chain
+            identified as a gap in THREAT_CATALOG.md T12.
+
+        Returns
+        -------
+        str or None
+            The audit entry_id if logged, ``None`` if no audit logger is
+            configured.  The returned id can be used as ``parent_id`` for
+            subsequent child calls.
+        """
+        if self.audit is not None:
+            return self.audit.log(
+                method="resources/read",
+                session_id=session_id,
+                params={"uri": uri},
+                parent_id=parent_id,
+            )
+        return None
 
 
 __all__ = ["CoSAIStack"]
