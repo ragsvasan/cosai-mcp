@@ -137,6 +137,7 @@ def _parse_probe(
         probe_count=raw.get("probe_count", 1),
         probe_headers=probe_headers,
         corroboration=corroboration,
+        protocol_error_is_expected=bool(raw.get("protocol_error_is_expected", False)),
     )
 
 

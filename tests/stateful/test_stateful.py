@@ -15,13 +15,16 @@ from cosai_mcp.stateful.harness import (
     StatefulHarness,
     StepAction,
     StepAssertion,
+    StepResult,
     _evaluate_assertion,
     _resolve_path,
+    _scenario_method_not_found,
 )
 from cosai_mcp.stateful.scenarios import (
     t2_confused_deputy,
     t2_privilege_escalation_chain,
     t6_tool_shadowing_mid_session,
+    t7_session_revocation,
     t7_session_token_binding,
 )
 
@@ -306,8 +309,10 @@ class TestT2ConfusedDeputy:
 
 class TestT6ToolShadowing:
 
-    def test_tool_shadowing_mid_session(self):
-        """MockMCPServer returns different tool lists — caller detects the drift.
+    def test_tool_shadowing_mid_session_fails_scenario(self):
+        """Audit COV-03: a CHANGED 2nd tools/list within the session must FAIL
+        the scenario — the harness now diffs the manifests itself instead of
+        leaving it "to the caller".
 
         The sequence has 3 entries because MCPSession.start() calls tools/list
         once as part of the MCP handshake (index 0), then the two scenario
@@ -322,20 +327,20 @@ class TestT6ToolShadowing:
             )
 
         assert result.status == "complete"
-        # Both steps ran (both tools/list calls returned)
-        assert len(result.step_results) == 2
+        # The scenario FAILS because the manifest drifted between the two steps.
+        assert result.passed is False
+        # Two real tools/list steps PLUS one synthetic drift-check step.
+        assert len(result.step_results) == 3
         assert result.step_results[0].passed is True
         assert result.step_results[1].passed is True
-
-        # Caller detects drift by comparing the two responses
-        tools_step0 = result.step_results[0].response["result"]["tools"]
-        tools_step1 = result.step_results[1].response["result"]["tools"]
-        assert tools_step0 != tools_step1, (
-            "Tool manifest changed mid-session — T6 tool shadowing detected"
-        )
+        drift = result.step_results[2]
+        assert drift.passed is False
+        assert drift.description == "T6 manifest-drift check"
+        assert "shadowing" in drift.failures[0].message.lower()
 
     def test_stable_manifest_passes_unchanged(self):
-        """Stable server returns same tools list both times — no drift."""
+        """Stable server returns same tools list both times — no drift step,
+        scenario PASSES."""
         with MockMCPServer(tools=_BASIC_TOOLS) as server:
             server.wait_ready()
             result = _harness().run_scenario(
@@ -343,9 +348,78 @@ class TestT6ToolShadowing:
             )
 
         assert result.status == "complete"
+        assert result.passed is True
+        # No synthetic drift step appended.
+        assert len(result.step_results) == 2
         tools_step0 = result.step_results[0].response["result"]["tools"]
         tools_step1 = result.step_results[1].response["result"]["tools"]
         assert tools_step0 == tools_step1
+
+    def test_regression_drift_error_on_second_tools_list_still_fails(self):
+        """FIX [3] (drift-evasion): if a server returns a NORMAL manifest on the
+        first tools/list but an error/empty manifest on the second (to hide that
+        it dropped a tool), the scenario must still FAIL — never a false pass.
+
+        The empty-manifest second response drifts from the baseline, so the
+        manifest-drift check fires. (An outright JSON-RPC error would instead be
+        caught by the step's own `result.tools is_not_none` assertion.)"""
+        with MockMCPServer(
+            tools_list_sequence=[_BASIC_TOOLS, _BASIC_TOOLS, []],  # 3rd call: empty
+        ) as server:
+            server.wait_ready()
+            result = _harness().run_scenario(
+                t6_tool_shadowing_mid_session(), _target(server)
+            )
+
+        assert result.passed is False
+
+    def test_unsupported_method_gate_catches_invalid_params_on_nonstandard_method(self):
+        """COV-10 (mnemo's real behaviour): session/terminate returns -32602
+        (invalid params), not -32601. The gate must catch the full validation-
+        code set on a NON-standard method, but NOT on a standard method like
+        tools/call (tool-absence is handled by the precondition gate)."""
+        scenario = Scenario(
+            id="X", name="x", threat_categories=("T7",),
+            steps=(
+                ScenarioStep(description="terminate",
+                             action=StepAction(method="session/terminate", params={}),
+                             assertions=()),
+                ScenarioStep(description="call",
+                             action=StepAction(method="tools/call", params={"name": "echo"}),
+                             assertions=()),
+            ),
+        )
+
+        def _step(idx, code):
+            return StepResult(
+                step_index=idx, description="x", passed=True,
+                response={"jsonrpc": "2.0", "id": "1", "error": {"code": code, "message": "m"}},
+                failures=(), error=None,
+            )
+
+        # -32602 on the non-standard session/terminate step → gate fires.
+        assert _scenario_method_not_found(scenario, [_step(0, -32602), _step(1, -32000)]) is not None
+        # A -32602 on the STANDARD tools/call step alone must NOT fire the gate.
+        ok_term = StepResult(step_index=0, description="terminate", passed=True,
+                             response={"jsonrpc": "2.0", "id": "1", "result": {}},
+                             failures=(), error=None)
+        assert _scenario_method_not_found(scenario, [ok_term, _step(1, -32602)]) is None
+
+    def test_regression_revocation_unsupported_method_is_inconclusive(self):
+        """COV-10 false-positive guard: a server that does NOT implement the
+        synthetic `session/terminate` revocation method (returns -32601) must
+        yield INCONCLUSIVE, never a revocation-bypass FINDING. Otherwise a secure
+        server that revokes sessions a different way is falsely flagged."""
+        with MockMCPServer(tools=_BASIC_TOOLS) as server:
+            server.wait_ready()
+            result = _harness().run_scenario(
+                t7_session_revocation(), _target(server)
+            )
+
+        assert result.status == "inconclusive"
+        assert result.passed is False
+        assert result.inconclusive_reason is not None
+        assert "session/terminate" in result.inconclusive_reason
 
     def test_regression_t6_sequence_index_offset_documented(self):
         """With a 2-entry sequence [A, B], both scenario steps see B (last entry repeats).
@@ -413,21 +487,28 @@ class TestStatefulHarnessScanIncomplete:
         assert result.step_results == ()
 
     def test_scan_incomplete_on_mid_scenario_abort(self):
-        """Error in a non-final step triggers scan-incomplete with partial results."""
+        """A non-(-32601) JSON-RPC error in a step (no exception) → the scenario
+        runs to completion with passed=False (it is NOT scan-incomplete, and NOT
+        the method-not-found inconclusive path).
+
+        Uses tools/call → echo with the mock configured to return a -32000
+        application error: a real JSON-RPC error that is NOT method-not-found, so
+        it exercises the 'error response continues to completion' path without
+        tripping the -32601 unsupported-method inconclusive gate."""
         error_scenario = Scenario(
             id="TEST-SC-001",
             name="Abort test",
             threat_categories=("T7",),
             steps=(
                 ScenarioStep(
-                    description="Step 0 — returns server error but no exception",
-                    action=StepAction(method="nonexistent/method", params={}),
+                    description="Step 0 — returns -32000 server error but no exception",
+                    action=StepAction(method="tools/call", params={"name": "echo", "arguments": {}}),
                     assertions=(
                         StepAssertion(target="result", operator="is_not_none"),
                     ),
                 ),
                 ScenarioStep(
-                    description="Step 1 — should not run if step 0 raised exception",
+                    description="Step 1 — runs after step 0's error response",
                     action=StepAction(method="tools/list", params={}),
                     assertions=(
                         StepAssertion(target="result", operator="is_not_none"),
@@ -435,11 +516,13 @@ class TestStatefulHarnessScanIncomplete:
                 ),
             ),
         )
-        with MockMCPServer() as server:
+        with MockMCPServer(
+            tools_call_response={"jsonrpc": "2.0", "id": 0, "error": {"code": -32000, "message": "boom"}},
+        ) as server:
             server.wait_ready()
             result = _harness().run_scenario(error_scenario, _target(server))
 
-        # Step 0 returns JSON-RPC error (no exception) → assertion fails, continues
+        # Step 0 returns a JSON-RPC error (no exception) → assertion fails, continues
         assert result.status == "complete"
         assert result.passed is False  # step 0 fails (result is None)
 

@@ -25,4 +25,11 @@ catalog/.signing-key
 docs/P10-P12-CONTEXT.md
 cosai-mnemo-report.csv
 cosai-incident-*.json
+cosai-*-report.*
+cosai-report.*
 docs/decks/
+
+# testmon change-filtered test DB (local state — EFF-12 repo hygiene)
+.testmondata
+.testmondata-shm
+.testmondata-wal

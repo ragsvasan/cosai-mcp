@@ -221,7 +221,10 @@ class TestCatalogHash:
 # ---------------------------------------------------------------------------
 
 class TestDetermineExitCode:
-    def _make_probe_result(self, *, passed: bool, error: str | None = None):
+    def _make_probe_result(
+        self, *, passed: bool, error: str | None = None,
+        inconclusive_reason: str | None = None,
+    ):
         from cosai_mcp.harness.result import ProbeResult
         return ProbeResult(
             probe_id="T01-001-p1",
@@ -232,6 +235,7 @@ class TestDetermineExitCode:
             error=error,
             assertions=(),
             duration_seconds=0.1,
+            inconclusive_reason=inconclusive_reason,
         )
 
     def _make_scenario_result(self, *, passed: bool, status: str = "complete"):
@@ -267,6 +271,22 @@ class TestDetermineExitCode:
 
     def test_no_results_returns_0(self) -> None:
         assert _determine_exit_code([], [], "critical") == 0
+
+    def test_inconclusive_is_not_a_finding(self) -> None:
+        """Audit COV-06: an INCONCLUSIVE probe (passed=False, inconclusive_reason
+        set, error=None) is neither a finding (exit 1) nor a scanner error
+        (exit 2).  A scan whose only non-pass is inconclusive exits 0."""
+        r = self._make_probe_result(
+            passed=False, inconclusive_reason="protocol error -32601 — method not found"
+        )
+        assert _determine_exit_code([r], [], "critical") == 0
+
+    def test_inconclusive_alongside_real_finding_still_returns_1(self) -> None:
+        inc = self._make_probe_result(
+            passed=False, inconclusive_reason="boundary rejection"
+        )
+        finding = self._make_probe_result(passed=False)
+        assert _determine_exit_code([inc, finding], [], "critical") == 1
 
 
 # ---------------------------------------------------------------------------

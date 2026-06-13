@@ -47,6 +47,79 @@ _SCHEMA_MISMATCH_KEYWORDS: tuple[str, ...] = (
 )
 
 
+# JSON-RPC protocol error codes that mean the probe NEVER reached the tool's
+# security logic: the method/tool did not exist (-32601), the arguments did not
+# match the tool schema (-32602), the request was malformed (-32600), or it
+# failed to parse (-32700).  When a "reject = secure" probe (assert
+# response.error == true) is satisfied ONLY by one of these codes, the PASS is
+# vacuous — a server that simply lacks the hardcoded tool name would "pass".
+# Such results are INCONCLUSIVE, never PASS and never a finding.
+#
+# Codes deliberately EXCLUDED: -32603 (internal error), -32000..-32099 (server
+# application errors, e.g. -32001 auth/scope rejection, -32029 rate limit).
+# Those are genuine security-relevant outcomes the probes are meant to observe.
+_PROTOCOL_VALIDATION_CODES: frozenset[int] = frozenset(
+    {-32700, -32600, -32601, -32602}
+)
+
+# Request-level rejection codes: the server failed to parse (-32700) or rejected
+# the request as malformed/too-large (-32600) BEFORE dispatching to a tool.  A
+# resource/size/parse limit firing emits one of these.  These are the ONLY codes
+# a reject-the-request probe (protocol_error_is_expected) may treat as a "control
+# fired" secure signal.  -32601 (method not found) and -32602 (invalid params)
+# are deliberately EXCLUDED: a server that simply lacks the probed tool returns
+# the identical -32601/-32602, so they can never be proof a limit/allowlist fired
+# (adversary EXPLOIT 1) — they always downgrade to INCONCLUSIVE.
+_REQUEST_LEVEL_CODES: frozenset[int] = frozenset({-32700, -32600})
+
+
+def _probe_inspects_error_code(probe: Probe) -> bool:
+    """True if any of the probe's assertions explicitly target the JSON-RPC
+    error code (response.error_code).  Such a probe is intentionally testing
+    protocol-level behaviour (e.g. T01-005 asserts ``error_code == -32601``;
+    T11-001 accepts -32601/-32602 via ``error_code_in``) — it must NOT be
+    downgraded to inconclusive by the generic protocol-error guard below.
+    """
+    return any(a.target == "response.error_code" for a in probe.assertions)
+
+
+def _detect_protocol_error(response: dict[str, Any], probe: Probe) -> str | None:
+    """Return an inconclusive reason if the response is a JSON-RPC validation/
+    not-found error (``-32601``/``-32602``/``-32600``/``-32700``) and the probe
+    does not explicitly assert on the error code.
+
+    A ``-32601`` (method not found) means the probe's assumed privileged tool
+    does not exist on this server, so a ``response.error == true`` assertion
+    holds for the wrong reason.  Treating that as a PASS is the core vacuous-PASS
+    bug (audit COV-06): it reports "access control enforced" against a server
+    that never had the tested tool.  Returns None when the probe opts in to
+    protocol-level testing (see ``_probe_inspects_error_code``).
+    """
+    if _probe_inspects_error_code(probe):
+        return None
+    error = response.get("error")
+    if not isinstance(error, dict):
+        return None
+    code = error.get("code")
+    if code not in _PROTOCOL_VALIDATION_CODES:
+        return None
+    if probe.protocol_error_is_expected and code in _REQUEST_LEVEL_CODES:
+        # The probe's security control IS rejection of a malformed/oversized
+        # request (T10 size/nesting limits) and the server emitted a REQUEST-
+        # LEVEL rejection (-32600/-32700) — the limit fired.  NOT suppressed for
+        # -32601/-32602: those are indistinguishable from "tool absent" and can
+        # never be proof a control fired (adversary EXPLOIT 1).
+        return None
+    msg = str(error.get("message", ""))[:200]
+    return (
+        f"Server returned JSON-RPC protocol error {code} ({msg!r}). The "
+        f"probe's assumed method/tool was not found or the arguments did "
+        f"not match the tool schema, so the security property could not be "
+        f"reached. This test is INCONCLUSIVE: a protocol-level rejection is "
+        f"not evidence that the security control under test was enforced."
+    )
+
+
 def _detect_schema_mismatch(response: dict[str, Any]) -> str | None:
     """Return an inconclusive reason string if the response indicates the server
     rejected the probe due to argument/schema validation rather than the
@@ -196,8 +269,16 @@ class ProbeContext:
         # Detect inconclusive: server rejected the probe payload for schema/
         # argument-validation reasons unrelated to the security property being
         # tested.  This prevents false positives when probe arguments don't
-        # match a server's tool schema.
-        inconclusive_reason = _detect_schema_mismatch(response)
+        # match a server's tool schema.  Two layers:
+        #   1. content-layer isError text matching validation keywords;
+        #   2. JSON-RPC protocol errors (-32601/-32602/-32600/-32700) that mean
+        #      the probe never reached the tool's security logic.  This is the
+        #      core fix that makes "reject = secure" probes INCONCLUSIVE rather
+        #      than vacuously PASS on a method-not-found (audit COV-06).
+        inconclusive_reason = (
+            _detect_schema_mismatch(response)
+            or _detect_protocol_error(response, probe)
+        )
 
         # Corroboration (schema 1.1): a probe whose primary assertions FAIL is
         # only reported as a finding when ALL positive-evidence (corroboration)
@@ -228,10 +309,18 @@ class ProbeContext:
                     "sufficient to report a finding."
                 )
 
+        # An INCONCLUSIVE result is NEITHER a pass NOR a finding: the security
+        # property could not be verified.  Forcing passed=False here is what
+        # stops a vacuous PASS from counting as a clean verdict downstream
+        # (api.py has_clean / scorecard PASS grade).  Without this, a probe
+        # whose assertion held only because the payload was rejected at the
+        # boundary would be reported as "tested and secure" (audit §2).
+        final_passed = passed and inconclusive_reason is None
+
         return make_probe_result(
             probe_id=probe.id,
             threat_id=threat.id,
-            passed=passed,
+            passed=final_passed,
             assertions=assertion_results,
             response=response,
             duration_seconds=duration,

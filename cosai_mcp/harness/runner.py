@@ -106,6 +106,8 @@ def _probe_to_dict(probe: Probe) -> dict[str, Any]:
             }
             for a in probe.corroboration
         ]
+    if probe.protocol_error_is_expected:
+        d["protocol_error_is_expected"] = True
     return d
 
 
@@ -147,6 +149,7 @@ def _probe_from_dict(d: dict[str, Any]) -> Probe:
         probe_count=d.get("probe_count", 1),
         probe_headers=types.MappingProxyType(raw_headers) if raw_headers else None,
         corroboration=corroboration,
+        protocol_error_is_expected=bool(d.get("protocol_error_is_expected", False)),
     )
 
 
@@ -374,6 +377,7 @@ def _synthesize_probe(
             # without this a synthesized T3 probe reverts to noisy
             # not_contains-only behaviour.
             corroboration=probe.corroboration,
+            protocol_error_is_expected=probe.protocol_error_is_expected,
         )
     except ValueError:
         # Expected from template-escape guard or missing adversarial value (P2 fix)

@@ -194,6 +194,19 @@ class TestRunProbeHeaderMerge:
         assert server._last_request_headers.get("X-Base") == "present"
 
 
+# Valid-signature stand-in (the operator-supplied token). The mock decodes the
+# JWT payload for the scope claim without verifying the signature — so for the
+# mock this token has scope tools:write. Against a real server the operator
+# supplies a genuinely-signed token via --auth-token; the catalog probe carries
+# NO Authorization header of its own (audit COV-04 repair).
+_VALID_SCOPE_TOKEN = (
+    "eyJhbGciOiJub25lIn0"
+    ".eyJzdWIiOiJ0ZXN0LWFnZW50Iiwic2NvcGUiOiJ0b29sczp3cml0ZSIsImV4cCI6OTk5OTk5OTk5OX0"
+    "."
+)
+_VALID_AUTH_HEADER = {"Authorization": f"Bearer {_VALID_SCOPE_TOKEN}"}
+
+
 class TestT07003CatalogLoads:
     def test_loads(self, catalog) -> None:
         t = catalog.load_file(Path("official/T07-003.json"))
@@ -202,11 +215,13 @@ class TestT07003CatalogLoads:
         assert t.severity == Severity.HIGH
         assert len(t.probes) == 1
 
-    def test_p1_has_probe_headers(self, catalog) -> None:
+    def test_p1_carries_no_forged_authorization(self, catalog) -> None:
+        """COV-04: the probe must NOT carry its own (forged) Authorization
+        header — it relies on the operator-supplied valid token so a secure
+        server that correctly rejects forgeries cannot be a false positive."""
         t = catalog.load_file(Path("official/T07-003.json"))
         p1 = t.probes[0]
-        assert p1.probe_headers is not None
-        assert "Authorization" in p1.probe_headers
+        assert p1.probe_headers is None
 
     def test_p1_assertion_expects_no_error(self, catalog) -> None:
         t = catalog.load_file(Path("official/T07-003.json"))
@@ -215,6 +230,14 @@ class TestT07003CatalogLoads:
             a.target == "response.error" and a.value is False
             for a in p1.assertions
         )
+
+    def test_p1_has_confirmation_corroboration(self, catalog) -> None:
+        """A rejection only counts as a finding when corroborated by positive
+        evidence that confirmation is the gate (COV-04)."""
+        t = catalog.load_file(Path("official/T07-003.json"))
+        p1 = t.probes[0]
+        assert len(p1.corroboration) == 1
+        assert p1.corroboration[0].target == "response.body"
 
 
 # ---------------------------------------------------------------------------
@@ -226,10 +249,16 @@ class TestT07003ScopeHonoredWithoutConfirmation:
     Vulnerable server: rejects because confirmation is absent (probe fails)."""
 
     @pytest.mark.asyncio
-    async def test_secure_server_accepts_valid_scope_without_confirmation(
+    async def test_secure_server_with_valid_token_no_false_positive(
         self, catalog
     ) -> None:
-        """Valid-scope token + no confirmation → secure server accepts → PASS."""
+        """COV-04 regression: a SECURE server (scope honored) yields NO finding.
+
+        The operator supplies a valid token; the probe omits its own header.
+        The secure server processes the scope-valid call without confirmation →
+        no error → PASS. This is the exact inverted false-positive the audit
+        flagged: previously the probe forged an alg=none token, which a secure
+        server correctly rejected → HIGH false-positive."""
         threat = catalog.load_file(Path("official/T07-003.json"))
         probe = threat.probes[0]
 
@@ -238,16 +267,18 @@ class TestT07003ScopeHonoredWithoutConfirmation:
             confirmation_gates_access=False,  # secure: scope alone is sufficient
         ) as server:
             server.wait_ready()
-            result = await run_probe(probe, threat, server)
+            result = await run_probe(probe, threat, server, base_headers=_VALID_AUTH_HEADER)
 
         assert result.passed is True
         assert result.error is None
+        assert result.inconclusive_reason is None
 
     @pytest.mark.asyncio
     async def test_vulnerable_server_requires_confirmation_as_gate(
         self, catalog
     ) -> None:
-        """Vulnerable: server rejects valid-scope call because confirmation=true absent → FAIL."""
+        """Vulnerable: server rejects valid-scope call because confirmation=true
+        absent AND the rejection references confirmation → corroborated FINDING."""
         threat = catalog.load_file(Path("official/T07-003.json"))
         probe = threat.probes[0]
 
@@ -256,34 +287,27 @@ class TestT07003ScopeHonoredWithoutConfirmation:
             confirmation_gates_access=True,  # vulnerable: confirmation is the auth gate
         ) as server:
             server.wait_ready()
-            result = await run_probe(probe, threat, server)
+            result = await run_probe(probe, threat, server, base_headers=_VALID_AUTH_HEADER)
 
+        # Primary assertion fails (error present) AND corroboration holds
+        # (message says "Confirmation required") → real finding, not inconclusive.
         assert result.passed is False
+        assert result.inconclusive_reason is None
+        assert "onfirmation" in result.response_body
 
     @pytest.mark.asyncio
-    async def test_wrong_scope_still_rejected_without_confirmation(
+    async def test_unrelated_rejection_is_inconclusive_not_finding(
         self, catalog
     ) -> None:
-        """Wrong-scope token without confirmation → secure server still rejects (scope check fires)."""
+        """A rejection NOT referencing confirmation (e.g. wrong scope) must be
+        INCONCLUSIVE, never a finding — corroboration absent (COV-04 guard)."""
         threat = catalog.load_file(Path("official/T07-003.json"))
         probe = threat.probes[0]
-
-        # Override probe_headers with wrong-scope token
-        from cosai_mcp.catalog.models import Probe
-        import types as _types
 
         wrong_token = (
             "eyJhbGciOiJub25lIn0"
             ".eyJzdWIiOiJ0ZXN0LWFnZW50Iiwic2NvcGUiOiJyZWFkOm90aGVyIiwiZXhwIjo5OTk5OTk5OTk5fQ"
             "."
-        )
-        wrong_probe = Probe(
-            id=probe.id,
-            transport=probe.transport,
-            method=probe.method,
-            payload=probe.payload,
-            assertions=probe.assertions,
-            probe_headers=_types.MappingProxyType({"Authorization": f"Bearer {wrong_token}"}),
         )
 
         with MockMCPServer(
@@ -291,7 +315,14 @@ class TestT07003ScopeHonoredWithoutConfirmation:
             confirmation_gates_access=False,
         ) as server:
             server.wait_ready()
-            result = await run_probe(wrong_probe, threat, server)
+            result = await run_probe(
+                probe, threat, server,
+                base_headers={"Authorization": f"Bearer {wrong_token}"},
+            )
 
-        # Assertion expects error=False (success), but wrong scope → server rejects → assertion fails
+        # Server rejects for insufficient scope → primary fails, but the
+        # rejection does not reference confirmation → corroboration absent →
+        # INCONCLUSIVE, not a finding.
         assert result.passed is False
+        assert result.inconclusive_reason is not None
+        assert "onfirmation" not in result.response_body

@@ -44,10 +44,16 @@ class CategoryResult:
     category: str              # "T1" … "T12"
     grade: Grade
     probe_count: int           # probes executed (0 = not tested)
-    finding_count: int         # non-passing probes
+    finding_count: int         # real findings (non-passing, non-inconclusive)
     critical_count: int        # findings with severity ≥ critical
     high_count: int            # findings with severity = high (not critical)
     coverage_engine: str       # which engine covers this category
+    # Probes that ran but could not verify the security property (e.g. the
+    # server rejected the payload at the boundary, or returned a JSON-RPC
+    # method-not-found).  An inconclusive probe is NEITHER a pass NOR a finding.
+    # A category with probes but zero conclusive results grades NOT_TESTED — it
+    # was NOT verified secure (audit COV-06 / EFF-03).
+    inconclusive_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -58,6 +64,7 @@ class CategoryResult:
             "critical_count": self.critical_count,
             "high_count": self.high_count,
             "coverage_engine": self.coverage_engine,
+            "inconclusive_count": self.inconclusive_count,
         }
 
     @classmethod
@@ -70,6 +77,7 @@ class CategoryResult:
             critical_count=int(d.get("critical_count", 0)),
             high_count=int(d.get("high_count", 0)),
             coverage_engine=str(d.get("coverage_engine", "unknown")),
+            inconclusive_count=int(d.get("inconclusive_count", 0)),
         )
 
 

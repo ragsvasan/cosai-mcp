@@ -65,6 +65,15 @@ class Probe:
     # all hold, the probe is downgraded to INCONCLUSIVE (uncorroborated) rather
     # than counted as a finding.  Empty tuple = pre-1.1 behaviour (no change).
     corroboration: tuple = ()        # tuple[Assertion, ...]
+    # When True, a JSON-RPC protocol-validation error (-32601/-32602/-32600/
+    # -32700) is an EXPECTED *secure* outcome for this probe rather than a sign
+    # the security logic was never reached.  Set for probes whose security
+    # control IS rejection of a malformed/oversized/typosquatted request (T10
+    # resource limits, T11 tool-name allowlist), where a method-not-found or
+    # invalid-params response means the allowlist/limit fired.  Default False:
+    # for payload-injection probes (T03/T08) a protocol error is vacuous and the
+    # probe is downgraded to INCONCLUSIVE (audit §2 / COV-06 / COV-08).
+    protocol_error_is_expected: bool = False
 
 
 @dataclass(frozen=True)

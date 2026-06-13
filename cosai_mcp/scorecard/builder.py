@@ -1,6 +1,7 @@
 """Scorecard builder — derive per-category conformance grades from ScanResult."""
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from cosai_mcp.scorecard.models import (
@@ -32,13 +33,27 @@ _SEV_RANK: dict[str, int] = {
 _MAX_NOT_TESTED = 4
 
 
+def _category_from_threat_id(threat_id: str) -> str:
+    """Map a threat_id (e.g. ``T06``, ``T04-001``) to its CoSAI category
+    (``T6``, ``T4``).  Used as a fallback for passive manifest-scan results that
+    have no catalog probe definition.  Returns ``T?`` if unparseable."""
+    m = re.match(r"^T0*([0-9]+)", threat_id or "")
+    return f"T{m.group(1)}" if m else "T?"
+
+
 def _grade_category(
     probe_count: int,
     finding_count: int,
     critical_count: int,
     high_count: int,
+    pass_count: int = 0,
 ) -> Grade:
     if probe_count == 0:
+        return Grade.NOT_TESTED
+    # Probes ran but NOTHING was conclusively verified: every probe was either
+    # inconclusive (boundary rejection / method-not-found) or errored.  This is
+    # NOT a pass — the category was not verified secure (audit COV-06 / §2).
+    if pass_count == 0 and finding_count == 0:
         return Grade.NOT_TESTED
     if finding_count == 0:
         return Grade.PASS
@@ -87,14 +102,24 @@ def build_scorecard(
     cat_stats: dict[str, dict[str, int]] = {}
     for pr in result.probe_results:
         meta = probe_meta.get(pr.probe_id, {})
-        cat = meta.get("category", "T?")
+        # Catalog probes resolve via probe_meta; passive manifest-scan results
+        # (T04/T06/T09 — no catalog file) resolve via their threat_id so they
+        # land in the correct CoSAI category instead of the "T?" bucket.
+        cat = meta.get("category") or _category_from_threat_id(pr.threat_id)
         if cat not in cat_stats:
             cat_stats[cat] = {
                 "probe_count": 0, "finding_count": 0,
                 "critical_count": 0, "high_count": 0,
+                "pass_count": 0, "inconclusive_count": 0,
             }
         cat_stats[cat]["probe_count"] += 1
-        if not pr.passed and pr.error is None:
+        if pr.inconclusive_reason is not None:
+            # Ran, but the security property could not be verified — neither a
+            # pass nor a finding (audit COV-06).
+            cat_stats[cat]["inconclusive_count"] += 1
+        elif pr.passed:
+            cat_stats[cat]["pass_count"] += 1
+        elif pr.error is None:
             cat_stats[cat]["finding_count"] += 1
             sev = meta.get("severity", "medium")
             if _SEV_RANK.get(sev, 0) >= _SEV_RANK["critical"]:
@@ -107,12 +132,14 @@ def build_scorecard(
     cat_results: list[CategoryResult] = []
     for cat in all_categories:
         stats = cat_stats.get(cat, {"probe_count": 0, "finding_count": 0,
-                                    "critical_count": 0, "high_count": 0})
+                                    "critical_count": 0, "high_count": 0,
+                                    "pass_count": 0, "inconclusive_count": 0})
         grade = _grade_category(
             probe_count=stats["probe_count"],
             finding_count=stats["finding_count"],
             critical_count=stats["critical_count"],
             high_count=stats["high_count"],
+            pass_count=stats.get("pass_count", 0),
         )
         cat_results.append(CategoryResult(
             category=cat,
@@ -122,6 +149,7 @@ def build_scorecard(
             critical_count=stats["critical_count"],
             high_count=stats["high_count"],
             coverage_engine=_ENGINE_COVERAGE.get(cat, "unknown"),
+            inconclusive_count=stats.get("inconclusive_count", 0),
         ))
 
     conformance = _determine_conformance(cat_results)

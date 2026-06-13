@@ -27,6 +27,7 @@ from cosai_mcp.stateful.scenarios import (
     t2_confused_deputy,
     t2_privilege_escalation_chain,
     t6_tool_shadowing_mid_session,
+    t7_session_revocation,
     t7_session_token_binding,
 )
 
@@ -499,6 +500,7 @@ def _run_scan(
     fail_on: str = "critical",
     allow_private_targets: bool = True,
     auth_token: str | None = None,
+    read_token: str | None = None,
     mcp_path: str = "/mcp",
     adaptive: bool = True,
     profile: ServerProfile | None = None,
@@ -537,6 +539,7 @@ def _run_scan(
         allow_private_targets=allow_private_targets,
         probe_timeout_seconds=probe_timeout_seconds,
         auth_token=effective_auth_token,
+        read_token=read_token,
         mcp_path=effective_mcp_path,
         auth_header=effective_auth_header,
         probe_delay_seconds=probe_delay_seconds,
@@ -609,6 +612,13 @@ def _run_scan(
         # Runs whenever T9 is in scope (no category filter, or T9 explicitly requested).
         if effective_categories is None or "T9" in effective_categories:
             probe_results.extend(_scan_manifest_t9(tuple(discovered_tools) if discovered_tools else ()))
+
+        # T6: passive manifest integrity scan — tool-name collisions and tool
+        # names within Levenshtein 1 of a reserved MCP method or another tool
+        # (typosquat / shadowing).  Replaces the old T06-001/002 black-box probes
+        # that only asserted tools/list succeeds (audit COV-02).
+        if effective_categories is None or "T6" in effective_categories:
+            probe_results.extend(_scan_manifest_t6(tuple(discovered_tools) if discovered_tools else ()))
 
         # Profile: remap discovered tool name through tool_name_map if present.
         # This ensures probes use the real server tool name instead of the
@@ -695,6 +705,7 @@ def _run_scan(
             (frozenset({"T2"}), t2_confused_deputy),
             (frozenset({"T6"}), t6_tool_shadowing_mid_session),
             (frozenset({"T7"}), t7_session_token_binding),
+            (frozenset({"T7"}), t7_session_revocation),
         ]
         profile_skip = profile.skip_categories if profile else frozenset()
         harness = StatefulHarness(config=config)
@@ -858,6 +869,135 @@ def _scan_manifest_t9(
                 duration_seconds=0.0,
                 inconclusive_reason=None,
             ))
+
+    return results
+
+
+# Reserved MCP method names a tool must never shadow or typosquat (T6).
+# Compared case-insensitively against tool names via Levenshtein distance.
+_RESERVED_MCP_METHODS: frozenset[str] = frozenset({
+    "initialize", "ping", "tools/list", "tools/call",
+    "resources/list", "resources/read", "resources/templates/list",
+    "resources/subscribe", "resources/unsubscribe",
+    "prompts/list", "prompts/get", "completion/complete",
+    "logging/setlevel", "roots/list", "sampling/createmessage",
+    "notifications/initialized", "notifications/cancelled",
+})
+
+
+def _scan_manifest_t6(discovered_tools: tuple) -> list[ProbeResult]:
+    """Passive T6 integrity scan over the discovered tools/list manifest.
+
+    Replaces the vacuous T06-001/002 black-box probes (which only asserted that
+    tools/list succeeds) with the real detection the coverage matrix claims
+    (audit COV-02):
+      1. Name COLLISION — two tools share an identical name (definite shadowing).
+      2. RESERVED-method shadow — a tool name is within Levenshtein 1 of (or
+         equals) a standard MCP method name (e.g. ``tools_call`` vs ``tools/call``).
+      3. Near-collision — two distinct tool names within Levenshtein 1 of each
+         other (typosquat / shadowing within the manifest).
+
+    Each finding is a failing ProbeResult.  When the manifest is non-empty and
+    nothing is flagged, one passing ProbeResult is emitted so a clean T6 grades
+    PASS (the scan ran and found no integrity issue) rather than NOT_TESTED.
+    """
+    from cosai_mcp.middleware.integrity import levenshtein
+    from cosai_mcp.harness.result import ProbeResult as _ProbeResult
+
+    if not discovered_tools:
+        return []
+
+    names: list[str] = [t.name for t in discovered_tools]
+    results: list[ProbeResult] = []
+
+    def _finding(idx: int, excerpt: str) -> ProbeResult:
+        return _ProbeResult(
+            probe_id=f"T06-manifest-p{idx}",
+            threat_id="T06",
+            passed=False,
+            status_code=None,
+            response_body=excerpt,
+            error=None,
+            assertions=(),
+            duration_seconds=0.0,
+            inconclusive_reason=None,
+        )
+
+    finding_idx = 0
+
+    # 1. Exact-name collisions.
+    seen: dict[str, int] = {}
+    for name in names:
+        seen[name] = seen.get(name, 0) + 1
+    for name, count in seen.items():
+        if count > 1:
+            finding_idx += 1
+            results.append(_finding(
+                finding_idx,
+                f"Tool name collision: '{name}' appears {count} times in the "
+                f"manifest. Duplicate tool names allow one definition to shadow "
+                f"another (T6). Tool names must be unique within a server.",
+            ))
+
+    # 2. Reserved-method shadowing (equal or Levenshtein ≤ 1).
+    for name in sorted(set(names)):
+        lname = name.lower()
+        for method in _RESERVED_MCP_METHODS:
+            d = levenshtein(lname, method)
+            if d <= 1:
+                finding_idx += 1
+                kind = "matches" if d == 0 else "is within edit-distance 1 of"
+                results.append(_finding(
+                    finding_idx,
+                    f"Tool '{name}' {kind} the reserved MCP method '{method}'. "
+                    f"A tool whose name shadows a protocol method can intercept "
+                    f"or impersonate that method (T6 shadowing).",
+                ))
+                break
+
+    # 3. Near-collisions between distinct tool names (typosquat within manifest).
+    #    Suppress benign pluralisation pairs (e.g. get_user / get_users), the
+    #    dominant false positive — a trailing-'s' difference between two names is
+    #    almost always an intentional singular/plural enumeration variant, not a
+    #    typosquat.
+    def _is_plural_variant(a: str, b: str) -> bool:
+        lo, hi = sorted((a.lower(), b.lower()), key=len)
+        return hi == lo + "s"
+
+    unique = sorted(set(names))
+    for i in range(len(unique)):
+        for j in range(i + 1, len(unique)):
+            if (
+                levenshtein(unique[i].lower(), unique[j].lower()) == 1
+                and not _is_plural_variant(unique[i], unique[j])
+            ):
+                finding_idx += 1
+                results.append(_finding(
+                    finding_idx,
+                    f"Tool names '{unique[i]}' and '{unique[j]}' differ by a "
+                    f"single edit (Levenshtein 1). One may be a typosquat or "
+                    f"shadow of the other (T6). Verify both are intentional and "
+                    f"distinct.",
+                ))
+
+    if not results:
+        # Manifest scanned, no integrity issue — emit a clean PASS marker so the
+        # category grades PASS, not NOT_TESTED.
+        results.append(_ProbeResult(
+            probe_id="T06-manifest-clean",
+            threat_id="T06",
+            passed=True,
+            status_code=None,
+            response_body=(
+                f"Manifest integrity scan: {len(names)} tool(s) enumerated; no "
+                f"name collisions, reserved-method shadows, or near-duplicate "
+                f"names detected."
+            ),
+            error=None,
+            assertions=(),
+            duration_seconds=0.0,
+            inconclusive_reason=None,
+        ))
 
     return results
 

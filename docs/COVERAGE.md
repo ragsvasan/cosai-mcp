@@ -17,8 +17,9 @@ cosai-mcp uses three fundamentally different detection mechanisms. The right eng
 | **Stateful conformance harness** | Scripted multi-turn sessions with state tracking | Session state changes, mid-session mutations |
 | **Middleware instrumentation** | Library deployed inside the target server | Content flowing through the call path |
 
-**Critical constraint (locked architecture decision):** T4 response-body injection, T9, and T12 are structurally undetectable from outside the call path. However, both T4 and T9 have a passively-detectable structural layer:
+**Critical constraint (locked architecture decision):** T4 response-body injection, T9, and T12 are structurally undetectable from outside the call path. However, T4, T6, and T9 each have a passively-detectable structural layer the scanner runs over the already-fetched `tools/list` manifest:
 - **T4 manifest poisoning** (injection hidden in `tools/list` metadata): the scanner runs `ToolPoisoningDetector` on the already-fetched manifest and surfaces findings with `threat_id="T04"`.
+- **T6 manifest integrity** (tool shadowing / typosquat): `_scan_manifest_t6` flags exact name collisions, tool names within Levenshtein 1 of a reserved MCP method (e.g. `tools_call` vs `tools/call`), and near-duplicate tool names (plural variants suppressed). Findings surface with `threat_id="T06"`; a clean manifest emits a PASS marker.
 - **T9 Totem violations** (destructive tools missing two-stage commit): the scanner inspects `tools/list` for tools with unambiguously-destructive verb names (delete, remove, drop, destroy, wipe, purge, reset, revoke, terminate, etc.) that lack a `confirmed`/`dry_run` boolean parameter and have no `_preview`/`_plan` sibling — the structural signal for TKA Totem non-compliance (CoSAI WS4 T9 contribution). Findings surface with `threat_id="T09"`.
 
 Full T4/T9/T12 coverage still requires middleware instrumentation inside the target.
@@ -34,13 +35,13 @@ Full T4/T9/T12 coverage still requires middleware instrumentation inside the tar
 | T3 | Input Validation Failures | Black-box prober | T03-001, T03-002 | **Done** — command injection, path traversal, SQL injection, null bytes, oversized payloads |
 | T4 | Data/Control Boundary | Black-box prober (passive) + Middleware | — | **Done** — passive manifest scan wired into `_run_scan`; `ToolPoisoningDetector` + `ResponseBoundaryGuard` for full response-path coverage |
 | T5 | Inadequate Data Protection | Black-box prober | T05-001, T05-002 | **Done** — PII pattern detection, credential pattern detection in tool responses |
-| T6 | Integrity/Verification | Black-box + stateful harness | T06-001, T06-002 | **Done** — typosquat detection (Levenshtein ≤ 1); stateful mid-session manifest diff (rug pull) |
+| T6 | Integrity/Verification | Passive manifest scan + stateful harness | `_scan_manifest_t6` | **Done** — passive manifest-integrity scan (name collision, reserved-method shadow, Levenshtein-1 typosquat); stateful mid-session manifest-drift diff enforced in `run_scenario` (rug pull) |
 | T7 | Session Security Failures | Stateful harness | — | **Done** — session fixation, token-in-URL, cross-session replay, explicit revocation (T7-SC-002) |
 | T8 | Network Binding Failures | Black-box prober | T08-001–003 | **Done** — SSRF (RFC1918/link-local/loopback/file://), protocol version, 0.0.0.0 binding detection |
 | T9 | Trust Boundary Failures | Middleware + passive manifest scan | — | **Done** — passive Totem manifest scan (destructive tools missing two-stage commit); full coverage via LLMOutputSanitizer + TrustBoundaryChecker (deploy middleware in target) |
 | T10 | Resource Management | Black-box prober | T10-001–003 | **Done** — oversized input, rate limiting (429), recursive payload / DoW, heartbeat |
 | T11 | Supply Chain/Lifecycle | Black-box prober | T11-001 | **Done** — tool allowlist enforcement, typosquatting (Levenshtein ≤ 1), signature verification |
-| T12 | Insufficient Logging | Middleware + black-box prober | T12-002 | **Done** — middleware: hash-chained DAG audit log; BB: T12-002 tool description transparency |
+| T12 | Insufficient Logging | Middleware only | — | **Middleware-only** — hash-chained DAG audit log via `cosai audit verify`. (The former black-box T12-002 transparency probe never ran in a real scan — T12 is middleware-skipped by the prober — so it was relocated out of the production catalog to `tests/fixtures/`; audit COV-05.) |
 
 ---
 

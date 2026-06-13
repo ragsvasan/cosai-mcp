@@ -387,9 +387,57 @@ class HtmlReportBuilder:
         self._report_mode = report_mode
         self._sections: list[HtmlReportSection] = []
         self._scenarios: list[HtmlScenarioSection] = []
+        # Per-category coverage rows: list of dicts with keys
+        # category/grade/probe_count/inconclusive_count/coverage_engine.
+        # Empty by default so existing callers/tests are unaffected.
+        self._coverage: list[dict[str, object]] = []
 
     def add_section(self, section: HtmlReportSection) -> None:
         self._sections.append(section)
+
+    def set_coverage(self, rows: list[dict[str, object]]) -> None:
+        """Provide per-category coverage rows (from the scorecard) so the report
+        can render EVERY CoSAI category — including NOT-TESTED ones that produced
+        no probe section — distinctly from PASS (audit EFF-03)."""
+        self._coverage = list(rows)
+
+    def _render_coverage_matrix(self) -> str:
+        if not self._coverage:
+            return ""
+        # Grade → (label, css colour var) — NOT_TESTED is visibly distinct from PASS.
+        _GRADE_STYLE: dict[str, tuple[str, str]] = {
+            "pass": ("PASS", "var(--mn-ok)"),
+            "warn": ("WARN", "var(--mn-warn)"),
+            "fail": ("FAIL", "var(--mn-error)"),
+            "not_tested": ("NOT TESTED", "var(--mn-muted, #888)"),
+        }
+        rows_html = []
+        for row in self._coverage:
+            cat = _h(str(row.get("category", "")))
+            grade = str(row.get("grade", "not_tested"))
+            label, colour = _GRADE_STYLE.get(grade, ("NOT TESTED", "var(--mn-muted, #888)"))
+            engine = _h(str(row.get("coverage_engine", "")))
+            probes = int(row.get("probe_count", 0) or 0)
+            inconclusive = int(row.get("inconclusive_count", 0) or 0)
+            extra = f" · {inconclusive} inconclusive" if inconclusive else ""
+            rows_html.append(
+                f"<tr><td>{cat}</td><td>{engine}</td>"
+                f"<td style='color:{colour};font-weight:600'>{_h(label)}</td>"
+                f"<td>{probes}{_h(extra)}</td></tr>"
+            )
+        return (
+            "<div class='section-group'>\n"
+            "<div class='section-group-title'>Coverage — all CoSAI categories</div>\n"
+            "<table class='coverage-table'>\n"
+            "<thead><tr><th>Category</th><th>Engine</th><th>Grade</th>"
+            "<th>Probes</th></tr></thead>\n<tbody>\n"
+            + "\n".join(rows_html)
+            + "\n</tbody></table>\n"
+            "<div class='coverage-note'>NOT TESTED means no probe ran for this "
+            "category (e.g. middleware-only categories, or a category whose "
+            "probes were all inconclusive). It is NOT a pass.</div>\n"
+            "</div>\n"
+        )
 
     def add_scenario(self, scenario: HtmlScenarioSection) -> None:
         self._scenarios.append(scenario)
@@ -475,6 +523,7 @@ class HtmlReportBuilder:
             f"<div class='stat-box'><div class='num' style='color:var(--mn-warn)'>{inconclusive_count}</div>"
             f"<div class='lbl'>Inconclusive</div></div>\n"
             "</div>\n"
+            f"{self._render_coverage_matrix()}\n"
             f"{findings_table}\n"
             f"{sections_html}\n"
             f"{scenario_html}\n"

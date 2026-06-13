@@ -123,9 +123,12 @@ def main() -> None:
 @click.option(
     "--fail-on",
     type=click.Choice(["critical", "high", "medium", "low"], case_sensitive=False),
-    default="critical",
+    default="high",
     show_default=True,
-    help="Minimum severity that causes exit code 1.",
+    help="Minimum severity that causes exit code 1. Defaults to 'high' so HIGH "
+         "auth/session findings fail the gate (matches the reusable "
+         "cosai-gate.yml default); pass --fail-on=critical to gate only on "
+         "critical.",
 )
 @click.option("--baseline", "baseline_path", type=click.Path(exists=True, dir_okay=False),
               default=None,
@@ -171,6 +174,11 @@ def main() -> None:
               help="Override catalog root directory (default: ./catalog).")
 @click.option("--auth-token", default=None, envvar="COSAI_AUTH_TOKEN", hidden=True,
               help="Bearer token for servers that require auth on the MCP handshake.")
+@click.option("--read-token", default=None, envvar="COSAI_READ_TOKEN", hidden=True,
+              help="Read-scoped Bearer token used by scope-enforcement probes "
+                   "(T02-005): the scanner calls write-capable tools with this "
+                   "token and asserts the server rejects them. Without it those "
+                   "probes are reported INCONCLUSIVE.")
 @click.option("--mcp-path", default="/mcp", show_default=True, hidden=True,
               help="URL path of the MCP endpoint (override if server uses a custom path).")
 @click.option("--no-adaptive", is_flag=True, default=False, hidden=True,
@@ -266,6 +274,7 @@ def scan(
     allow_private_targets: bool,
     catalog_root: str | None,
     auth_token: str | None,
+    read_token: str | None,
     mcp_path: str,
     no_adaptive: bool,
     profile: str | None,
@@ -383,6 +392,7 @@ def scan(
             fail_on=fail_on,
             allow_private_targets=allow_private_targets,
             auth_token=auth_token,
+            read_token=read_token,
             mcp_path=mcp_path,
             adaptive=not no_adaptive,
             profile=resolved_profile,
@@ -1435,6 +1445,17 @@ def _write_html_report(result: ScanResult, path: Path, report_mode: str = "full"
         scan_timestamp=result.scan_timestamp,
         report_mode=report_mode,
     )
+
+    # EFF-03: render a coverage matrix for ALL 12 categories so NOT-TESTED ones
+    # (middleware-only or all-inconclusive) are visible and distinct from PASS,
+    # matching the signed scorecard JSON.  Best-effort — a scorecard failure must
+    # never block the HTML report.
+    try:
+        from cosai_mcp.scorecard.builder import build_scorecard
+        _sc = build_scorecard(result, signed=False)
+        builder.set_coverage([c.to_dict() for c in _sc.categories])
+    except Exception:  # noqa: BLE001
+        pass
 
     # Build probe_context lookup: probe_id → ProbeContext
     # Uses the threat catalog to describe what each probe actually sends.

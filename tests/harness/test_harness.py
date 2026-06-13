@@ -312,10 +312,15 @@ class TestProbeContext:
 
     @pytest.mark.asyncio
     async def test_execute_probe_tools_call_pass(self):
-        """tools/call returns error → probe with response.error==True passes."""
+        """tools/call returns an application (security) error → probe with
+        response.error==True passes.  Uses -32001 (auth/scope rejection), a
+        genuine security-relevant outcome — NOT a -3260x protocol-validation
+        code, which would (correctly) be downgraded to INCONCLUSIVE."""
         config = _config()
         mock_transport = create_autospec(Transport, instance=True)
-        mock_transport.send = AsyncMock(return_value=_error_response())
+        mock_transport.send = AsyncMock(
+            return_value=_protocol_error_response(code=-32001, message="Unauthorized")
+        )
         mock_transport.send_notification = AsyncMock()
         mock_transport.close = AsyncMock()
 
@@ -420,6 +425,120 @@ class TestProbeContext:
         result = await ctx.execute_probe(probe, threat)
 
         assert result.duration_seconds >= 0.0
+
+
+def _protocol_error_response(code: int = -32601, message: str = "Method not found") -> dict[str, Any]:
+    resp: dict[str, Any] = {
+        "jsonrpc": "2.0",
+        "id": "1",
+        "error": {"code": code, "message": message},
+    }
+    resp["_body"] = json.dumps(resp["error"], ensure_ascii=False)
+    return resp
+
+
+class TestProtocolErrorInconclusive:
+    """Audit COV-06 / §2: a 'reject = secure' probe (response.error == true) that
+    is satisfied ONLY by a JSON-RPC protocol error (-32601 method-not-found,
+    -32602 invalid-params, -32600, -32700) is INCONCLUSIVE, not a vacuous PASS.
+    A probe that explicitly asserts on response.error_code is exempt.
+    """
+
+    async def _run(self, response: dict[str, Any], assertions: list[Assertion]):
+        config = _config()
+        mock_transport = create_autospec(Transport, instance=True)
+        mock_transport.send = AsyncMock(return_value=response)
+        mock_transport.send_notification = AsyncMock()
+        mock_transport.close = AsyncMock()
+        session = MCPSession(mock_transport, config)
+        session._status = type(session._status).READY
+        probe = _make_probe(assertions=assertions)
+        ctx = ProbeContext(session, config, "http://127.0.0.1:9999")
+        return await ctx.execute_probe(probe, _make_threat(), {"tool_name": "echo"})
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("code", [-32601, -32602, -32600, -32700])
+    async def test_method_not_found_makes_reject_probe_inconclusive(self, code):
+        """error==true asserted, server returns a validation/not-found code →
+        passed forced False AND inconclusive_reason set (never a clean PASS)."""
+        result = await self._run(
+            _protocol_error_response(code=code),
+            [_make_assertion("response.error", Operator.EQ, True)],
+        )
+        assert result.passed is False
+        assert result.inconclusive_reason is not None
+        assert str(code) in result.inconclusive_reason
+
+    @pytest.mark.asyncio
+    async def test_probe_asserting_error_code_is_exempt(self):
+        """A probe that explicitly inspects response.error_code is intentionally
+        testing protocol behaviour (e.g. T01-005) → NOT downgraded; it PASSES."""
+        result = await self._run(
+            _protocol_error_response(code=-32601),
+            [_make_assertion("response.error_code", Operator.EQ, -32601)],
+        )
+        assert result.passed is True
+        assert result.inconclusive_reason is None
+
+    @pytest.mark.asyncio
+    async def test_opt_out_suppresses_only_request_level_codes(self):
+        """protocol_error_is_expected suppresses the downgrade ONLY for
+        request-level codes (-32600/-32700, a size/parse limit firing)."""
+        config = _config()
+        mock_transport = create_autospec(Transport, instance=True)
+        mock_transport.send = AsyncMock(
+            return_value=_protocol_error_response(code=-32600, message="Request too large")
+        )
+        mock_transport.send_notification = AsyncMock()
+        mock_transport.close = AsyncMock()
+        session = MCPSession(mock_transport, config)
+        session._status = type(session._status).READY
+        probe = Probe(
+            id="T10-001-p1", transport="http", method="tools/call",
+            payload=types.MappingProxyType({"name": "echo", "arguments": {}}),
+            assertions=(_make_assertion("response.error", Operator.EQ, True),),
+            protocol_error_is_expected=True,
+        )
+        ctx = ProbeContext(session, config, "http://127.0.0.1:9999")
+        result = await ctx.execute_probe(probe, _make_threat(), {"tool_name": "echo"})
+        assert result.passed is True
+        assert result.inconclusive_reason is None
+
+    @pytest.mark.asyncio
+    async def test_regression_opt_out_inconclusive_on_method_not_found(self):
+        """Adversary EXPLOIT 1: even WITH protocol_error_is_expected, a -32601
+        (tool absent) must stay INCONCLUSIVE — rejection-because-tool-missing is
+        not proof a size/allowlist control fired."""
+        config = _config()
+        mock_transport = create_autospec(Transport, instance=True)
+        mock_transport.send = AsyncMock(
+            return_value=_protocol_error_response(code=-32601, message="Method not found")
+        )
+        mock_transport.send_notification = AsyncMock()
+        mock_transport.close = AsyncMock()
+        session = MCPSession(mock_transport, config)
+        session._status = type(session._status).READY
+        probe = Probe(
+            id="T10-001-p1", transport="http", method="tools/call",
+            payload=types.MappingProxyType({"name": "echo", "arguments": {}}),
+            assertions=(_make_assertion("response.error", Operator.EQ, True),),
+            protocol_error_is_expected=True,
+        )
+        ctx = ProbeContext(session, config, "http://127.0.0.1:9999")
+        result = await ctx.execute_probe(probe, _make_threat(), {"tool_name": "echo"})
+        assert result.passed is False
+        assert result.inconclusive_reason is not None
+
+    @pytest.mark.asyncio
+    async def test_application_error_code_is_not_downgraded(self):
+        """A server application error (-32001 auth/scope, -32029 rate-limit) is a
+        genuine security-relevant outcome → real PASS for a reject=secure probe."""
+        result = await self._run(
+            _protocol_error_response(code=-32001, message="Insufficient scope"),
+            [_make_assertion("response.error", Operator.EQ, True)],
+        )
+        assert result.passed is True
+        assert result.inconclusive_reason is None
 
 
 # ===========================================================================
@@ -554,8 +673,10 @@ class TestIntegrationMockServer:
     @pytest.mark.asyncio
     async def test_probe_context_against_mock_server_pass(self):
         """End-to-end: ProbeContext runs a probe against MockMCPServer; server
-        returns error → probe asserting response.error==True passes."""
-        override = {"jsonrpc": "2.0", "id": 0, "error": {"code": -32600, "message": "Auth required"}}
+        returns an application (security) error → probe asserting
+        response.error==True passes.  Uses -32001 (auth rejection); a -3260x
+        protocol-validation code would correctly be downgraded to INCONCLUSIVE."""
+        override = {"jsonrpc": "2.0", "id": 0, "error": {"code": -32001, "message": "Auth required"}}
 
         with MockMCPServer(tools_call_response=override) as server:
             from cosai_mcp.transport.streamable_http import StreamableHTTPTransport

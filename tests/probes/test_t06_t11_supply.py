@@ -133,8 +133,13 @@ class TestT11SupplyChain:
         assert result.passed is True
 
     @pytest.mark.asyncio
-    async def test_path_traversal_tool_name_rejected(self, catalog):
-        """T11-001-p2: tool name '../../etc/passwd' must be rejected."""
+    async def test_path_traversal_tool_name_method_not_found_is_inconclusive(self, catalog):
+        """T11-001-p2 asserts only response.error==true with NO error_code guard.
+        A -32601 (method not found) for the traversal tool name is
+        indistinguishable from a server that simply lacks the tool — it is NOT
+        proof a signed allowlist rejected it (adversary EXPLOIT 1 / audit COV-11).
+        The honest verdict is INCONCLUSIVE; real typosquat detection is the
+        manifest-enumeration engine (Batch 2 / COV-02)."""
         from pathlib import Path
         threat = catalog.load_file(Path("official/T11-001.json"))
         probe = threat.probes[1]  # path-traversal tool name probe
@@ -143,7 +148,8 @@ class TestT11SupplyChain:
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 
-        assert result.passed is True
+        assert result.passed is False
+        assert result.inconclusive_reason is not None
 
     @pytest.mark.asyncio
     async def test_path_traversal_tool_name_executed_fails(self, catalog):
@@ -159,8 +165,11 @@ class TestT11SupplyChain:
         assert result.passed is False
 
     @pytest.mark.asyncio
-    async def test_all_t11_probes_pass_on_allowlist_server(self, catalog):
-        """All T11-001 probes pass when server enforces tool allowlist strictly."""
+    async def test_t11_probes_not_findings_on_allowlist_server(self, catalog):
+        """On a strict-allowlist server returning -32601: p1 (which asserts the
+        error_code is in an expected protocol set) is a real PASS; p2 (bare
+        error-presence, no error_code guard) is INCONCLUSIVE — neither is a
+        finding, but only the error_code-guarded probe earns a PASS (COV-11)."""
         from pathlib import Path
         threat = catalog.load_file(Path("official/T11-001.json"))
 
@@ -171,4 +180,6 @@ class TestT11SupplyChain:
                 r = await run_probe(probe, threat, server)
                 results.append(r)
 
-        assert all(r.passed for r in results)
+        p1, p2 = results
+        assert p1.passed is True and p1.inconclusive_reason is None
+        assert p2.passed is False and p2.inconclusive_reason is not None

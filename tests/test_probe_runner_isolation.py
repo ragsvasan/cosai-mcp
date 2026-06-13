@@ -196,3 +196,44 @@ class TestProbeRunnerInconclusiveOnUnknownTool:
         assert result.inconclusive_reason is not None, (
             "expected inconclusive_reason to be set for tool-not-found response"
         )
+
+
+class TestProbeRunnerProtocolErrorOptOut:
+    """protocol_error_is_expected must survive the multiprocessing IPC round-trip
+    (_probe_to_dict → queue → _probe_from_dict) so the opt-out is live in the
+    REAL scan path, not just in the in-parent execute_probe unit tests.
+    """
+
+    def _load_t10_p1(self):
+        loader = CatalogLoader(CATALOG_ROOT)
+        threat = loader.load_file(Path("official/T10-001.json"))
+        return threat, threat.probes[0]  # p1 carries protocol_error_is_expected
+
+    def test_regression_protocol_error_is_expected_survives_subprocess_roundtrip(self):
+        """T10-001-p1 (opt-out) + server returning -32600 (request too large) →
+        PASS through the full ProbeRunner subprocess path, not inconclusive."""
+        threat, probe = self._load_t10_p1()
+        assert probe.protocol_error_is_expected is True  # precondition
+        resp = {"jsonrpc": "2.0", "id": 0, "error": {"code": -32600, "message": "Request too large"}}
+        with MockMCPServer(tools_call_response=resp) as server:
+            server.wait_ready()
+            config = _make_config(server.port)
+            runner = ProbeRunner(config, f"http://127.0.0.1:{server.port}")
+            result = runner.run_probe(probe, threat, variables={"tool_name": "echo"})
+        assert result.error is None, f"unexpected error: {result.error!r}"
+        assert result.passed is True
+        assert result.inconclusive_reason is None
+
+    def test_regression_opt_out_inconclusive_on_method_not_found_subprocess(self):
+        """Adversary EXPLOIT 1 through the subprocess path: -32601 (tool absent)
+        stays INCONCLUSIVE even with the opt-out set."""
+        threat, probe = self._load_t10_p1()
+        resp = {"jsonrpc": "2.0", "id": 0, "error": {"code": -32601, "message": "Method not found"}}
+        with MockMCPServer(tools_call_response=resp) as server:
+            server.wait_ready()
+            config = _make_config(server.port)
+            runner = ProbeRunner(config, f"http://127.0.0.1:{server.port}")
+            result = runner.run_probe(probe, threat, variables={"tool_name": "echo"})
+        assert result.error is None, f"unexpected error: {result.error!r}"
+        assert result.passed is False
+        assert result.inconclusive_reason is not None
