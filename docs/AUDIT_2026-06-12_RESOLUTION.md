@@ -13,9 +13,9 @@ Legend: ✅ fixed-with-tests · 🔁 handed-back (needs human/credentialed step)
 | COV-11 (partial) | T11 | 1 | ⏳ | T11-001-p2 bare error-presence → INCONCLUSIVE on `-32601` (rejection-because-tool-absent is not allowlist proof). Real typosquat detection = Batch 2. T11-001-p1 (`error_code_in`) still exempt — pre-existing, tracked for Batch 2. |
 | COV-02 | T6 | 2 | ✅ | Added `_scan_manifest_t6` (api.py): name-collision + reserved-MCP-method-shadow + Levenshtein-1 near-collision (plural pairs suppressed). A shadowed/typosquatted manifest now FAILS T6; clean manifest emits a PASS marker. Scorecard `_category_from_threat_id` fallback categorises manifest results (also fixes latent T4/T9 gap). `_run_scan` wiring covered. T06-001/002 retained as redundant liveness checks (real signal is the scan). |
 | COV-03 | T6 | 2 | ✅ | `_detect_manifest_drift` in `run_scenario` diffs tools/list manifests across scenario steps; a drifting 2nd manifest appends a synthetic failing step → scenario FAILS. Integration test drives changed/empty 2nd manifest. |
-| EFF-05 | T2 | 3 | ⬜ | Wire `--read-token` / `COSAI_READ_TOKEN` → `ScanConfig.read_token`. |
-| COV-10 | T7 | 3 | ⏳ | T7-SC-002 claim struck from coverage-matrix.md T7 row pending registration in api.py. |
-| COV-05 | T12 | 3 | ⬜ | Remove/relocate dead T12-002.json (+.sig). |
+| EFF-05 | T2 | 3 | ✅ | `--read-token` / `COSAI_READ_TOKEN` CLI flag added; threaded through `_run_scan` → `ScanConfig.read_token`. T02-005 scope probes now run instead of silently INCONCLUSIVE. README.md:123 example now matches reality. |
+| COV-10 | T7 | 3 | ✅ | `t7_session_revocation` (T7-SC-002) registered in the stateful engine list in api.py; coverage-matrix.md T7 claim restored. Integration test asserts it runs. |
+| COV-05 | T12 | 3 | ✅ | Dead T12-002.json + .sig moved OUT of `catalog/official/` (T12 is middleware-only; the prober skipped it) into `tests/fixtures/catalog/official/`. Sig verifies by bytes regardless of path; probe-mechanism tests retained via a fixture-rooted loader. No longer ships as dead production catalog. |
 | EFF-01 | Ent | 4 | ⬜ | PyPI package + scan-action repo + fix install docs; publish steps handed back. |
 | EFF-02 | Ent | 5 | ⬜ | `compliance_mappings` on CategoryResult from signed catalog. (Stub field reserved.) |
 | EFF-06 | Ent | 5 | ⬜ | `--expected-catalog-hash` (exit 2 on mismatch). |

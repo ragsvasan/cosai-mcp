@@ -27,6 +27,7 @@ from cosai_mcp.stateful.scenarios import (
     t2_confused_deputy,
     t2_privilege_escalation_chain,
     t6_tool_shadowing_mid_session,
+    t7_session_revocation,
     t7_session_token_binding,
 )
 
@@ -499,6 +500,7 @@ def _run_scan(
     fail_on: str = "critical",
     allow_private_targets: bool = True,
     auth_token: str | None = None,
+    read_token: str | None = None,
     mcp_path: str = "/mcp",
     adaptive: bool = True,
     profile: ServerProfile | None = None,
@@ -537,6 +539,7 @@ def _run_scan(
         allow_private_targets=allow_private_targets,
         probe_timeout_seconds=probe_timeout_seconds,
         auth_token=effective_auth_token,
+        read_token=read_token,
         mcp_path=effective_mcp_path,
         auth_header=effective_auth_header,
         probe_delay_seconds=probe_delay_seconds,
@@ -702,6 +705,7 @@ def _run_scan(
             (frozenset({"T2"}), t2_confused_deputy),
             (frozenset({"T6"}), t6_tool_shadowing_mid_session),
             (frozenset({"T7"}), t7_session_token_binding),
+            (frozenset({"T7"}), t7_session_revocation),
         ]
         profile_skip = profile.skip_categories if profile else frozenset()
         harness = StatefulHarness(config=config)

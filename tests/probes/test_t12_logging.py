@@ -10,10 +10,27 @@ description transparency.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from cosai_mcp.catalog.loader import CatalogLoader
 from cosai_mcp.harness.mock_server import MockMCPServer
 from tests.probes.conftest import error_response, ok_response, run_probe
+
+# COV-05: T12-002 is a black-box transparency probe, but T12 is a middleware-only
+# category, so the prober skips it — it never runs in a real scan.  The signed
+# file was therefore moved OUT of the production catalog (catalog/official/) into
+# this test fixture so it no longer ships as dead catalog.  Its Ed25519 signature
+# verifies by bytes, independent of path, so the official-provenance loader still
+# accepts it from here.  This `catalog` fixture overrides the repo-rooted one in
+# conftest.py so these probe-mechanism tests load T12-002 from the fixture.
+_FIXTURE_CATALOG_ROOT = Path(__file__).parent.parent / "fixtures" / "catalog"
+
+
+@pytest.fixture
+def catalog() -> CatalogLoader:
+    return CatalogLoader(_FIXTURE_CATALOG_ROOT)
 
 
 _TOOL_WITH_WARNING = {
