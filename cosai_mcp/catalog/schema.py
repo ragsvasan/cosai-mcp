@@ -69,6 +69,12 @@ THREAT_META_SCHEMA: dict = {
                     "items": {"$ref": "#/$defs/assertion"},
                     "minItems": 1,
                 },
+                # When True, a JSON-RPC protocol-validation error
+                # (-32601/-32602/-32600/-32700) is an EXPECTED secure outcome
+                # (the request was correctly rejected by a limit/allowlist) and
+                # the probe is NOT downgraded to inconclusive. Used by T10/T11
+                # reject-the-request probes. Default/absent = False.
+                "protocol_error_is_expected": {"type": "boolean"},
                 # Adversarial probe optional fields
                 "description": {"type": "string"},
                 "canary_detection": {"type": "boolean"},

@@ -5,7 +5,10 @@
   "severity": "high",
   "cosai_ref": "T10",
   "owasp_ref": "MCP-Top10-A10",
-  "cwe": ["CWE-400", "CWE-834"],
+  "cwe": [
+    "CWE-400",
+    "CWE-834"
+  ],
   "probes": [
     {
       "id": "T10-003-p1",
@@ -14,7 +17,45 @@
       "payload": {
         "name": "{{tool_name}}",
         "arguments": {
-          "a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {"a": {}}}}}}}}}}}}}}}}}}}}
+          "a": {
+            "a": {
+              "a": {
+                "a": {
+                  "a": {
+                    "a": {
+                      "a": {
+                        "a": {
+                          "a": {
+                            "a": {
+                              "a": {
+                                "a": {
+                                  "a": {
+                                    "a": {
+                                      "a": {
+                                        "a": {
+                                          "a": {
+                                            "a": {
+                                              "a": {
+                                                "a": {}
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       },
       "assertions": [
@@ -23,9 +64,12 @@
           "operator": "eq",
           "value": true
         }
-      ]
+      ],
+      "protocol_error_is_expected": true
     }
   ],
   "remediation": "Enforce maximum input nesting depth and payload size limits on all tool arguments. Implement per-session call budgets and recursive-depth tracking to prevent Denial-of-Wallet attacks.",
-  "references": ["https://cosai.org/T10"]
+  "references": [
+    "https://cosai.org/T10"
+  ]
 }

@@ -1,8 +1,9 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "id": "T07-003",
   "category": "T7",
   "severity": "high",
+  "confidence": "medium",
   "cosai_ref": "T7",
   "owasp_ref": "MCP-Top10-A07",
   "cwe": ["CWE-863"],
@@ -11,10 +12,7 @@
       "id": "T07-003-p1",
       "transport": "http",
       "method": "tools/call",
-      "description": "Call a sensitive tool with a valid-scope Bearer token but without a confirmation=true argument. A secure server honors the OAuth scope and processes the request. A vulnerable server rejects the call because confirmation is absent, indicating the server treats confirmation as the authorization gate rather than checking OAuth scope first.",
-      "probe_headers": {
-        "Authorization": "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ0ZXN0LWFnZW50Iiwic2NvcGUiOiJ0b29sczp3cml0ZSIsImV4cCI6OTk5OTk5OTk5OX0."
-      },
+      "description": "Call a sensitive tool using the scanner's CONFIGURED, validly-signed and scope-valid Bearer token (supplied via --auth-token), WITHOUT a confirmation=true argument. A secure server treats OAuth scope as the authorization gate and processes the request (no error). A server that has INVERTED its authorization model rejects the scope-valid call solely because confirmation is absent. The probe carries no Authorization header of its own — it deliberately relies on the operator-supplied valid token so that a correctly-rejecting secure server can never be a false positive (audit COV-04: the previous version sent an alg=none forgery, which a secure server correctly rejects, firing an inverted HIGH false-positive).",
       "payload": {
         "name": "{{tool_name}}",
         "arguments": {
@@ -26,7 +24,15 @@
           "target": "response.error",
           "operator": "eq",
           "value": false,
-          "description": "Server must accept a tool call from a properly scoped token even when no confirmation flag is present. OAuth scope is the authorization gate; confirmation is a UX safeguard that may accompany it but must not replace it."
+          "description": "A scope-valid token must be honored even when no confirmation flag is present. OAuth scope is the authorization gate; confirmation is a UX safeguard that may accompany it but must not replace it."
+        }
+      ],
+      "corroboration": [
+        {
+          "target": "response.body",
+          "operator": "contains",
+          "value": "onfirmation",
+          "description": "Positive evidence the rejection is specifically a confirmation-as-authorization-gate inversion: the server's rejection references confirmation. Without this evidence a rejection of the scope-valid call is INCONCLUSIVE (it may have been rejected for an unrelated reason), never a finding — this prevents false positives against secure servers (audit COV-04)."
         }
       ]
     }

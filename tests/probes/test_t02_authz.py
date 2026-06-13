@@ -95,6 +95,36 @@ class TestT02ConfusedDeputy:
         assert all(r.passed for r in results)
 
 
+class TestT02MethodNotFoundIsInconclusive:
+    """Audit COV-06 / §2: T02 access-control probes assert only
+    response.error==true.  A -32601 (the assumed privileged tool does not exist)
+    must NOT be reported as 'access control enforced' — the honest verdict is
+    INCONCLUSIVE.  Mirrors the live mnemo behaviour (admin_delete absent)."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("threat_file", ["official/T02-001.json", "official/T02-003.json"])
+    async def test_method_not_found_is_inconclusive_not_pass(self, catalog, threat_file):
+        from pathlib import Path
+        threat = catalog.load_file(Path(threat_file))
+        probe = threat.probes[0]
+        with MockMCPServer(tools_call_response=error_response(-32601, "Method not found")) as server:
+            server.wait_ready()
+            result = await run_probe(probe, threat, server)
+        assert result.passed is False
+        assert result.inconclusive_reason is not None
+
+    @pytest.mark.asyncio
+    async def test_t07_002_method_not_found_is_inconclusive(self, catalog):
+        from pathlib import Path
+        threat = catalog.load_file(Path("official/T07-002.json"))
+        probe = threat.probes[0]
+        with MockMCPServer(tools_call_response=error_response(-32601, "Method not found")) as server:
+            server.wait_ready()
+            result = await run_probe(probe, threat, server)
+        assert result.passed is False
+        assert result.inconclusive_reason is not None
+
+
 class TestT02CatalogLoadsT02003:
 
     def test_t02_003_loads(self, catalog):

@@ -84,8 +84,14 @@ class TestGradeAssignment:
     def test_no_probes_is_not_tested(self) -> None:
         assert _grade_category(0, 0, 0, 0) == Grade.NOT_TESTED
 
-    def test_probes_no_findings_is_pass(self) -> None:
-        assert _grade_category(5, 0, 0, 0) == Grade.PASS
+    def test_probes_no_findings_with_passes_is_pass(self) -> None:
+        # 5 probes, 0 findings, 5 conclusive passes → PASS
+        assert _grade_category(5, 0, 0, 0, pass_count=5) == Grade.PASS
+
+    def test_all_inconclusive_is_not_tested(self) -> None:
+        # Audit COV-06 / §2: probes ran but NOTHING was conclusively verified
+        # (0 passes, 0 findings — all inconclusive) → NOT_TESTED, never PASS.
+        assert _grade_category(5, 0, 0, 0, pass_count=0) == Grade.NOT_TESTED
 
     def test_critical_finding_is_fail(self) -> None:
         assert _grade_category(5, 2, 1, 0) == Grade.FAIL

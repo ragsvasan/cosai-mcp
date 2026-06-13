@@ -35,8 +35,12 @@ class TestT03CommandInjection:
     """T03-001: Server must not execute injected shell commands."""
 
     @pytest.mark.asyncio
-    async def test_secure_server_returns_error_not_shell_output(self, catalog):
-        """Secure server: returns error → no shell output → probe passes."""
+    async def test_boundary_rejection_is_inconclusive_not_pass(self, catalog):
+        """Audit §2: a -32602 validation rejection means the injection payload
+        never reached tool logic — that is NOT proof the tool is safe. The
+        verdict must be INCONCLUSIVE (passed False, reason set), not a vacuous
+        PASS. The genuine-secure path (tool ran, sanitized) is covered by
+        test_secure_server_sanitizes_id_injection."""
         from pathlib import Path
         threat = catalog.load_file(Path("official/T03-001.json"))
         probe = threat.probes[0]  # "; cat /etc/passwd" probe
@@ -45,7 +49,8 @@ class TestT03CommandInjection:
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 
-        assert result.passed is True
+        assert result.passed is False
+        assert result.inconclusive_reason is not None
 
     @pytest.mark.asyncio
     async def test_vulnerable_server_leaks_passwd(self, catalog):
@@ -95,7 +100,9 @@ class TestT03CommandInjection:
 
         results = []
         for probe in threat.probes:
-            with MockMCPServer(tools_call_response=error_response(-32602, "Rejected")) as server:
+            # Genuinely-secure server: the tool RAN and returned benign output
+            # (no leaked /etc/passwd or id content) → real PASS.
+            with MockMCPServer(tools_call_response=ok_response("operation completed")) as server:
                 server.wait_ready()
                 r = await run_probe(probe, threat, server)
                 results.append(r)
@@ -107,13 +114,30 @@ class TestT03PathTraversal:
     """T03-002: Server must not expose files outside its sandbox via path traversal."""
 
     @pytest.mark.asyncio
-    async def test_secure_server_blocks_path_traversal(self, catalog):
-        """Secure server: rejects traversal payload → probe passes."""
+    async def test_path_traversal_boundary_rejection_is_inconclusive(self, catalog):
+        """Audit §2: a -32602 rejection of the traversal payload at the boundary
+        is INCONCLUSIVE — the file-reading tool was never exercised, so we cannot
+        conclude it is safe. The genuine-secure path is the tool returning benign
+        content (no /etc/passwd leak)."""
         from pathlib import Path
         threat = catalog.load_file(Path("official/T03-002.json"))
         probe = threat.probes[0]
 
         with MockMCPServer(tools_call_response=error_response(-32602, "Path not allowed")) as server:
+            server.wait_ready()
+            result = await run_probe(probe, threat, server)
+
+        assert result.passed is False
+        assert result.inconclusive_reason is not None
+
+    @pytest.mark.asyncio
+    async def test_secure_server_sanitizes_path_traversal(self, catalog):
+        """Genuinely-secure: tool runs, returns benign content (no leak) → PASS."""
+        from pathlib import Path
+        threat = catalog.load_file(Path("official/T03-002.json"))
+        probe = threat.probes[0]
+
+        with MockMCPServer(tools_call_response=ok_response("file not found")) as server:
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 
@@ -133,8 +157,9 @@ class TestT03PathTraversal:
         assert result.passed is False
 
     @pytest.mark.asyncio
-    async def test_url_encoded_traversal_probe(self, catalog):
-        """URL-encoded traversal probe: secure server returns error → passes."""
+    async def test_url_encoded_traversal_boundary_rejection_inconclusive(self, catalog):
+        """URL-encoded traversal probe: a -32602 boundary rejection is
+        INCONCLUSIVE (audit §2), not a vacuous pass."""
         from pathlib import Path
         threat = catalog.load_file(Path("official/T03-002.json"))
         probe = threat.probes[1]  # %2e%2e%2f encoded probe
@@ -143,7 +168,8 @@ class TestT03PathTraversal:
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 
-        assert result.passed is True
+        assert result.passed is False
+        assert result.inconclusive_reason is not None
 
     @pytest.mark.asyncio
     async def test_url_encoded_traversal_vulnerable(self, catalog):
