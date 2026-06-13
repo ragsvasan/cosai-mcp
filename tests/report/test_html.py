@@ -314,3 +314,33 @@ class TestInconclusiveScenarioRendering:
         report = b.build()
         assert "st-finding" in report
         assert "FINDING" in report
+
+
+class TestCoverageMatrixEFF03:
+    """EFF-03: NOT-TESTED categories must render distinctly from PASS so a
+    partial scan does not read CLEAN to a human reader."""
+
+    def test_not_tested_category_rendered_distinctly(self):
+        b = _builder()
+        b.set_coverage([
+            {"category": "T1", "grade": "pass", "probe_count": 3,
+             "inconclusive_count": 0, "coverage_engine": "black_box_prober"},
+            {"category": "T4", "grade": "not_tested", "probe_count": 0,
+             "inconclusive_count": 0, "coverage_engine": "middleware_instrumentation"},
+            {"category": "T2", "grade": "not_tested", "probe_count": 4,
+             "inconclusive_count": 4, "coverage_engine": "stateful_harness"},
+        ])
+        report = b.build()
+        assert "Coverage — all CoSAI categories" in report
+        assert "NOT TESTED" in report
+        assert "PASS" in report
+        # All-inconclusive category surfaces its inconclusive count.
+        assert "4 inconclusive" in report
+        # The honesty note is present.
+        assert "It is NOT a pass" in report
+
+    def test_no_coverage_rows_renders_nothing(self):
+        """Backward compatible: callers that don't set coverage get no matrix."""
+        b = _builder()
+        report = b.build()
+        assert "Coverage — all CoSAI categories" not in report

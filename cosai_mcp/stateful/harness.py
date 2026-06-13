@@ -248,6 +248,46 @@ def _manifest_tool_names(response: dict[str, Any] | None) -> frozenset[str] | No
     )
 
 
+# Standard MCP methods a server is expected to implement.  A protocol-validation
+# error on one of these is a real signal; a protocol-validation error on a
+# NON-standard method (e.g. the synthetic `session/terminate` revocation step)
+# means the server simply does not implement that mechanism.
+_STANDARD_MCP_METHODS: frozenset[str] = frozenset({
+    "initialize", "notifications/initialized", "tools/list", "tools/call",
+    "ping", "resources/list", "resources/read", "resources/templates/list",
+    "prompts/list", "prompts/get", "completion/complete", "logging/setLevel",
+})
+
+# JSON-RPC codes meaning the server did not accept the method/request at all:
+# method not found, invalid params, invalid request, parse error.
+_UNSUPPORTED_METHOD_CODES: frozenset[int] = frozenset({-32700, -32600, -32601, -32602})
+
+
+def _scenario_method_not_found(
+    scenario: Scenario,
+    step_results: list[StepResult],
+) -> str | None:
+    """Return a human label for the first NON-standard-method step whose response
+    is a JSON-RPC protocol-validation error (-32601/-32602/-32600/-32700), or
+    None.  Used to mark a scenario INCONCLUSIVE when it depends on a mechanism the
+    server does not implement (e.g. a synthetic `session/terminate` revocation
+    method) rather than letting a downstream assertion false-positive against a
+    secure server that revokes sessions a different way (audit COV-10).
+
+    Scoped to non-standard methods so a real tools/list or tools/call outcome is
+    never suppressed (tool-absence is already handled by the precondition gate).
+    """
+    for step, sr in zip(scenario.steps, step_results):
+        if step.action.method in _STANDARD_MCP_METHODS:
+            continue
+        resp = sr.response
+        if isinstance(resp, dict):
+            err = resp.get("error")
+            if isinstance(err, dict) and err.get("code") in _UNSUPPORTED_METHOD_CODES:
+                return f"{sr.step_index} ('{sr.description}') via method '{step.action.method}'"
+    return None
+
+
 def _detect_manifest_drift(
     scenario: Scenario,
     step_results: list[StepResult],
@@ -429,6 +469,35 @@ class StatefulHarness:
                         passed=False,
                         step_results=tuple(step_results),
                     )
+
+            # Unsupported-method gate.  Some scenarios depend on a non-standard
+            # method the server may not implement (e.g. the session-revocation
+            # scenario sends a synthetic ``session/terminate``).  If a step gets a
+            # JSON-RPC -32601 (method not found), the security mechanism under
+            # test does not exist on this server, so a downstream "must be
+            # rejected" assertion would FALSE-POSITIVE against a secure server
+            # that simply revokes sessions a different way.  Mark the scenario
+            # INCONCLUSIVE instead (operator maps the real method via
+            # method_overrides) — mirrors the tool-existence precondition gate
+            # above and the prober's -32601 handling (audit COV-10).
+            unsupported = _scenario_method_not_found(scenario, step_results)
+            if unsupported is not None:
+                return ScenarioResult(
+                    scenario_id=scenario.id,
+                    scenario_name=scenario.name,
+                    threat_categories=scenario.threat_categories,
+                    status="inconclusive",
+                    passed=False,
+                    step_results=tuple(step_results),
+                    inconclusive_reason=(
+                        f"Scenario step {unsupported} returned a JSON-RPC "
+                        f"method-not-found/invalid-request error: the server does "
+                        f"not implement the non-standard method this scenario "
+                        f"depends on. The security property could not be evaluated "
+                        f"— configure method_overrides to map it to this server's "
+                        f"equivalent. INCONCLUSIVE, not a finding."
+                    ),
+                )
 
             # T6 manifest-drift detection (audit COV-03).  A scenario that issues
             # two or more live tools/list calls within one session is testing for

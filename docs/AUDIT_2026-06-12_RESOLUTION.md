@@ -14,15 +14,15 @@ Legend: ✅ fixed-with-tests · 🔁 handed-back (needs human/credentialed step)
 | COV-02 | T6 | 2 | ✅ | Added `_scan_manifest_t6` (api.py): name-collision + reserved-MCP-method-shadow + Levenshtein-1 near-collision (plural pairs suppressed). A shadowed/typosquatted manifest now FAILS T6; clean manifest emits a PASS marker. Scorecard `_category_from_threat_id` fallback categorises manifest results (also fixes latent T4/T9 gap). `_run_scan` wiring covered. T06-001/002 retained as redundant liveness checks (real signal is the scan). |
 | COV-03 | T6 | 2 | ✅ | `_detect_manifest_drift` in `run_scenario` diffs tools/list manifests across scenario steps; a drifting 2nd manifest appends a synthetic failing step → scenario FAILS. Integration test drives changed/empty 2nd manifest. |
 | EFF-05 | T2 | 3 | ✅ | `--read-token` / `COSAI_READ_TOKEN` CLI flag added; threaded through `_run_scan` → `ScanConfig.read_token`. T02-005 scope probes now run instead of silently INCONCLUSIVE. README.md:123 example now matches reality. |
-| COV-10 | T7 | 3 | ✅ | `t7_session_revocation` (T7-SC-002) registered in the stateful engine list in api.py; coverage-matrix.md T7 claim restored. Integration test asserts it runs. |
+| COV-10 | T7 | 3 | ✅ | `t7_session_revocation` (T7-SC-002) registered in the stateful engine. **Hardened in Batch 6**: registration alone false-positived against secure mnemo (the synthetic `session/terminate` returns -32602 → nothing revoked → post-call succeeds → false "bypass"). Added an unsupported-method gate: a NON-standard-method step returning a protocol-validation error (-32601/-32602/-32600/-32700) → scenario INCONCLUSIVE, not a finding. Verified live: T7-SC-002 INCONCLUSIVE vs mnemo, exit 0. |
 | COV-05 | T12 | 3 | ✅ | Dead T12-002.json + .sig moved OUT of `catalog/official/` (T12 is middleware-only; the prober skipped it) into `tests/fixtures/catalog/official/`. Sig verifies by bytes regardless of path; probe-mechanism tests retained via a fixture-rooted loader. No longer ships as dead production catalog. |
 | EFF-01 | Ent | 4 | ⬜ | PyPI package + scan-action repo + fix install docs; publish steps handed back. |
 | EFF-02 | Ent | 5 | ⬜ | `compliance_mappings` on CategoryResult from signed catalog. (Stub field reserved.) |
 | EFF-06 | Ent | 5 | ⬜ | `--expected-catalog-hash` (exit 2 on mismatch). |
 | EFF-07 | Ent | 5 | ⬜ | Target-scoped baseline → SARIF suppressions w/ scanner-generated partialFingerprints. |
-| EFF-03 | Cov | 6 | ⬜ | HTML report: NOT-TESTED distinct from PASS. (Scorecard JSON already does via NOT_TESTED + inconclusive_count.) |
-| EFF-04 | X | 6 | ⬜ | Default `--fail-on` → `high`. |
-| EFF-11 | T5 | 6 | ⬜ | Grade middleware-primary categories partial/not_tested with no middleware signal. |
+| EFF-03 | Cov | 6 | ✅ | HTML report now renders a "Coverage — all CoSAI categories" matrix from the scorecard: every T1–T12 category shows its grade, with NOT-TESTED styled distinctly and an explicit "It is NOT a pass" note + per-category inconclusive counts. |
+| EFF-04 | X | 6 | ✅ | `--fail-on` default changed critical→high (matches cosai-gate.yml), so HIGH auth/session findings now exit 1. |
+| EFF-11 | T5 | 6 | 🔁 | Deferred. Needs a "partial" grade concept for middleware-primary categories with only black-box signal; a half-baked change risks mislabeling T5's legitimate black-box probes. Low severity — handed back as a small design item. |
 | COV-09 | T2 | 7 | ⬜ | T02-004 manifest substring scan → relabel informational / real enumeration. (Currently the 2 live "findings".) |
 | EFF-ALL (T3/T12) | T3/T12 | 7 | ⬜ | SQLi + malformed-JSON-RPC probes for T3; passive `_meta.attestation` for T12. |
 | EFF-08/09/10/12 | Ent | 8 | ⬜ | Auth plugin / fleet mode / signer PKI (design hand-back) / repo hygiene. |
