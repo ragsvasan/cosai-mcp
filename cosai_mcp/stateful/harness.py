@@ -232,6 +232,75 @@ def _evaluate_assertion(
     )
 
 
+def _manifest_tool_names(response: dict[str, Any] | None) -> frozenset[str] | None:
+    """Extract the set of tool names from a tools/list response, or None if the
+    response is not a well-formed tools/list result."""
+    if not isinstance(response, dict):
+        return None
+    result = response.get("result")
+    if not isinstance(result, dict):
+        return None
+    tools = result.get("tools")
+    if not isinstance(tools, list):
+        return None
+    return frozenset(
+        str(t.get("name", "")) for t in tools if isinstance(t, dict)
+    )
+
+
+def _detect_manifest_drift(
+    scenario: Scenario,
+    step_results: list[StepResult],
+) -> StepResult | None:
+    """Diff the tool-name sets of every successful tools/list step in the
+    scenario.  Returns a synthetic FAILING StepResult if any two manifests drift
+    (a tool was added, removed, or renamed mid-session — T6 shadowing), or None
+    if the manifests are consistent or fewer than two tools/list steps exist.
+
+    Audit COV-03: this is the comparison the scenario docstring said was "left to
+    the caller"; nothing performed it, so a shadowed manifest passed silently.
+    """
+    manifests: list[tuple[int, frozenset[str]]] = []
+    for step, result in zip(scenario.steps, step_results):
+        if step.action.method != "tools/list":
+            continue
+        names = _manifest_tool_names(result.response)
+        if names is not None:
+            manifests.append((result.step_index, names))
+
+    if len(manifests) < 2:
+        return None
+
+    baseline_index, baseline = manifests[0]
+    for idx, names in manifests[1:]:
+        if names != baseline:
+            added = sorted(names - baseline)
+            removed = sorted(baseline - names)
+            detail = (
+                f"Tool manifest drifted between tools/list step {baseline_index} "
+                f"and step {idx} within the same session (no re-initialization). "
+                f"added={added} removed={removed}. This indicates T6 tool "
+                f"shadowing — a tool was injected, renamed, or withdrawn mid-session."
+            )
+            return StepResult(
+                step_index=len(step_results),
+                description="T6 manifest-drift check",
+                passed=False,
+                response=None,
+                failures=(
+                    AssertionFailure(
+                        target="manifest.tool_names",
+                        operator="eq",
+                        expected=sorted(baseline),
+                        actual=sorted(names),
+                        message=detail,
+                    ),
+                ),
+                error=None,
+            )
+    return None
+
+
 # ---------------------------------------------------------------------------
 # StatefulHarness
 # ---------------------------------------------------------------------------
@@ -360,6 +429,18 @@ class StatefulHarness:
                         passed=False,
                         step_results=tuple(step_results),
                     )
+
+            # T6 manifest-drift detection (audit COV-03).  A scenario that issues
+            # two or more live tools/list calls within one session is testing for
+            # tool shadowing: if the second manifest differs from the first
+            # WITHOUT a re-initialization, the server injected/renamed/removed a
+            # tool mid-session.  Previously this comparison was "left to the
+            # caller" and nothing performed it, so a shadowed manifest passed
+            # silently.  We now diff the manifests here and append a synthetic
+            # failing step when they drift, so the scenario FAILS.
+            drift_step = _detect_manifest_drift(scenario, step_results)
+            if drift_step is not None:
+                step_results.append(drift_step)
 
             all_passed = all(r.passed for r in step_results)
             return ScenarioResult(

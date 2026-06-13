@@ -306,8 +306,10 @@ class TestT2ConfusedDeputy:
 
 class TestT6ToolShadowing:
 
-    def test_tool_shadowing_mid_session(self):
-        """MockMCPServer returns different tool lists — caller detects the drift.
+    def test_tool_shadowing_mid_session_fails_scenario(self):
+        """Audit COV-03: a CHANGED 2nd tools/list within the session must FAIL
+        the scenario — the harness now diffs the manifests itself instead of
+        leaving it "to the caller".
 
         The sequence has 3 entries because MCPSession.start() calls tools/list
         once as part of the MCP handshake (index 0), then the two scenario
@@ -322,20 +324,20 @@ class TestT6ToolShadowing:
             )
 
         assert result.status == "complete"
-        # Both steps ran (both tools/list calls returned)
-        assert len(result.step_results) == 2
+        # The scenario FAILS because the manifest drifted between the two steps.
+        assert result.passed is False
+        # Two real tools/list steps PLUS one synthetic drift-check step.
+        assert len(result.step_results) == 3
         assert result.step_results[0].passed is True
         assert result.step_results[1].passed is True
-
-        # Caller detects drift by comparing the two responses
-        tools_step0 = result.step_results[0].response["result"]["tools"]
-        tools_step1 = result.step_results[1].response["result"]["tools"]
-        assert tools_step0 != tools_step1, (
-            "Tool manifest changed mid-session — T6 tool shadowing detected"
-        )
+        drift = result.step_results[2]
+        assert drift.passed is False
+        assert drift.description == "T6 manifest-drift check"
+        assert "shadowing" in drift.failures[0].message.lower()
 
     def test_stable_manifest_passes_unchanged(self):
-        """Stable server returns same tools list both times — no drift."""
+        """Stable server returns same tools list both times — no drift step,
+        scenario PASSES."""
         with MockMCPServer(tools=_BASIC_TOOLS) as server:
             server.wait_ready()
             result = _harness().run_scenario(
@@ -343,9 +345,30 @@ class TestT6ToolShadowing:
             )
 
         assert result.status == "complete"
+        assert result.passed is True
+        # No synthetic drift step appended.
+        assert len(result.step_results) == 2
         tools_step0 = result.step_results[0].response["result"]["tools"]
         tools_step1 = result.step_results[1].response["result"]["tools"]
         assert tools_step0 == tools_step1
+
+    def test_regression_drift_error_on_second_tools_list_still_fails(self):
+        """FIX [3] (drift-evasion): if a server returns a NORMAL manifest on the
+        first tools/list but an error/empty manifest on the second (to hide that
+        it dropped a tool), the scenario must still FAIL — never a false pass.
+
+        The empty-manifest second response drifts from the baseline, so the
+        manifest-drift check fires. (An outright JSON-RPC error would instead be
+        caught by the step's own `result.tools is_not_none` assertion.)"""
+        with MockMCPServer(
+            tools_list_sequence=[_BASIC_TOOLS, _BASIC_TOOLS, []],  # 3rd call: empty
+        ) as server:
+            server.wait_ready()
+            result = _harness().run_scenario(
+                t6_tool_shadowing_mid_session(), _target(server)
+            )
+
+        assert result.passed is False
 
     def test_regression_t6_sequence_index_offset_documented(self):
         """With a 2-entry sequence [A, B], both scenario steps see B (last entry repeats).

@@ -1,6 +1,7 @@
 """Scorecard builder — derive per-category conformance grades from ScanResult."""
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from cosai_mcp.scorecard.models import (
@@ -30,6 +31,14 @@ _SEV_RANK: dict[str, int] = {
 
 # Number of NOT_TESTED categories that triggers INSUFFICIENT_COVERAGE
 _MAX_NOT_TESTED = 4
+
+
+def _category_from_threat_id(threat_id: str) -> str:
+    """Map a threat_id (e.g. ``T06``, ``T04-001``) to its CoSAI category
+    (``T6``, ``T4``).  Used as a fallback for passive manifest-scan results that
+    have no catalog probe definition.  Returns ``T?`` if unparseable."""
+    m = re.match(r"^T0*([0-9]+)", threat_id or "")
+    return f"T{m.group(1)}" if m else "T?"
 
 
 def _grade_category(
@@ -93,7 +102,10 @@ def build_scorecard(
     cat_stats: dict[str, dict[str, int]] = {}
     for pr in result.probe_results:
         meta = probe_meta.get(pr.probe_id, {})
-        cat = meta.get("category", "T?")
+        # Catalog probes resolve via probe_meta; passive manifest-scan results
+        # (T04/T06/T09 — no catalog file) resolve via their threat_id so they
+        # land in the correct CoSAI category instead of the "T?" bucket.
+        cat = meta.get("category") or _category_from_threat_id(pr.threat_id)
         if cat not in cat_stats:
             cat_stats[cat] = {
                 "probe_count": 0, "finding_count": 0,

@@ -11,8 +11,8 @@ Legend: ✅ fixed-with-tests · 🔁 handed-back (needs human/credentialed step)
 | EFF-ALL (core) | — | 1 | ✅ | `-32601`/schema errors → INCONCLUSIVE not PASS (context.py); scorecard grades all-inconclusive categories NOT_TESTED, excludes inconclusive from findings. 21 inconclusive on live mnemo (was vacuous PASS). |
 | COV-08 (partial) | T8 | 1 | ⏳ | T8 SSRF boundary-rejection now INCONCLUSIVE (no positive evidence the tool fetches URLs). Metadata-marker positive-evidence assertions = Batch 7. |
 | COV-11 (partial) | T11 | 1 | ⏳ | T11-001-p2 bare error-presence → INCONCLUSIVE on `-32601` (rejection-because-tool-absent is not allowlist proof). Real typosquat detection = Batch 2. T11-001-p1 (`error_code_in`) still exempt — pre-existing, tracked for Batch 2. |
-| COV-02 | T6 | 2 | ⬜ | Replace T06-001/002 tools/list-succeeds probes with manifest name-collision + Levenshtein enumeration. |
-| COV-03 | T6 | 2 | ⬜ | Implement manifest-drift diff in `run_scenario`. |
+| COV-02 | T6 | 2 | ✅ | Added `_scan_manifest_t6` (api.py): name-collision + reserved-MCP-method-shadow + Levenshtein-1 near-collision (plural pairs suppressed). A shadowed/typosquatted manifest now FAILS T6; clean manifest emits a PASS marker. Scorecard `_category_from_threat_id` fallback categorises manifest results (also fixes latent T4/T9 gap). `_run_scan` wiring covered. T06-001/002 retained as redundant liveness checks (real signal is the scan). |
+| COV-03 | T6 | 2 | ✅ | `_detect_manifest_drift` in `run_scenario` diffs tools/list manifests across scenario steps; a drifting 2nd manifest appends a synthetic failing step → scenario FAILS. Integration test drives changed/empty 2nd manifest. |
 | EFF-05 | T2 | 3 | ⬜ | Wire `--read-token` / `COSAI_READ_TOKEN` → `ScanConfig.read_token`. |
 | COV-10 | T7 | 3 | ⏳ | T7-SC-002 claim struck from coverage-matrix.md T7 row pending registration in api.py. |
 | COV-05 | T12 | 3 | ⬜ | Remove/relocate dead T12-002.json (+.sig). |
