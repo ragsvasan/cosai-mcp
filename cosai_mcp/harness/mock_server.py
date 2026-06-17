@@ -115,6 +115,14 @@ class MockMCPServer:
         If True, the server requires ``confirmation=true`` in arguments even
         when the OAuth scope is valid — simulating the inverted authorization
         model that T07-003 detects.  Default False (secure).
+    reject_replayed_tokens:
+        If True, the server maintains a JTI replay cache (T1).  The first
+        ``tools/call`` presenting a given token is served; any *subsequent*
+        ``tools/call`` presenting the SAME token (same ``jti`` claim, or the
+        whole token string when no ``jti`` is decodable) is rejected with a
+        JSON-RPC error.  Calls with no Bearer token are not de-duplicated.
+        Default False (vulnerable: a replayed token is accepted every time),
+        which is exactly the condition T01-003 must detect.
     """
 
     def __init__(
@@ -128,6 +136,7 @@ class MockMCPServer:
         scope_guarded_tools: dict[str, str] | None = None,
         confirmation_bypasses_scope: bool = False,
         confirmation_gates_access: bool = False,
+        reject_replayed_tokens: bool = False,
     ) -> None:
         self._tools = tools if tools is not None else list(_DEFAULT_TOOLS)
         self._tools_call_response = tools_call_response
@@ -144,6 +153,8 @@ class MockMCPServer:
         self._scope_guarded_tools: dict[str, str] = scope_guarded_tools or {}
         self._confirmation_bypasses_scope = confirmation_bypasses_scope
         self._confirmation_gates_access = confirmation_gates_access
+        self._reject_replayed_tokens = reject_replayed_tokens
+        self._seen_token_ids: set[str] = set()  # JTI replay cache (guarded by _log_lock)
         self._last_request_headers: dict[str, str] = {}
 
     @property
@@ -223,6 +234,26 @@ class MockMCPServer:
             params = request.get("params", {})
             name = params.get("name", "unknown")
 
+            # JTI replay cache (T1): reject the SECOND presentation of a token.
+            if self._reject_replayed_tokens:
+                request_headers = headers or {}
+                auth = request_headers.get("Authorization", "")
+                token = auth[len("Bearer "):].strip() if auth.startswith("Bearer ") else ""
+                token_id = self._token_replay_id(token)
+                if token_id is not None:
+                    with self._log_lock:
+                        replayed = token_id in self._seen_token_ids
+                        self._seen_token_ids.add(token_id)
+                    if replayed:
+                        return {
+                            "jsonrpc": "2.0",
+                            "id": req_id,
+                            "error": {
+                                "code": -32001,
+                                "message": "Token replayed: jti already seen in session window",
+                            },
+                        }
+
             # Check privileged tool access
             if name in self._privileged_tools:
                 request_headers = headers or {}
@@ -292,6 +323,30 @@ class MockMCPServer:
             "id": req_id,
             "error": {"code": -32601, "message": f"Method not found: {method!r}"},
         }
+
+    def _token_replay_id(self, token: str) -> str | None:
+        """Return a stable replay key for a Bearer token, or None to skip dedup.
+
+        Prefers the JWT ``jti`` claim (the canonical replay identifier, RFC 7519
+        §4.1.7); falls back to the whole token string when no ``jti`` is
+        decodable.  Returns None for an empty token so unauthenticated calls are
+        never de-duplicated.
+        """
+        if not token:
+            return None
+        try:
+            parts = token.split(".")
+            if len(parts) >= 2:
+                padding = (4 - len(parts[1]) % 4) % 4
+                payload = json.loads(
+                    base64.urlsafe_b64decode(parts[1] + "=" * padding)
+                )
+                jti = payload.get("jti")
+                if jti:
+                    return f"jti:{jti}"
+        except Exception:
+            pass
+        return f"tok:{token}"
 
     def _token_has_scope(self, token: str, required: str) -> bool:
         """Return True if the Bearer token's scope claim contains required.
