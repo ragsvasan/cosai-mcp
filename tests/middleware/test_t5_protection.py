@@ -27,19 +27,25 @@ class TestPIIScrubberPatterns:
             warnings.simplefilter("ignore", RuntimeWarning)
             return PIIScrubber()
 
+    def _strict_scrubber(self) -> PIIScrubber:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            return PIIScrubber(pii_strict=True)
+
     def test_ssn_pattern_scrubbed(self):
-        s = self._scrubber()
+        # SSN moved to the strict (--pii-strict) tier (WG-89 item 3).
+        s = self._strict_scrubber()
         result = s.scrub("SSN: 123-45-6789")
         assert "123-45-6789" not in result.text
         assert "[REDACTED:ssn]" in result.text
         assert result.redacted_count == 1
 
-    def test_credit_card_scrubbed(self):
-        s = self._scrubber()
+    def test_pan_scrubbed_strict(self):
+        s = self._strict_scrubber()
         # 4111111111111111 is a known Luhn-valid Visa test number
         result = s.scrub("Card: 4111111111111111")
         assert "4111111111111111" not in result.text
-        assert "[REDACTED:credit_card]" in result.text
+        assert "[REDACTED:pan]" in result.text
 
     def test_jwt_header_scrubbed(self):
         s = self._scrubber()
@@ -71,7 +77,8 @@ class TestPIIScrubberPatterns:
         assert result.findings == ()
 
     def test_multiple_pii_types(self):
-        s = self._scrubber()
+        # ssn is strict-tier, email is default-tier → use strict to catch both.
+        s = self._strict_scrubber()
         text = "SSN: 123-45-6789 and email: user@example.com"
         result = s.scrub(text)
         assert "123-45-6789" not in result.text
@@ -209,3 +216,170 @@ class TestPIIScrubberRegressions:
         s = self._scrubber()
         pattern_names = [name for name, _ in s._compiled]
         assert "hex_api_key" not in pattern_names
+
+
+# ===========================================================================
+# WG-89 item 3 — expanded credential pattern set (always-on, anchored)
+# ===========================================================================
+
+class TestExpandedCredentialPatterns:
+
+    def _scrubber(self) -> PIIScrubber:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            return PIIScrubber()
+
+    def test_aws_access_key_scrubbed(self):
+        s = self._scrubber()
+        key = "AKIA" + "ABCDEFGH12345678"  # AKIA + 16 alnum
+        result = s.scrub(f"aws_access_key_id={key}")
+        assert key not in result.text
+        assert "[REDACTED:aws_access_key]" in result.text
+
+    def test_google_api_key_scrubbed(self):
+        s = self._scrubber()
+        key = "AIza" + "B" * 35
+        result = s.scrub(f"key={key}")
+        assert key not in result.text
+        assert "[REDACTED:google_api_key]" in result.text
+
+    def test_gitlab_pat_scrubbed(self):
+        s = self._scrubber()
+        tok = "glpat-" + "x" * 20
+        result = s.scrub(f"token: {tok}")
+        assert tok not in result.text
+        assert "[REDACTED:gitlab_pat]" in result.text
+
+    def test_github_pat_gho_variant_scrubbed(self):
+        s = self._scrubber()
+        tok = "gho_" + "Z" * 36
+        result = s.scrub(f"oauth: {tok}")
+        assert "[REDACTED:github_pat]" in result.text
+
+    def test_gcp_service_account_marker_scrubbed(self):
+        s = self._scrubber()
+        blob = '{"type": "service_account", "project_id": "x"}'
+        result = s.scrub(blob)
+        assert "[REDACTED:gcp_service_account]" in result.text
+
+    def test_azure_sas_signature_scrubbed(self):
+        s = self._scrubber()
+        url = "https://acct.blob.core.windows.net/c/b?sv=2021&sig=" + "A" * 30
+        result = s.scrub(url)
+        assert "[REDACTED:azure_sas]" in result.text
+
+    def test_jwt_two_segment_eyj_scrubbed(self):
+        s = self._scrubber()
+        jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig123"
+        result = s.scrub(f"auth: {jwt}")
+        assert "[REDACTED:jwt]" in result.text
+
+    def test_credentials_not_in_default_email_only_doc(self):
+        """A clean tool description with no secret produces zero findings."""
+        s = self._scrubber()
+        result = s.scrub("Searches the corpus and returns ranked results.")
+        assert result.redacted_count == 0
+
+
+class TestContextLeakPatterns:
+
+    def _scrubber(self) -> PIIScrubber:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            return PIIScrubber()
+
+    def test_internal_hostname_flagged(self):
+        s = self._scrubber()
+        result = s.scrub("connect to db-primary.internal for the data")
+        assert "[REDACTED:internal_hostname]" in result.text
+
+    def test_k8s_svc_hostname_flagged(self):
+        s = self._scrubber()
+        result = s.scrub("upstream is api.payments.svc.cluster.local here")
+        assert "[REDACTED:internal_hostname]" in result.text
+
+    def test_public_hostname_not_flagged(self):
+        s = self._scrubber()
+        result = s.scrub("see https://example.com/docs for details")
+        assert "internal_hostname" not in {f.pii_type for f in result.findings}
+
+    def test_stack_trace_flagged(self):
+        s = self._scrubber()
+        result = s.scrub("Traceback (most recent call last): ValueError")
+        assert "[REDACTED:stack_trace]" in result.text
+
+
+# ===========================================================================
+# WG-89 item 3 — strict-tier gating + Luhn corroboration
+# ===========================================================================
+
+class TestPIIStrictGating:
+
+    def _default(self) -> PIIScrubber:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            return PIIScrubber()
+
+    def _strict(self) -> PIIScrubber:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            return PIIScrubber(pii_strict=True)
+
+    def test_ssn_not_scrubbed_in_default_mode(self):
+        result = self._default().scrub("SSN: 123-45-6789")
+        assert "123-45-6789" in result.text
+        assert result.redacted_count == 0
+
+    def test_ssn_scrubbed_in_strict_mode(self):
+        result = self._strict().scrub("SSN: 123-45-6789")
+        assert "[REDACTED:ssn]" in result.text
+
+    def test_iban_scrubbed_only_in_strict(self):
+        iban = "DE89370400440532013000"
+        assert iban in self._default().scrub(f"IBAN {iban}").text
+        assert "[REDACTED:iban]" in self._strict().scrub(f"IBAN {iban}").text
+
+    def test_pan_luhn_valid_scrubbed_in_strict(self):
+        # Luhn-valid Visa test number
+        result = self._strict().scrub("4111111111111111")
+        assert "[REDACTED:pan]" in result.text
+
+    def test_pan_luhn_invalid_not_scrubbed_even_in_strict(self):
+        """A 16-digit number that fails Luhn must NOT be redacted — corroboration."""
+        # 4111111111111112 fails the Luhn checksum
+        result = self._strict().scrub("order id 4111111111111112")
+        assert "4111111111111112" in result.text
+        assert result.redacted_count == 0
+
+    def test_default_credentials_still_on_in_default_mode(self):
+        """Strict gating must not disable the always-on credential tier."""
+        result = self._default().scrub("key=sk-abcdefghijklmnopqrstuvwxyz123456")
+        assert "[REDACTED:api_key_sk]" in result.text
+
+    def test_pii_strict_property_reflects_mode(self):
+        assert self._default().pii_strict is False
+        assert self._strict().pii_strict is True
+
+
+class TestLuhnValidator:
+
+    def _luhn(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            from cosai_mcp.middleware.protection import _luhn_valid
+            return _luhn_valid
+
+    def test_known_valid_card(self):
+        assert self._luhn()("4111111111111111") is True
+
+    def test_known_invalid_card(self):
+        assert self._luhn()("4111111111111112") is False
+
+    def test_strips_spaces_and_dashes(self):
+        assert self._luhn()("4111-1111-1111-1111") is True
+
+    def test_rejects_too_short(self):
+        assert self._luhn()("123456789012") is False  # 12 digits < 13
+
+    def test_rejects_too_long(self):
+        assert self._luhn()("1" * 20) is False  # 20 digits > 19

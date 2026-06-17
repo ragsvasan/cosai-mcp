@@ -184,6 +184,10 @@ def main() -> None:
 @click.option("--no-adaptive", is_flag=True, default=False, hidden=True,
               help="Disable adaptive probe synthesis. Forces static catalog payloads — "
                    "use for hermetic tests or when server schema is adversarially crafted.")
+@click.option("--pii-strict", is_flag=True, default=False, hidden=True,
+              help="Widen the T5 secret/PII manifest scan to the broad-PII tier "
+                   "(SSN, IBAN, US phone, Luhn-validated PAN) on top of the always-on "
+                   "anchored-credential tier. Off by default to keep scans fast.")
 @click.option("--profile", default=None,
               help="Server profile name (e.g. mnemo, fastmcp). Optional — omit for a "
                    "generic scan. Sets mcp_path, auth header format, tool name map, "
@@ -277,6 +281,7 @@ def scan(
     read_token: str | None,
     mcp_path: str,
     no_adaptive: bool,
+    pii_strict: bool,
     profile: str | None,
     allow_custom_profiles: bool,
     adversarial: bool,
@@ -399,6 +404,7 @@ def scan(
             adversarial_mode=adv_mode,
             probe_delay_seconds=probe_delay,
             baseline_path=Path(baseline_path) if baseline_path else None,
+            pii_strict=pii_strict,
         )
     except ValueError as exc:
         # Includes adversarial dual opt-in failures AND a malformed
