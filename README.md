@@ -1,20 +1,22 @@
 # cosai-mcp
 
-[![PyPI](https://img.shields.io/pypi/v/cosai-mcp)](https://pypi.org/project/cosai-mcp/)
+**Status: Alpha — install from source (not yet on PyPI).**
+
 [![CI](https://github.com/ragsvasan/cosai-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ragsvasan/cosai-mcp/actions)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 Open-source MCP security framework for the 12 CoSAI threat categories (T1–T12): **9 categories with zero-config black-box/stateful coverage; 3 (T4, T9, T12) require the cosai-mcp middleware deployed in the target.**
 
-**Status:** Alpha — 1314 tests passing, Apache 2.0. Zero-config scan covers 9 categories (T1–T3, T5–T8, T10–T11). T4/T9/T12 detection needs the middleware in the target's call path. All 12 middleware modules are implemented: `auth`, `authz`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, `audit`, `validation`, `session`, and `supply_chain`.
+**Status:** Alpha — 1329 tests passing, Apache 2.0. Zero-config scan covers 9 categories (T1–T3, T5–T8, T10–T11). T4/T9/T12 detection needs the middleware in the target's call path. All 12 middleware modules are implemented: `auth`, `authz`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, `audit`, `validation`, `session`, and `supply_chain`.
 
 ```bash
-# Try without installing
-uvx --from cosai-mcp cosai scan http://localhost:8000
+# Install from source (interim — package not yet on PyPI)
+git clone https://github.com/ragsvasan/cosai-mcp && cd cosai-mcp && pip install -e .
+cosai scan http://localhost:8000   # loopback/RFC1918 allowed by default
 
-# Or install permanently
-pip install cosai-mcp
-cosai scan http://localhost:8000
+# After the 0.1.0 PyPI release — not yet published:
+#   uvx --from cosai-mcp cosai scan http://localhost:8000
+#   pip install cosai-mcp
 ```
 
 ---
@@ -63,6 +65,8 @@ earliest signal of a supply-chain (T11) or tool-poisoning (T4) change.
 
 ```bash
 # Once: capture the trusted baseline (signed artifact)
+# (loopback/RFC1918 targets like localhost are allowed by default, matching
+#  `cosai scan`; pass --block-private-targets in CI to enforce public-only)
 cosai inventory capture http://localhost:8000 -o baseline.json
 
 # In CI: fail the build if the live tool surface drifted from the baseline
@@ -107,6 +111,8 @@ cosai scan http://localhost:8000 --experimental \
   --emit-to https://siem.example.com/webhook
 
 # Tool inventory: capture a snapshot, diff for drift
+# (loopback/RFC1918 targets like localhost allowed by default; use
+#  --block-private-targets to enforce public-only)
 cosai inventory capture http://localhost:8000 -o baseline.json
 cosai inventory diff baseline.json current.json --fail-on-drift
 
@@ -122,8 +128,16 @@ cosai scan http://localhost:8080 --auth-token "$TOKEN" --probe-delay 2.5
 # Scope enforcement test (T02-005): provide both primary and read-only tokens
 cosai scan http://localhost:8000 --auth-token "$WRITE_TOKEN" --read-token "$READ_TOKEN"
 
-# pytest plugin
+# pytest plugin — turnkey: auto-runs the scan and FAILS the suite on any
+# finding at or above --cosai-severity. No test file required; the plugin
+# injects a `cosai_scan_gate` item when --cosai-target is supplied.
 pytest --cosai-target=http://localhost:8000 --cosai-severity=critical
+
+# For custom assertions, consume the `cosai_scan_result` fixture in your own test:
+#   def test_no_critical_findings(cosai_scan_result):
+#       assert not cosai_scan_result.has_findings
+# (The auto gate still runs alongside your test.) Without --cosai-target the
+# plugin/fixtures cleanly skip, so a normal `pytest` run is unaffected.
 ```
 
 ## Implementation Status

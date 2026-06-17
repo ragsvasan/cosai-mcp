@@ -1,8 +1,8 @@
 # cosai-mcp — Coverage Status
 
 **Date:** 2026-05-04
-**Build:** 860/860 tests passing
-**Catalog:** 20 signed threat definitions + 4 adversarial (Ed25519, signatures now enforced)
+**Build:** 1329/1329 tests passing
+**Catalog:** 26 signed threat definitions + 4 adversarial (Ed25519, signatures now enforced)
 **Status:** All phases P0–P13 complete. Codex P1/P2 findings resolved.
 
 ---
@@ -81,7 +81,7 @@ Requires `--adversarial --i-own-this-target`. Blocked against RFC1918 and loopba
 
 ## Test Suite
 
-**860 tests passing** across:
+**1329 tests passing** across:
 
 | Module | What |
 |--------|------|

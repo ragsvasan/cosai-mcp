@@ -7,12 +7,16 @@ cosai scans MCP servers for security vulnerabilities across T1–T12 via three e
 ## Quickstart
 
 ```bash
-# Try without a permanent install
-uvx --from cosai-mcp cosai scan http://localhost:8000
+# Install from source (interim — package not yet on PyPI)
+git clone https://github.com/ragsvasan/cosai-mcp && cd cosai-mcp && pip install -e .
 
-# Or install permanently
-pip install cosai-mcp
+# Scan a local server (loopback/RFC1918 targets allowed by default;
+# use --block-private-targets in CI to enforce a public-only policy)
 cosai scan http://localhost:8000
+
+# After the 0.1.0 PyPI release — not yet published:
+#   uvx --from cosai-mcp cosai scan http://localhost:8000
+#   pip install cosai-mcp
 ```
 
 You get a report to stdout and exit code `0` (clean) or `1` (findings).
@@ -21,24 +25,30 @@ You get a report to stdout and exit code `0` (clean) or `1` (findings).
 
 ## Installation
 
+Until the 0.1.0 PyPI release, install from source:
+
 ```bash
-pip install cosai-mcp
+git clone https://github.com/ragsvasan/cosai-mcp && cd cosai-mcp && pip install -e .
 ```
 
-With pytest integration:
+With pytest integration (from source):
 
 ```bash
-pip install cosai-mcp[pytest]
+pip install -e ".[pytest]"
 ```
 
 Python 3.11+ required.
+
+After the 0.1.0 PyPI release (not yet published), `pip install cosai-mcp` and
+`pip install cosai-mcp[pytest]` will work directly.
 
 ---
 
 ## Running Your First Scan
 
 ```bash
-# Scan a local MCP server
+# Scan a local MCP server (loopback/RFC1918 targets allowed by default;
+# use --block-private-targets to enforce a public-only policy)
 cosai scan http://localhost:8000
 
 # Scan with SARIF report (for GitHub Security tab)

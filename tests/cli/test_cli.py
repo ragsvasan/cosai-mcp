@@ -365,25 +365,35 @@ class TestPytestPlugin:
         The plugin is auto-loaded via the pytest11 entry-point when the package
         is installed in development mode.  We use the installed plugin without
         passing -p again (which would cause a "plugin already registered" error).
+
+        Targets a local clean mock server so the auto-injected scan gate also
+        runs (and passes) — the gate is now part of normal collection.
         """
         import subprocess
 
-        test_file = tmp_path / "test_probe.py"
-        test_file.write_text(
-            "def test_has_target(cosai_target):\n"
-            "    assert cosai_target == 'http://example.com:8000'\n"
-        )
-        proc = subprocess.run(
-            [
-                sys.executable, "-m", "pytest",
-                str(test_file),
-                "--cosai-target=http://example.com:8000",
-                "-v", "--no-header",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        # Test should pass (fixture value is accessible)
+        from cosai_mcp.harness.mock_server import MockMCPServer
+
+        with MockMCPServer() as server:  # default echo tool — no findings
+            server.wait_ready()
+            target = f"http://127.0.0.1:{server.port}"
+            test_file = tmp_path / "test_probe.py"
+            test_file.write_text(
+                "def test_has_target(cosai_target):\n"
+                f"    assert cosai_target == {target!r}\n"
+            )
+            proc = subprocess.run(
+                [
+                    sys.executable, "-m", "pytest",
+                    str(test_file),
+                    f"--cosai-target={target}",
+                    "--cosai-categories=T3",
+                    "--cosai-engine=prober",
+                    "-v", "--no-header",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        # Test should pass (fixture value is accessible) and the gate is clean.
         assert proc.returncode == 0, proc.stdout + proc.stderr
 
     def test_pytest_plugin_skips_without_target(self, tmp_path: Path) -> None:
@@ -407,6 +417,113 @@ class TestPytestPlugin:
         )
         # Should skip (no failure)
         assert proc.returncode == 0 or b"skip" in (proc.stdout + proc.stderr).encode().lower()
+
+    def test_bare_pytest_run_adds_no_scan_item(self, tmp_path: Path) -> None:
+        """Without --cosai-target the plugin must not inject the scan gate.
+
+        Guards the locked behavior at tests/cli/test_cli.py:363-390 — a bare
+        run with no cosai option collects only the user's own tests.
+        """
+        import subprocess
+
+        test_file = tmp_path / "test_plain.py"
+        test_file.write_text("def test_trivial():\n    assert True\n")
+        proc = subprocess.run(
+            [
+                sys.executable, "-m", "pytest",
+                str(test_file),
+                "-v", "--no-header",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        out = proc.stdout + proc.stderr
+        assert proc.returncode == 0, out
+        assert "cosai_scan_gate" not in out, (
+            "scan gate must not be collected without --cosai-target"
+        )
+
+    def test_session_fails_on_critical_finding_via_gate(self, tmp_path: Path) -> None:
+        """THE GATE: a bare `pytest --cosai-target=URL` (no user test) MUST run
+        the scan and FAIL the session on a critical finding — never silent-green.
+
+        This exercises the public pytest entry point (subprocess), not the
+        fixture in isolation.  The mock server returns /etc/passwd content so
+        the critical T3 command-injection probe (T03-001) fires.
+        """
+        import subprocess
+
+        from cosai_mcp.harness.mock_server import MockMCPServer
+
+        # tools_call_response that leaks a full passwd-style record — satisfies
+        # the T03-001 assertion ("not_contains root:") AND its corroboration
+        # markers (root:, :/, /bin/bash), producing a real critical finding.
+        leak = {
+            "jsonrpc": "2.0",
+            "result": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "root:0:0:root:/root:/bin/bash\ndaemon:1:1:daemon:/usr/sbin:/usr/sbin/nologin",
+                    }
+                ],
+                "isError": False,
+            },
+        }
+        with MockMCPServer(tools_call_response=leak) as server:
+            server.wait_ready()
+            target = f"http://127.0.0.1:{server.port}"
+            # Empty test dir — NO user test consumes the fixture.  The gate
+            # must still collect + run + fail.
+            (tmp_path / "placeholder.txt").write_text("no tests here")
+            proc = subprocess.run(
+                [
+                    sys.executable, "-m", "pytest",
+                    str(tmp_path),
+                    f"--cosai-target={target}",
+                    "--cosai-severity=critical",
+                    "--cosai-categories=T3",
+                    "--cosai-engine=prober",
+                    "-v", "--no-header",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        out = proc.stdout + proc.stderr
+        # Session must FAIL (non-zero) — the whole point.
+        assert proc.returncode != 0, f"gate did not fail the session:\n{out}"
+        assert "cosai_scan_gate" in out, f"scan gate not collected:\n{out}"
+        assert "1 failed" in out or "failed" in out, out
+        assert "at or above severity 'critical'" in out, out
+
+    def test_session_passes_on_clean_target_via_gate(self, tmp_path: Path) -> None:
+        """Control: a clean target collects the gate but PASSES the session.
+
+        Confirms the gate is not a blanket failure — it reflects scan outcome.
+        """
+        import subprocess
+
+        from cosai_mcp.harness.mock_server import MockMCPServer
+
+        with MockMCPServer() as server:  # default echo tool — no findings
+            server.wait_ready()
+            target = f"http://127.0.0.1:{server.port}"
+            proc = subprocess.run(
+                [
+                    sys.executable, "-m", "pytest",
+                    str(tmp_path),
+                    f"--cosai-target={target}",
+                    "--cosai-severity=critical",
+                    "--cosai-categories=T3",
+                    "--cosai-engine=prober",
+                    "-v", "--no-header",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        out = proc.stdout + proc.stderr
+        assert "cosai_scan_gate" in out, f"scan gate not collected:\n{out}"
+        assert proc.returncode == 0, f"clean target should pass:\n{out}"
 
 
 # ---------------------------------------------------------------------------

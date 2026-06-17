@@ -1024,6 +1024,13 @@ class Scanner:
         from cosai_mcp import Scanner
         results = Scanner("http://localhost:8000").run(categories=["T1", "T4"])
 
+    Or with an explicit configuration object::
+
+        from cosai_mcp import Scanner, ScanConfig
+        results = Scanner(
+            ScanConfig(target="http://localhost:8000", categories=["T1"], fail_on="high")
+        ).run()
+
     Raises:
         ValueError: invalid target URL (missing scheme or hostname)
         TargetUnreachableError: TCP connect to target failed
@@ -1032,7 +1039,7 @@ class Scanner:
 
     def __init__(
         self,
-        target: str,
+        target: str | ScanConfig,
         categories: list[str] | None = None,
         engine: str = "all",
         allow_custom_catalog: bool = False,
@@ -1046,8 +1053,33 @@ class Scanner:
         adversarial_mode: AdversarialMode | None = None,
         probe_delay_seconds: float = 0.0,
         baseline_path: Path | None = None,
+        fail_on: str = "critical",
     ) -> None:
+        # Accept either a full target URL string (original form) or a ScanConfig
+        # (documented public form).  When a ScanConfig is passed, its fields
+        # populate the corresponding instance attributes; explicit keyword
+        # arguments are ignored in favour of the config's values.
+        if isinstance(target, ScanConfig):
+            cfg = target
+            self.target = cfg.target or f"http://{cfg.target_host}:{cfg.target_port}"
+            self.categories = cfg.categories
+            self.fail_on = cfg.fail_on
+            self.probe_timeout_seconds = cfg.probe_timeout_seconds
+            self.allow_private_targets = cfg.allow_private_targets
+            self.auth_token = cfg.auth_token
+            self.mcp_path = cfg.mcp_path
+            self.probe_delay_seconds = cfg.probe_delay_seconds
+            self.engine = engine
+            self.allow_custom_catalog = allow_custom_catalog
+            self.catalog_root = catalog_root or CATALOG_ROOT
+            self.adaptive = adaptive
+            self.profile = profile
+            self.adversarial_mode = adversarial_mode
+            self.baseline_path = baseline_path
+            return
+
         self.target = target
+        self.fail_on = fail_on
         self.categories = categories
         self.engine = engine
         self.allow_custom_catalog = allow_custom_catalog
@@ -1081,7 +1113,7 @@ class Scanner:
                 allow_custom_catalog=self.allow_custom_catalog,
                 probe_timeout_seconds=self.probe_timeout_seconds,
                 catalog_root=self.catalog_root,
-                fail_on="critical",
+                fail_on=self.fail_on,
                 allow_private_targets=self.allow_private_targets,
                 auth_token=self.auth_token,
                 mcp_path=self.mcp_path,

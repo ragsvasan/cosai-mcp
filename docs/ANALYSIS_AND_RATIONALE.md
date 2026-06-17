@@ -291,7 +291,7 @@ Files added:
 - `tests/inventory/test_inventory.py` — 481 lines of tests
 
 CLI additions in `cosai_mcp/cli.py`:
-- `cosai inventory capture` — with `--output`, `--no-sign`, `--timeout`, `--allow-private`
+- `cosai inventory capture` — with `--output`, `--no-sign`, `--timeout`, `--allow-private-targets/--block-private-targets` (default allow, matching `scan`)
 - `cosai inventory verify`
 - `cosai inventory diff` — with `--fail-on-drift`, `--skip-verify-signatures`
 

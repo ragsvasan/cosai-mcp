@@ -83,7 +83,8 @@ def resolve_and_pin(hostname: str, config: ScanConfig) -> str:
     if is_private_address(raw_ip) and not config.allow_private_targets:
         raise PrivateAddressError(
             f"Target IP {raw_ip} is a private/loopback/link-local address. "
-            "Pass allow_private_targets=True to scan internal servers."
+            "Pass --allow-private-targets on the CLI (or allow_private_targets=True "
+            "via the Python API) to reach internal/loopback MCP servers."
         )
 
     return raw_ip

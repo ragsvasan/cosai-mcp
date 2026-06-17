@@ -164,6 +164,64 @@ class TestCapture:
             capture("http://127.0.0.1:9999")
 
 
+class TestInventoryCaptureCLI:
+    """CLI-level regression tests for `cosai inventory capture` private-target handling.
+
+    Guards the consistency fix: `inventory capture` defaults to allowing
+    loopback/private targets exactly like `cosai scan`, and the SSRF error
+    message (when blocked) names the actual CLI flag the user must pass.
+    """
+
+    def test_regression_inventory_capture_loopback_happy_path_no_flag(self) -> None:
+        """Default invocation against a loopback MCP server must succeed with no flag.
+
+        Drives the CLI entry point (not capture() directly), proving the
+        `--allow-private-targets` default=True matches `cosai scan`.
+        """
+        from cosai_mcp.harness.mock_server import MockMCPServer
+
+        runner = CliRunner()
+        with MockMCPServer(tools=list(_RAW_TOOLS)) as server:
+            server.wait_ready()
+            result = runner.invoke(
+                main,
+                [
+                    "inventory",
+                    "capture",
+                    f"http://127.0.0.1:{server.port}",
+                    "--no-sign",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert {t["name"] for t in payload["tools"]} == {"echo", "read_file"}
+
+    def test_regression_inventory_capture_block_flag_error_names_correct_flag(
+        self,
+    ) -> None:
+        """With --block-private-targets, a loopback target fails and the error
+        names the actual CLI flag to fix it (not the Python kwarg)."""
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "inventory",
+                "capture",
+                "http://127.0.0.1:9999",
+                "--block-private-targets",
+                "--no-sign",
+            ],
+        )
+
+        assert result.exit_code == 2, result.output
+        # Error must tell the user the exact CLI flag, not the Python kwarg name.
+        assert "--allow-private-targets" in result.output
+        # The legacy mismatched flag name must NOT be advertised.
+        assert "--allow-private " not in result.output
+        assert "Inventory capture failed" in result.output
+
+
 # ---------------------------------------------------------------------------
 # Signing
 # ---------------------------------------------------------------------------
@@ -432,7 +490,7 @@ class TestInventoryCLI:
                 [
                     "inventory", "capture",
                     f"http://127.0.0.1:{server.port}",
-                    "--no-sign", "--allow-private",
+                    "--no-sign", "--allow-private-targets",
                 ],
             )
         assert result.exit_code == 0, result.output
@@ -452,7 +510,7 @@ class TestInventoryCLI:
                 [
                     "inventory", "capture",
                     f"http://127.0.0.1:{server.port}",
-                    "-o", str(out), "--allow-private",
+                    "-o", str(out), "--allow-private-targets",
                 ],
             )
         assert result.exit_code == 0, result.output
@@ -570,7 +628,7 @@ class TestInventoryCLI:
     def test_capture_unreachable_exits_2(self) -> None:
         runner = CliRunner()
         result = runner.invoke(
-            main, ["inventory", "capture", "http://127.0.0.1:1", "--no-sign", "--allow-private"]
+            main, ["inventory", "capture", "http://127.0.0.1:1", "--no-sign", "--allow-private-targets"]
         )
         assert result.exit_code == 2
 
@@ -621,14 +679,14 @@ class TestReadmeFrontDoorE2E:
             r1 = runner.invoke(
                 main,
                 ["inventory", "capture", url, "-o", str(baseline),
-                 "--allow-private"],
+                 "--allow-private-targets"],
             )
             assert r1.exit_code == 0, r1.output
 
             r2 = runner.invoke(
                 main,
                 ["inventory", "capture", url, "-o", str(current),
-                 "--allow-private"],
+                 "--allow-private-targets"],
             )
             assert r2.exit_code == 0, r2.output
 
@@ -656,7 +714,7 @@ class TestReadmeFrontDoorE2E:
             r1 = runner.invoke(
                 main,
                 ["inventory", "capture", url, "-o", str(baseline),
-                 "--allow-private"],
+                 "--allow-private-targets"],
             )
             assert r1.exit_code == 0, r1.output
 
@@ -670,7 +728,7 @@ class TestReadmeFrontDoorE2E:
             r2 = runner.invoke(
                 main,
                 ["inventory", "capture", url2, "-o", str(current),
-                 "--allow-private"],
+                 "--allow-private-targets"],
             )
             assert r2.exit_code == 0, r2.output
 

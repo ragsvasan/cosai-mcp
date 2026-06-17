@@ -757,10 +757,12 @@ def inventory() -> None:
 )
 @click.option("--timeout", default=10.0, show_default=True, help="HTTP timeout in seconds.")
 @click.option(
-    "--allow-private",
-    is_flag=True,
-    default=False,
-    help="Allow capturing from RFC1918/loopback targets (for internal MCP servers).",
+    "--allow-private-targets/--block-private-targets",
+    "allow_private",
+    default=True,
+    help="Allow capturing from RFC1918/loopback targets (default: allowed for "
+         "dev/loopback use, matching `cosai scan`). Use --block-private-targets "
+         "in CI to enforce a public-target-only policy.",
 )
 def inventory_capture(
     target: str, output: str | None, no_sign: bool, timeout: float, allow_private: bool
@@ -771,7 +773,8 @@ def inventory_capture(
 
     Exit codes:
         0  Inventory captured (and signed, unless --no-sign).
-        2  Capture failed (unreachable server, handshake error, private target).
+        2  Capture failed (unreachable server, handshake error, or a private
+           target while --block-private-targets is set).
     """
     from cosai_mcp.inventory.snapshot import capture as _capture
     from cosai_mcp.inventory.signing import sign_inventory

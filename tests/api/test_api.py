@@ -423,6 +423,89 @@ class TestScanner:
 
 
 # ---------------------------------------------------------------------------
+# Documented public Python API form (Scanner + ScanConfig)
+# ---------------------------------------------------------------------------
+
+class TestDocumentedScanConfigForm:
+    """Regression: the copy-pasteable form in docs/GETTING_STARTED.md + README
+    must import and construct without error.
+
+    Documented snippet::
+
+        from cosai_mcp import Scanner, ScanConfig
+        results = Scanner(
+            ScanConfig(target="http://localhost:8000",
+                       categories=["T1", "T4", "T7"], fail_on="high")
+        ).run()
+    """
+
+    def test_regression_documented_public_form_imports_and_builds(self) -> None:
+        # Import via the package's public surface exactly as documented.
+        from cosai_mcp import Scanner as PublicScanner, ScanConfig as PublicScanConfig
+
+        cfg = PublicScanConfig(
+            target="http://localhost:8000",
+            categories=["T1", "T4", "T7"],
+            fail_on="high",
+        )
+        # target URL is parsed into host/port.
+        assert cfg.target_host == "localhost"
+        assert cfg.target_port == 8000
+        assert cfg.fail_on == "high"
+        assert cfg.categories == ["T1", "T4", "T7"]
+
+        scanner = PublicScanner(cfg)
+        assert scanner.target == "http://localhost:8000"
+        assert scanner.categories == ["T1", "T4", "T7"]
+        assert scanner.fail_on == "high"
+
+    def test_regression_scanconfig_in_package_all(self) -> None:
+        """ScanConfig must be in cosai_mcp.__all__ (was missing — broke docs)."""
+        import cosai_mcp
+        assert "ScanConfig" in cosai_mcp.__all__
+
+    def test_regression_documented_form_run_forwards_fail_on(self) -> None:
+        """run() on the ScanConfig form forwards fail_on=high to _run_scan
+        (not the hardcoded 'critical')."""
+        from cosai_mcp import Scanner as PublicScanner, ScanConfig as PublicScanConfig
+
+        mock_result = ScanResult(
+            target_url="http://localhost:8000", threats=(), probe_results=(),
+            scenario_results=(), scan_timestamp="t", catalog_hash="h", exit_code=0,
+        )
+        with patch("cosai_mcp.api._run_scan", return_value=mock_result) as mock_fn:
+            result = PublicScanner(
+                PublicScanConfig(
+                    target="http://localhost:8000",
+                    categories=["T1"],
+                    fail_on="high",
+                )
+            ).run()
+
+        assert isinstance(result, ScanResult)
+        call_kwargs = mock_fn.call_args.kwargs
+        assert call_kwargs["target"] == "http://localhost:8000"
+        assert call_kwargs["categories"] == ["T1"]
+        assert call_kwargs["fail_on"] == "high"
+
+    def test_regression_scanconfig_internal_form_still_works(self) -> None:
+        """Backward compat: the internal target_host/target_port form is unchanged."""
+        from cosai_mcp import ScanConfig as PublicScanConfig
+
+        cfg = PublicScanConfig(target_host="example.com", target_port=443)
+        assert cfg.target_host == "example.com"
+        assert cfg.target_port == 443
+        assert cfg.fail_on == "critical"  # default preserved
+
+    def test_regression_scanconfig_requires_target_or_host(self) -> None:
+        """A ScanConfig with neither target nor host/port is a hard error."""
+        from cosai_mcp import ScanConfig as PublicScanConfig
+
+        with pytest.raises(ValueError):
+            PublicScanConfig()
+
+
+# ---------------------------------------------------------------------------
 # scrub_env (API-level)
 # ---------------------------------------------------------------------------
 
