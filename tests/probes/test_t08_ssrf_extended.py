@@ -68,11 +68,17 @@ class TestT08ExtendedCatalogLoads:
         assert any("fd00" in u for u in urls)
         assert any("fe80" in u for u in urls)
 
-    def test_t08_009_protocol_error_is_expected(self, catalog):
-        """Both T08-009 probes use protocol_error_is_expected=True — rejection IS the secure outcome."""
+    def test_t08_009_does_not_set_misleading_protocol_error_flag(self, catalog):
+        """T08-009 must NOT set protocol_error_is_expected (defense FIX [2]).
+
+        The flag only makes -32700/-32600 (request-level) rejections count as a
+        secure PASS; it has no effect for -32601/-32602 (a non-existent tool
+        returns the identical code, so a tool rejection can never prove the SSRF
+        control fired). Setting it here was misleading — an IPv6 URL rejected with
+        -32602 is INCONCLUSIVE, not a pass. The field is removed to match reality."""
         t = catalog.load_file(Path("official/T08-009.json"))
         for probe in t.probes:
-            assert probe.protocol_error_is_expected is True
+            assert probe.protocol_error_is_expected is False
 
 
 # ---------------------------------------------------------------------------

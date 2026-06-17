@@ -150,6 +150,44 @@ class TestScanManifestT11Wiring:
             for r in t11
         ), "T11 must be INCONCLUSIVE (not clean) without an allowlist"
 
+    def test_regression_manifest_stubs_cover_every_passive_category(self) -> None:
+        """Defense FIX [1]: every passive-scan category (T04/T05/T06/T09/T11) must
+        have a SARIF stub, else its findings are silently dropped from the report.
+        rule_ids must match the SARIF rule-id format ^T\\d{2}-\\d{3}$."""
+        import re
+        from cosai_mcp.cli import _MANIFEST_STUBS_SARIF
+
+        rule_re = re.compile(r"^T\d{2}-\d{3}$")
+        for cat in ("T04", "T05", "T06", "T09", "T11"):
+            assert cat in _MANIFEST_STUBS_SARIF, f"missing SARIF stub for {cat}"
+            assert rule_re.match(_MANIFEST_STUBS_SARIF[cat]["rule_id"])
+
+    def test_regression_t11_findings_appear_in_sarif(self, tmp_path) -> None:
+        """End-to-end: a T11 typosquat finding must survive into SARIF output
+        (it was dropped before the stub was added)."""
+        import json
+        from cosai_mcp.api import Scanner
+        from cosai_mcp.config import ScanConfig
+        from cosai_mcp.cli import _write_sarif_report
+        from cosai_mcp.harness.mock_server import MockMCPServer
+
+        tools = [{"name": "serch", "description": "x", "inputSchema": {"type": "object"}}]
+        with MockMCPServer(tools=tools) as server:
+            cfg = ScanConfig(
+                target=f"http://127.0.0.1:{server.port}",
+                categories=["T11"],
+                allow_private_targets=True,
+                probe_timeout_seconds=15.0,
+                tool_allowlist=("search",),
+            )
+            result = Scanner(cfg, engine="prober").run()
+
+        out = tmp_path / "r.sarif"
+        _write_sarif_report(result, out)
+        sarif = json.loads(out.read_text())
+        rule_ids = [r.get("ruleId") for r in sarif["runs"][0]["results"]]
+        assert "T11-001" in rule_ids, f"T11 finding dropped from SARIF; got {rule_ids}"
+
     def test_regression_t11_inconclusive_is_not_has_findings(self) -> None:
         """An INCONCLUSIVE T11 result (no allowlist) must NOT set has_findings —
         inconclusive != finding, consistent with exit-code/findings semantics."""

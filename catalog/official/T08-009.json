@@ -25,8 +25,7 @@
           "operator": "eq",
           "value": true
         }
-      ],
-      "protocol_error_is_expected": true
+      ]
     },
     {
       "id": "T08-009-p2",
@@ -44,8 +43,7 @@
           "operator": "eq",
           "value": true
         }
-      ],
-      "protocol_error_is_expected": true
+      ]
     }
   ],
   "remediation": "Block IPv6 ULA (fc00::/7) and link-local (fe80::/10) address ranges at the HTTP client level. A server that fetches these addresses instead of rejecting them exposes internal IPv6 network services. Ensure the URL allowlist covers both IPv4 and IPv6 private/link-local ranges.",

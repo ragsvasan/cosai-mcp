@@ -1004,7 +1004,7 @@ def _scan_manifest_t11(
     T4/T6/T9 passive scans.  Called from ``_run_scan`` whenever T11 is in scope.
     """
     from cosai_mcp.middleware.integrity import levenshtein
-    from cosai_mcp.harness.result import ProbeResult as _ProbeResult, make_probe_result
+    from cosai_mcp.harness.result import make_probe_result
 
     if not discovered_tools:
         return []
@@ -1067,16 +1067,14 @@ def _scan_manifest_t11(
 
     if not results:
         # Every discovered tool is approved → T11 ran and found nothing.
-        results.append(_ProbeResult(
+        # Route through make_probe_result so the body is HTML-escaped at
+        # ingestion, consistent with the finding path and the locked report rule.
+        results.append(make_probe_result(
             probe_id="T11-manifest-clean",
             threat_id="T11",
             passed=True,
-            status_code=None,
-            response_body="All discovered tools are present on the operator allowlist.",
-            error=None,
             assertions=(),
-            duration_seconds=0.0,
-            inconclusive_reason=None,
+            response={"_body": "All discovered tools are present on the operator allowlist."},
         ))
     return results
 
