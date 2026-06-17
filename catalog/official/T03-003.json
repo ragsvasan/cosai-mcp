@@ -1,0 +1,77 @@
+{
+  "schema_version": "1.1",
+  "id": "T03-003",
+  "category": "T3",
+  "severity": "high",
+  "cosai_ref": "T3",
+  "owasp_ref": "MCP-Top10-A03",
+  "cwe": [
+    "CWE-94",
+    "CWE-1336"
+  ],
+  "confidence": "high",
+  "probes": [
+    {
+      "id": "T03-003-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "input": "{1337*1337}",
+          "query": "{1337*1337}",
+          "template": "{1337*1337}"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "1787569"
+        }
+      ],
+      "corroboration": [
+        {
+          "target": "response.body",
+          "operator": "contains",
+          "value": "1787569",
+          "description": "Positive evidence: the Smarty/Twig single-brace SSTI payload {1337*1337} was evaluated and the arithmetic product 1787569 appears in the response — not an incidental substring."
+        }
+      ]
+    },
+    {
+      "id": "T03-003-p2",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "input": "${1337*1337}",
+          "query": "${1337*1337}",
+          "template": "${1337*1337}"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "1787569"
+        }
+      ],
+      "corroboration": [
+        {
+          "target": "response.body",
+          "operator": "contains",
+          "value": "1787569",
+          "description": "Positive evidence: the EL/Freemarker/Pebble SSTI payload ${1337*1337} was evaluated and the product 1787569 appears in the response body."
+        }
+      ]
+    }
+  ],
+  "remediation": "Never pass user-controlled values through a server-side template engine. Use a sandboxed or logic-less template renderer (e.g. Mustache), or treat all MCP arguments as data rather than templates.",
+  "references": [
+    "https://cosai.org/T3",
+    "https://cwe.mitre.org/data/definitions/94.html",
+    "https://portswigger.net/web-security/server-side-template-injection"
+  ]
+}

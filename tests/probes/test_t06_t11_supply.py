@@ -90,7 +90,16 @@ class TestT06ToolIntegrity:
 
 
 class TestT11SupplyChain:
-    """T11-001: Server must reject unlisted / unknown tool names."""
+    """T11-001: Server must reject unlisted / unknown tool names.
+
+    NOTE (WG-89 reviewer item 3): T11-001 is a minimal liveness check — it asks
+    for a fictional tool name and expects rejection. Every JSON-RPC-conformant
+    server passes it, so on its own it does NOT speak to supply-chain integrity.
+    The real black-box T11 surface is the operator-allowlist passive scan
+    (``cosai_mcp.api._scan_manifest_t11`` + ``--tool-allowlist``): it flags
+    unexpected tools and Levenshtein-1 typosquats, and reports INCONCLUSIVE
+    (never clean) when no allowlist is supplied. See
+    ``tests/scorecard/test_manifest_t11.py``."""
 
     @pytest.mark.asyncio
     async def test_secure_server_rejects_unlisted_tool(self, catalog):

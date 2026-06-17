@@ -73,6 +73,25 @@ class _AdvancedHelpCommand(click.Command):
             )
 
 
+def _parse_tool_allowlist(raw: str | None) -> tuple[str, ...] | None:
+    """Parse the comma-separated --tool-allowlist value into a tuple of names.
+
+    Returns None when no value is supplied (T11 then reports INCONCLUSIVE), or a
+    tuple of stripped, de-duplicated, non-empty names.  An all-whitespace value
+    is treated as 'not supplied' (None) rather than an empty approved set.
+    """
+    if raw is None:
+        return None
+    names = [n.strip() for n in raw.split(",") if n.strip()]
+    if not names:
+        return None
+    # De-dupe while preserving order.
+    seen: dict[str, None] = {}
+    for n in names:
+        seen.setdefault(n, None)
+    return tuple(seen)
+
+
 def _help_advanced_cb(ctx: click.Context, param: click.Parameter, value: bool):
     if not value or ctx.resilient_parsing:
         return
@@ -188,6 +207,10 @@ def main() -> None:
               help="Widen the T5 secret/PII manifest scan to the broad-PII tier "
                    "(SSN, IBAN, US phone, Luhn-validated PAN) on top of the always-on "
                    "anchored-credential tier. Off by default to keep scans fast.")
+@click.option("--tool-allowlist", default=None, hidden=True,
+              help="Comma-separated approved tool names for the T11 supply-chain scan. "
+                   "Discovered tools not on the list (or within one edit of an entry — "
+                   "typosquat) are flagged. Without it, T11 is reported INCONCLUSIVE.")
 @click.option("--profile", default=None,
               help="Server profile name (e.g. mnemo, fastmcp). Optional — omit for a "
                    "generic scan. Sets mcp_path, auth header format, tool name map, "
@@ -282,6 +305,7 @@ def scan(
     mcp_path: str,
     no_adaptive: bool,
     pii_strict: bool,
+    tool_allowlist: str | None,
     profile: str | None,
     allow_custom_profiles: bool,
     adversarial: bool,
@@ -405,6 +429,7 @@ def scan(
             probe_delay_seconds=probe_delay,
             baseline_path=Path(baseline_path) if baseline_path else None,
             pii_strict=pii_strict,
+            tool_allowlist=_parse_tool_allowlist(tool_allowlist),
         )
     except ValueError as exc:
         # Includes adversarial dual opt-in failures AND a malformed
@@ -1317,14 +1342,54 @@ def _print_scan_summary(result: ScanResult, fail_on: str = "critical") -> None:
 # ---------------------------------------------------------------------------
 
 def _make_manifest_stubs() -> tuple[dict, dict]:
-    """Build (sarif_stubs, html_stubs) for T04 and T09 manifest findings.
+    """Build (sarif_stubs, html_stubs) for passive manifest-scan findings.
 
-    Both dicts are keyed by bare category code (e.g. "T09") because that is
-    what _scan_manifest_t4 and _scan_manifest_t9 write into ProbeResult.threat_id.
+    Both dicts are keyed by bare category code (e.g. "T09") because that is what
+    the passive scans (_scan_manifest_t4/t5/t6/t9/t11) write into
+    ProbeResult.threat_id. A category missing here is silently dropped from the
+    SARIF/HTML report, so every passive-scan category MUST have a stub.
     """
     from cosai_mcp.catalog.models import Severity
 
     sarif: dict = {
+        "T05": {
+            "rule_id": "T05-001",
+            "name": "T5 Data Protection — Secret/PII in Tool Manifest",
+            "severity": Severity.HIGH,
+            "remediation": (
+                "Tool names and descriptions must not embed credentials or PII. "
+                "Remove any API key, token, or personal data from the manifest; "
+                "inject secrets via environment/secrets-manager at runtime, never "
+                "in tool definitions. Ref: CoSAI T5, CWE-312."
+            ),
+            "owasp_ref": "MCP-Top10-A05",
+            "cwe": ("CWE-312", "CWE-200"),
+        },
+        "T06": {
+            "rule_id": "T06-001",
+            "name": "T6 Integrity — Manifest Tool-Name Collision/Shadowing",
+            "severity": Severity.HIGH,
+            "remediation": (
+                "Tool names must be unique and must not collide with, shadow, or "
+                "typosquat (Levenshtein 1 of) a reserved MCP method or another "
+                "tool. Enforce a unique, signed tool allowlist. Ref: CoSAI T6, CWE-345."
+            ),
+            "owasp_ref": "MCP-Top10-A06",
+            "cwe": ("CWE-345",),
+        },
+        "T11": {
+            "rule_id": "T11-001",
+            "name": "T11 Supply Chain — Unexpected/Typosquatted Tool",
+            "severity": Severity.HIGH,
+            "remediation": (
+                "A discovered tool is not on the operator allowlist, or is within "
+                "one edit of an approved name (typosquat). Confirm the tool is "
+                "approved and signed, or remove it from the server. Maintain an "
+                "explicit approved-tool allowlist. Ref: CoSAI T11, CWE-1357."
+            ),
+            "owasp_ref": "MCP-Top10-A11",
+            "cwe": ("CWE-1357", "CWE-494"),
+        },
         "T09": {
             "rule_id": "T09-001",
             "name": "T9 Totem Violation — Missing Two-Stage Commit",

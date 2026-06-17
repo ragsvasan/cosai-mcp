@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0",
+  "id": "T08-009",
+  "category": "T8",
+  "severity": "critical",
+  "cosai_ref": "T8",
+  "owasp_ref": "MCP-Top10-A08",
+  "cwe": [
+    "CWE-918"
+  ],
+  "probes": [
+    {
+      "id": "T08-009-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "url": "http://[fd00::1]/"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true
+        }
+      ]
+    },
+    {
+      "id": "T08-009-p2",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "url": "http://[fe80::1]/"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true
+        }
+      ]
+    }
+  ],
+  "remediation": "Block IPv6 ULA (fc00::/7) and link-local (fe80::/10) address ranges at the HTTP client level. A server that fetches these addresses instead of rejecting them exposes internal IPv6 network services. Ensure the URL allowlist covers both IPv4 and IPv6 private/link-local ranges.",
+  "references": [
+    "https://cosai.org/T8",
+    "https://cwe.mitre.org/data/definitions/918.html",
+    "https://www.rfc-editor.org/rfc/rfc4193",
+    "https://www.rfc-editor.org/rfc/rfc4291#section-2.5.6"
+  ]
+}
