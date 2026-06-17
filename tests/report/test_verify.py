@@ -2,14 +2,12 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 
 import pytest
 
 from cosai_mcp.middleware.audit import AuditLogger
 from cosai_mcp.report.verify import VerifyStatus, verify_audit_log
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -73,7 +73,7 @@ def resolve_and_pin(hostname: str, config: ScanConfig) -> str:
     # Prefer IPv4 (AF_INET) over IPv6 — on macOS, localhost resolves to ::1
     # first, but many development servers only bind on 127.0.0.1 (IPv4).
     results.sort(key=lambda r: 0 if r[0] == socket.AF_INET else 1)
-    raw_ip = results[0][4][0]
+    raw_ip: str = str(results[0][4][0])
 
     if is_always_blocked(raw_ip):
         raise PrivateAddressError(
@@ -120,7 +120,9 @@ class Transport(ABC):
         """Establish the transport connection."""
 
     @abstractmethod
-    async def send(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+    async def send(
+        self, method: str, params: dict[str, Any], override_headers: dict[str, str] | None = None
+    ) -> dict[str, Any]:
         """Send a JSON-RPC request and return the response dict."""
 
     @abstractmethod
@@ -135,7 +137,7 @@ class Transport(ABC):
     async def close(self) -> None:
         """Tear down the transport connection."""
 
-    async def __aenter__(self) -> "Transport":
+    async def __aenter__(self) -> Transport:
         await self.connect()
         return self
 

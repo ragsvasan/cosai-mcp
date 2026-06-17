@@ -8,7 +8,6 @@ import warnings
 from dataclasses import dataclass
 from typing import Any
 
-
 # Small reference allowlist of well-known MCP tool names drawn from the widely
 # deployed reference servers (filesystem, git, github, fetch, memory, sqlite,
 # time, …). When the operator supplies no allowlist, the detector falls back to
@@ -38,26 +37,18 @@ STANDARD_MCP_METHODS: frozenset[str] = frozenset({
     "notifications/initialized", "notifications/cancelled",
 })
 
-# Canonical Cyrillic/Greek → Latin homoglyph map. SINGLE SOURCE OF TRUTH —
-# cosai_mcp.middleware.boundary imports this so the T4 tool-poisoning scanner and
-# the T6 typosquat/shadow scanner fold the same look-alike characters (a defense
-# review caught the two tables drifting). Covers lower- AND upper-case forms so a
-# mixed-script squat such as Cyrillic "rеad_file" (е = U+0435) collapses onto
-# ASCII "read_file" regardless of case.
-HOMOGLYPH_MAP: dict[str, str] = {
-    # Cyrillic — lowercase
-    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y",
-    "ѕ": "s", "і": "i", "ј": "j", "ԁ": "d", "ո": "n", "м": "m", "т": "t",
-    "к": "k", "в": "b", "н": "h", "г": "r",
-    # Cyrillic — uppercase
-    "А": "A", "Е": "E", "О": "O", "Р": "P", "С": "C", "Х": "X", "У": "Y",
-    "В": "B", "Н": "H", "К": "K", "М": "M", "Т": "T",
-    # Greek — lowercase
-    "ο": "o", "ρ": "p", "α": "a", "ε": "e", "ι": "i", "ν": "v", "τ": "t",
-    # Greek — uppercase
-    "Ο": "O", "Ρ": "P", "Α": "A", "Ε": "E", "Τ": "T", "Ι": "I",
+# Cyrillic/Greek homoglyphs → Latin look-alike. Tool names are folded through
+# this map before edit-distance comparison so a mixed-script squat such as
+# Cyrillic "rеad_file" (е = U+0435) collapses onto ASCII "read_file".
+_HOMOGLYPHS: dict[int, str] = {
+    ord(k): v for k, v in {
+        "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y",
+        "ѕ": "s", "і": "i", "ј": "j", "ԁ": "d", "ո": "n", "м": "m", "т": "t",
+        "к": "k", "в": "b", "н": "h", "г": "r",
+        # Greek
+        "ο": "o", "ρ": "p", "α": "a", "ε": "e", "ι": "i", "ν": "v", "τ": "t",
+    }.items()
 }
-_HOMOGLYPHS: dict[int, str] = {ord(k): v for k, v in HOMOGLYPH_MAP.items()}
 
 
 def fold_homoglyphs(name: str) -> str:
@@ -191,12 +182,6 @@ class TyposquatDetector:
         within ``max_distance`` edits of a reserved MCP method name can intercept
         or impersonate that protocol method (T6 shadowing). Reported as
         TyposquatFinding with ``closest_match`` set to the shadowed method.
-
-        Scope note: this is the DETECTOR/middleware-facing API. The passive scan
-        path (``cosai_mcp.api._scan_manifest_t6``) performs the equivalent
-        reserved-method shadow check inline over the same standard-method set, so
-        ``cosai scan`` already flags shadowing without calling this method; use
-        this when embedding the detector in a server/proxy.
         """
         findings: list[TyposquatFinding] = []
         for tool in tools:

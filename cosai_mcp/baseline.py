@@ -65,11 +65,11 @@ class Baseline:
     fingerprints: frozenset[str]
 
     @classmethod
-    def empty(cls) -> "Baseline":
+    def empty(cls) -> Baseline:
         return cls(fingerprints=frozenset())
 
     @classmethod
-    def load(cls, path: Path) -> "Baseline":
+    def load(cls, path: Path) -> Baseline:
         """Load and validate a ``.cosai-baseline`` file.
 
         Fail-closed: any structural problem raises ValueError rather than
@@ -123,9 +123,9 @@ class Baseline:
 
 
 def apply_baseline(
-    probe_results: list["ProbeResult"],
+    probe_results: list[ProbeResult],
     baseline: Baseline,
-) -> list["ProbeResult"]:
+) -> list[ProbeResult]:
     """Return a new list with ``suppressed=True`` set on baseline-matched FINDINGS.
 
     Only a genuine finding (``not passed`` and no error and not inconclusive)
@@ -134,7 +134,7 @@ def apply_baseline(
     """
     import dataclasses
 
-    out: list["ProbeResult"] = []
+    out: list[ProbeResult] = []
     for r in probe_results:
         is_finding = (
             not r.passed

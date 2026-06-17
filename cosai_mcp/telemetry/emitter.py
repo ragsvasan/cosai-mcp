@@ -144,7 +144,7 @@ class HttpEmitter:
     def close(self) -> None:
         self._client.close()
 
-    def __enter__(self) -> "HttpEmitter":
+    def __enter__(self) -> HttpEmitter:
         return self
 
     def __exit__(self, *_: object) -> None:

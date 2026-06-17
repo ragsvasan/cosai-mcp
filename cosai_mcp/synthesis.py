@@ -17,7 +17,8 @@ Security constraints (non-negotiable):
 from __future__ import annotations
 
 import types
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from cosai_mcp.discovery import DiscoveredTool
 
@@ -170,7 +171,7 @@ def synthesize_probe_payload(
         if not tool.string_params:
             # No string params to bloat — fall back to catalog
             return types.MappingProxyType(dict(catalog_payload))
-        args: dict[str, Any] = {p: _OVERSIZE_VALUE for p in tool.string_params}
+        args: dict[str, Any] = dict.fromkeys(tool.string_params, _OVERSIZE_VALUE)
         _fill_required_params(args, tool)
         _check_template_escape(args)
         return types.MappingProxyType({"name": tool.name, "arguments": args})

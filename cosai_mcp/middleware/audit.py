@@ -37,7 +37,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # AuditEntry — frozen, hash-chained
 # ---------------------------------------------------------------------------
@@ -67,7 +66,7 @@ class AuditEntry:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "AuditEntry":
+    def from_dict(cls, d: dict[str, Any]) -> AuditEntry:
         return cls(
             entry_id=d["entry_id"],
             parent_id=d.get("parent_id"),
@@ -94,7 +93,7 @@ def _params_digest(params: dict[str, Any]) -> str:
 
 def _compute_chain_hash(entry_without_hash: dict[str, Any]) -> str:
     """Compute chain_hash over the canonical form of the entry (minus chain_hash)."""
-    canonical = json.dumps(entry_without_hash, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    canonical = json.dumps(entry_without_hash, sort_keys=True, separators=(",", ":"), ensure_ascii=True)  # noqa: E501
     return _sha256(canonical)
 
 

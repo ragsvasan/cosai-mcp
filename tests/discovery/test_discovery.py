@@ -3,19 +3,17 @@ from __future__ import annotations
 
 import json
 import types
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from cosai_mcp.config import ScanConfig
 from cosai_mcp.discovery import (
-    DiscoveredTool,
     _SCHEMA_SIZE_LIMIT_BYTES,
     _parse_input_schema,
     _tool_dict_to_discovered,
     discover_tools,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

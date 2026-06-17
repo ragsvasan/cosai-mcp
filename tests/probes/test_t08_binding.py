@@ -9,8 +9,6 @@ transport — also observation, not discovery.
 """
 from __future__ import annotations
 
-import socket
-import threading
 from pathlib import Path
 
 import pytest
@@ -21,7 +19,6 @@ from cosai_mcp.middleware.network import (
     TLSInspectionResult,
     TransportSecurityInspector,
 )
-
 
 CATALOG_ROOT = Path(__file__).parent.parent.parent / "catalog"
 

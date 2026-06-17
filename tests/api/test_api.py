@@ -6,19 +6,20 @@ import json
 import os
 from pathlib import Path
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+if TYPE_CHECKING:
+    from cosai_mcp.harness.result import ProbeResult
+
 from cosai_mcp.adversarial import AdversarialMode
 from cosai_mcp.adversarial.enforcer import UnsafeProbeError
 from cosai_mcp.api import (
-    CATALOG_ROOT,
-    COVERAGE_MATRIX,
-    MIDDLEWARE_ONLY_CATEGORIES,
-    ScanResult,
     Scanner,
+    ScanResult,
     _catalog_hash,
     _determine_exit_code,
     _normalise_categories,
@@ -27,8 +28,6 @@ from cosai_mcp.api import (
     scrub_env,
 )
 from cosai_mcp.catalog.models import Severity
-from cosai_mcp.exceptions import TargetUnreachableError
-
 
 # ---------------------------------------------------------------------------
 # _parse_target
@@ -78,7 +77,7 @@ class TestNormaliseCategories:
 
 class TestCatalogHash:
     def test_deterministic(self) -> None:
-        from cosai_mcp.catalog.models import ThreatDefinition, Severity, Provenance
+        from cosai_mcp.catalog.models import Provenance, Severity, ThreatDefinition
 
         def _make_threat(id_: str) -> ThreatDefinition:
             return ThreatDefinition(
@@ -113,7 +112,12 @@ class TestCatalogHash:
         let an attacker swap assertion logic and keep a valid report sig.
         """
         from cosai_mcp.catalog.models import (
-            Assertion, Operator, Probe, Provenance, Severity, ThreatDefinition,
+            Assertion,
+            Operator,
+            Probe,
+            Provenance,
+            Severity,
+            ThreatDefinition,
         )
 
         def _mk(assertion_value: str) -> ThreatDefinition:
@@ -158,7 +162,9 @@ class TestCatalogHash:
         the hash — severity drives the CI fail-on gate.
         """
         from cosai_mcp.catalog.models import (
-            Provenance, Severity, ThreatDefinition,
+            Provenance,
+            Severity,
+            ThreatDefinition,
         )
 
         def _mk(sev: Severity) -> ThreatDefinition:
@@ -183,7 +189,10 @@ class TestCatalogHash:
     def test_regression_h2_payload_change_changes_hash(self) -> None:
         """H-2: altering a probe payload (id unchanged) must change the hash."""
         from cosai_mcp.catalog.models import (
-            Probe, Provenance, Severity, ThreatDefinition,
+            Probe,
+            Provenance,
+            Severity,
+            ThreatDefinition,
         )
 
         def _mk(arg: str) -> ThreatDefinition:
@@ -295,15 +304,15 @@ class TestDetermineExitCode:
 
 class TestScanResult:
     def _make(self, **kwargs) -> ScanResult:
-        defaults = dict(
-            target_url="http://t:8000",
-            threats=(),
-            probe_results=(),
-            scenario_results=(),
-            scan_timestamp="2026-01-01T00:00:00+00:00",
-            catalog_hash="abc",
-            exit_code=0,
-        )
+        defaults = {
+            "target_url": "http://t:8000",
+            "threats": (),
+            "probe_results": (),
+            "scenario_results": (),
+            "scan_timestamp": "2026-01-01T00:00:00+00:00",
+            "catalog_hash": "abc",
+            "exit_code": 0,
+        }
         defaults.update(kwargs)
         return ScanResult(**defaults)
 
@@ -441,7 +450,8 @@ class TestDocumentedScanConfigForm:
 
     def test_regression_documented_public_form_imports_and_builds(self) -> None:
         # Import via the package's public surface exactly as documented.
-        from cosai_mcp import Scanner as PublicScanner, ScanConfig as PublicScanConfig
+        from cosai_mcp import ScanConfig as PublicScanConfig
+        from cosai_mcp import Scanner as PublicScanner
 
         cfg = PublicScanConfig(
             target="http://localhost:8000",
@@ -467,7 +477,8 @@ class TestDocumentedScanConfigForm:
     def test_regression_documented_form_run_forwards_fail_on(self) -> None:
         """run() on the ScanConfig form forwards fail_on=high to _run_scan
         (not the hardcoded 'critical')."""
-        from cosai_mcp import Scanner as PublicScanner, ScanConfig as PublicScanConfig
+        from cosai_mcp import ScanConfig as PublicScanConfig
+        from cosai_mcp import Scanner as PublicScanner
 
         mock_result = ScanResult(
             target_url="http://localhost:8000", threats=(), probe_results=(),
@@ -548,7 +559,7 @@ class TestScrubEnvApi:
         assert "REDIS_URL" not in scrubbed
         assert "HOME" in scrubbed
 
-    def test_regression_scrub_does_not_mutate_os_environ(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_regression_scrub_does_not_mutate_os_environ(self, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: E501
         """Regression: FIX [2] — scrub_env must not mutate os.environ."""
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKID_TEST")
         before = dict(os.environ)
@@ -556,9 +567,8 @@ class TestScrubEnvApi:
         after = dict(os.environ)
         assert before == after, "scrub_env() must not mutate os.environ"
 
-    def test_regression_api_run_preserves_caller_environ(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_regression_api_run_preserves_caller_environ(self, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: E501
         """Regression: FIX [2] — Scanner.run() must not delete caller env vars."""
-        import cosai_mcp.api as api_mod
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKID_PRESERVED")
         mock_result = ScanResult(
             target_url="http://t:8000", threats=(), probe_results=(),
@@ -788,9 +798,10 @@ class TestT1AuthProbeNoAuthHeader:
         captures the ScanConfig passed to ProbeRunner for T1 threats, and asserts
         both auth_token and auth_header are None.
         """
+        import types
+
         from cosai_mcp.config import ScanConfig
         from cosai_mcp.profiles.models import ServerProfile
-        import types
 
         profile = ServerProfile(
             name="test",
@@ -819,6 +830,7 @@ class TestT1AuthProbeNoAuthHeader:
              patch("cosai_mcp.api.StatefulHarness"):
             # Write a minimal T1 catalog entry
             import json as _json
+
             from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
             key = Ed25519PrivateKey.generate()
             official = tmp_path / "official"
@@ -857,7 +869,7 @@ class TestT1AuthProbeNoAuthHeader:
         # The ProbeRunner created for T1 probes (no_auth_config) must have
         # both auth_token and auth_header cleared.
         t1_runner_configs = [c for c in captured_configs if c.auth_token is None]
-        assert t1_runner_configs, "No ProbeRunner with auth_token=None — T1 probes may be running with auth"
+        assert t1_runner_configs, "No ProbeRunner with auth_token=None — T1 probes may be running with auth"  # noqa: E501
         for cfg in t1_runner_configs:
             assert cfg.auth_header is None, (
                 f"T1 no_auth_config still has auth_header={cfg.auth_header!r}; "
@@ -881,7 +893,7 @@ class TestExtractRetryAfter:
         # when Mnemo returns -32029.  make_probe_result HTML-escapes this,
         # turning single-quotes into &#x27; — the regex must survive that.
         data = f"{{'retry_after': {retry_after}}}" if retry_after is not None else "{}"
-        raw = f"Subprocess error: Server rejected initialize: {{'code': -32029, 'message': 'Rate limit exceeded', 'data': {data}}}"
+        raw = f"Subprocess error: Server rejected initialize: {{'code': -32029, 'message': 'Rate limit exceeded', 'data': {data}}}"  # noqa: E501
         return make_probe_result(
             probe_id="T10-004-p1",
             threat_id="T10",
@@ -901,8 +913,8 @@ class TestExtractRetryAfter:
         """Fractional retry_after (e.g. 30.5) must be returned as float."""
         from cosai_mcp.api import _extract_retry_after
         from cosai_mcp.harness.result import make_probe_result
-        raw = "Subprocess error: Server rejected initialize: {'code': -32029, 'data': {'retry_after': 30.5}}"
-        result = make_probe_result(probe_id="T10", threat_id="T10", passed=False, assertions=(), error=raw)
+        raw = "Subprocess error: Server rejected initialize: {'code': -32029, 'data': {'retry_after': 30.5}}"  # noqa: E501
+        result = make_probe_result(probe_id="T10", threat_id="T10", passed=False, assertions=(), error=raw)  # noqa: E501
         assert _extract_retry_after([result]) == 30.5
 
     def test_regression_extract_retry_after_no_retry_after_field(self):
@@ -947,7 +959,7 @@ class TestExtractRetryAfter:
         assert _extract_retry_after([result]) == 60.0
 
 
-class TestDetermineExitCode:
+class TestDetermineExitCodeTimeouts:
     """_determine_exit_code exit-code semantics for timeouts and rate-limit errors."""
 
     def _timeout_result(self) -> object:
@@ -961,7 +973,7 @@ class TestDetermineExitCode:
         from cosai_mcp.harness.result import make_probe_result
         return make_probe_result(
             probe_id="T11-001-p1", threat_id="T11", passed=False, assertions=(),
-            error="Subprocess error: Server rejected initialize: {'code': -32029, 'message': 'Rate limit exceeded', 'data': {'retry_after': 60}}",
+            error="Subprocess error: Server rejected initialize: {'code': -32029, 'message': 'Rate limit exceeded', 'data': {'retry_after': 60}}",  # noqa: E501
         )
 
     def _crash_result(self) -> object:
@@ -980,7 +992,7 @@ class TestDetermineExitCode:
     def test_regression_timeout_alongside_pass_not_exit_2(self):
         """A timeout probe does not corrupt a scan where another probe passed cleanly."""
         from cosai_mcp.api import _determine_exit_code
-        code = _determine_exit_code([self._timeout_result(), self._passing_result()], [], "critical")
+        code = _determine_exit_code([self._timeout_result(), self._passing_result()], [], "critical")  # noqa: E501
         assert code == 0, f"timeout + passing probe should be exit 0, got {code}"
 
     def test_regression_timeout_sole_probe_is_exit_2(self):
@@ -992,7 +1004,7 @@ class TestDetermineExitCode:
     def test_regression_rate_limit_alongside_pass_not_exit_2(self):
         """-32029 rate-limit error alongside a passing probe is not scan-incomplete."""
         from cosai_mcp.api import _determine_exit_code
-        code = _determine_exit_code([self._rate_limit_error_result(), self._passing_result()], [], "critical")
+        code = _determine_exit_code([self._rate_limit_error_result(), self._passing_result()], [], "critical")  # noqa: E501
         assert code == 0, f"rate-limit + passing probe should be exit 0, got {code}"
 
     def test_regression_rate_limit_sole_probe_is_exit_2(self):

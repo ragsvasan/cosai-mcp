@@ -17,7 +17,7 @@ class ToolPolicy:
     user_only: bool = False
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "ToolPolicy":
+    def from_dict(cls, d: dict[str, Any]) -> ToolPolicy:
         return cls(
             required_scopes=frozenset(d.get("required_scopes", [])),
             user_only=bool(d.get("user_only", False)),
@@ -37,7 +37,7 @@ class AuthzContext:
     has_user_claim: bool
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "AuthzContext":
+    def from_dict(cls, d: dict[str, Any]) -> AuthzContext:
         return cls(
             scopes=frozenset(d.get("scopes", [])),
             has_user_claim=bool(d.get("has_user_claim", False)),

@@ -7,7 +7,7 @@
 
 Open-source MCP security framework for the 12 CoSAI threat categories (T1–T12): **9 categories with zero-config black-box/stateful coverage; 3 (T4, T9, T12) require the cosai-mcp middleware deployed in the target.**
 
-**Status:** Alpha — 1546 tests passing, Apache 2.0. Zero-config scan covers 9 categories (T1–T3, T5–T8, T10–T11). T4/T9/T12 detection needs the middleware in the target's call path. All 12 middleware modules are implemented: `auth`, `authz`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, `audit`, `validation`, `session`, and `supply_chain`.
+**Status:** Alpha — 1462 tests passing, Apache 2.0. Zero-config scan covers 9 categories (T1–T3, T5–T8, T10–T11). T4/T9/T12 detection needs the middleware in the target's call path. All 12 middleware modules are implemented: `auth`, `authz`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, `audit`, `validation`, `session`, and `supply_chain`.
 
 ```bash
 # Install from source (interim — package not yet on PyPI)
@@ -52,7 +52,7 @@ cosai scan http://localhost:8000   # loopback/RFC1918 allowed by default
 | T8 | Network Binding Failures | Black-box prober |
 | T9 | Trust Boundary Failures | Passive manifest scan + Middleware |
 | T10 | Resource Management | Black-box prober |
-| T11 | Supply Chain/Lifecycle | Passive manifest scan (`--tool-allowlist`) |
+| T11 | Supply Chain/Lifecycle | Black-box prober |
 | T12 | Insufficient Logging | Middleware (deploy in target) |
 
 T4, T6, and T9 each have a passive manifest-scan layer: T4 detects tool-description poisoning in `tools/list`; T6 detects tool-name collisions, reserved-method shadowing, and Levenshtein-1 typosquats, plus a stateful mid-session manifest-drift check; T9 detects destructive tools missing two-stage commit (the TKA Totem structural check). Full T4/T9/T12 coverage requires the cosai-mcp middleware deployed in the target. See [docs/THREAT_CATALOG.md](docs/THREAT_CATALOG.md) for the full rationale.
@@ -199,7 +199,7 @@ Static analyzers test what you wrote — the source code. We test what you shipp
 T4, T6, and T9 each have a passive manifest-scan layer that runs zero-config. T4 detects tool-description poisoning hidden in `tools/list`. T6 detects name collisions, reserved-method shadowing, and typosquatted tool names. T9 detects destructive tools missing two-stage commit (delete/drop/wipe/revoke/etc. tools without a `confirmed` param or `_preview` sibling) — the structural Totem check from the CoSAI WS4 T9 contribution. T4 adversarial mode with canary tokens additionally catches exfiltration from outside. For T9 and T12, full coverage requires the middleware in the call path — detecting that LLM judgment drove an authorization decision or that an audit log entry was missing requires being instrumented inside the server.
 
 **Is this ready for others to use?**
-1546 passing tests, Apache 2.0, installs with pip. The catalog format and taxonomy coverage are stable. Reference-implementation quality — solid enough to standardize the probe catalog schema against, not yet production-hardened for enterprise deployment at scale.
+1462 passing tests, Apache 2.0, installs with pip. The catalog format and taxonomy coverage are stable. Reference-implementation quality — solid enough to standardize the probe catalog schema against, not yet production-hardened for enterprise deployment at scale.
 
 **What about non-Python MCP servers?**
 The scanner speaks JSON-RPC — it's language-agnostic. Any MCP server regardless of implementation language is a valid target. The server-side middleware is Python-only today, but the scanner works against TypeScript, Go, or anything.

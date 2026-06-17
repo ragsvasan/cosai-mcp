@@ -153,10 +153,10 @@ class MCPSession:
                     ) from exc
                 if "error" in reinit_response:
                     raise SessionIncompleteError(
-                        f"Server rejected initialize on LegacySSETransport: {reinit_response['error']}"
+                        f"Server rejected initialize on LegacySSETransport: {reinit_response['error']}"  # noqa: E501
                     )
                 reinit_result = reinit_response.get("result", {})
-                self._protocol_version = reinit_result.get("protocolVersion", self._protocol_version)
+                self._protocol_version = reinit_result.get("protocolVersion", self._protocol_version)  # noqa: E501
                 self._server_info = reinit_result.get("serverInfo", self._server_info)
 
         # Step 3: initialized notification — must have no 'id' (JSON-RPC 2.0 notification)
@@ -283,5 +283,5 @@ class MCPSession:
         }
         try:
             await self._transport.send_notification(notification)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass  # notifications: fire-and-forget; errors are non-fatal

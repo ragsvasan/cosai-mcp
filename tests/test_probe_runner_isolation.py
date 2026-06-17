@@ -10,17 +10,14 @@ These tests go through the ACTUAL ProbeRunner.run_probe() interface to exercise:
 """
 from __future__ import annotations
 
-import time
 import threading
+import time
 from pathlib import Path
-
-import pytest
 
 from cosai_mcp.catalog.loader import CatalogLoader
 from cosai_mcp.config import ScanConfig
 from cosai_mcp.harness.mock_server import MockMCPServer
 from cosai_mcp.harness.runner import ProbeRunner
-
 
 CATALOG_ROOT = Path(__file__).parent.parent / "catalog"
 
@@ -214,7 +211,7 @@ class TestProbeRunnerProtocolErrorOptOut:
         PASS through the full ProbeRunner subprocess path, not inconclusive."""
         threat, probe = self._load_t10_p1()
         assert probe.protocol_error_is_expected is True  # precondition
-        resp = {"jsonrpc": "2.0", "id": 0, "error": {"code": -32600, "message": "Request too large"}}
+        resp = {"jsonrpc": "2.0", "id": 0, "error": {"code": -32600, "message": "Request too large"}}  # noqa: E501
         with MockMCPServer(tools_call_response=resp) as server:
             server.wait_ready()
             config = _make_config(server.port)

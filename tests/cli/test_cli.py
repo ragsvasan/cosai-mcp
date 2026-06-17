@@ -4,23 +4,20 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any
-from unittest.mock import MagicMock, create_autospec, patch
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
 
-from cosai_mcp.cli import main, _parse_method_overrides
 from cosai_mcp.api import (
     COVERAGE_MATRIX,
     MIDDLEWARE_ONLY_CATEGORIES,
     ScanResult,
     scrub_env,
-    _SCRUB_PATTERNS,
 )
+from cosai_mcp.cli import _parse_method_overrides, main
 from cosai_mcp.exceptions import TargetUnreachableError
-
 
 # ---------------------------------------------------------------------------
 # Helpers — build ScanResult without hitting the network
@@ -464,7 +461,7 @@ class TestPytestPlugin:
                 "content": [
                     {
                         "type": "text",
-                        "text": "root:0:0:root:/root:/bin/bash\ndaemon:1:1:daemon:/usr/sbin:/usr/sbin/nologin",
+                        "text": "root:0:0:root:/root:/bin/bash\ndaemon:1:1:daemon:/usr/sbin:/usr/sbin/nologin",  # noqa: E501
                     }
                 ],
                 "isError": False,
@@ -705,7 +702,6 @@ class TestLockedAdoptionPathsUnchanged:
         """The `--cosai-target/--cosai-severity/--cosai-categories/
         --cosai-engine` pytest options are independent of the Click CLI and
         must remain registered."""
-        import argparse
 
         from cosai_mcp.pytest_plugin import pytest_addoption
 

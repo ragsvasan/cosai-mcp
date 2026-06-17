@@ -9,20 +9,20 @@ from threading import Thread
 from typing import Any
 from unittest.mock import patch
 
-import pytest
 from click.testing import CliRunner
 
 from cosai_mcp.cli import main
-from cosai_mcp.ir.containment import ContainmentResult, perform_containment, _generate_block_commands
+from cosai_mcp.ir.containment import (
+    _generate_block_commands,
+    perform_containment,
+)
 from cosai_mcp.ir.incident import (
     ContainmentAction,
-    FindingSummary,
     IncidentRecord,
     IncidentSeverity,
     build_incident,
 )
-from cosai_mcp.ir.ocsf_incident import OcsfIncident, build_ocsf_incident
-
+from cosai_mcp.ir.ocsf_incident import build_ocsf_incident
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -132,7 +132,7 @@ class TestBuildIncident:
             target_url="http://x", scan_timestamp="2026-01-01T00:00:00Z",
             findings=[], probe_severity={},
         )
-        assert inc.severity.value in IncidentSeverity.__members__.values().__class__.__name__ or True
+        assert inc.severity.value in IncidentSeverity.__members__.values().__class__.__name__ or True  # noqa: E501
         # severity field is valid IncidentSeverity instance
         assert isinstance(inc.severity, IncidentSeverity)
 
@@ -222,7 +222,7 @@ class TestContainment:
         inc = _make_incident()
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "incident.json"
-            perform_containment(inc, actions=[ContainmentAction.QUARANTINE_REPORT], report_path=path)
+            perform_containment(inc, actions=[ContainmentAction.QUARANTINE_REPORT], report_path=path)  # noqa: E501
             saved = json.loads(path.read_text())
             assert saved["ocsf_incident"]["class_uid"] == 2001
 
@@ -430,7 +430,7 @@ class TestIrCLI:
 
     def test_ir_contain_writes_quarantine_report(self, tmp_path: Path) -> None:
         incident_file = self._write_incident_file(tmp_path)
-        out_report = tmp_path / "out.json"
+        tmp_path / "out.json"
         runner = CliRunner()
         result = runner.invoke(main, ["ir", "contain", str(incident_file)])
         assert result.exit_code == 0, result.output
@@ -471,7 +471,7 @@ class TestIrCLI:
             ["ir", "contain", str(incident_file), "--block-egress"],
         )
         assert result.exit_code == 0, result.output
-        assert "iptables" in result.output or "Block" in result.output or "block" in result.output.lower()
+        assert "iptables" in result.output or "Block" in result.output or "block" in result.output.lower()  # noqa: E501
 
 
 # ---------------------------------------------------------------------------

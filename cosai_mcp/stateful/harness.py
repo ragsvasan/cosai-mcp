@@ -26,13 +26,13 @@ from __future__ import annotations
 
 import asyncio
 import types as _types
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 
 from cosai_mcp.config import ScanConfig
 from cosai_mcp.session import MCPSession
 from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
-
 
 # ---------------------------------------------------------------------------
 # DSL dataclasses
@@ -285,7 +285,7 @@ def _scenario_method_not_found(
     Scoped to non-standard methods so a real tools/list or tools/call outcome is
     never suppressed (tool-absence is already handled by the precondition gate).
     """
-    for step, sr in zip(scenario.steps, step_results):
+    for step, sr in zip(scenario.steps, step_results, strict=False):
         if step.action.method in _STANDARD_MCP_METHODS:
             continue
         resp = sr.response
@@ -309,7 +309,7 @@ def _detect_manifest_drift(
     the caller"; nothing performed it, so a shadowed manifest passed silently.
     """
     manifests: list[tuple[int, frozenset[str]]] = []
-    for step, result in zip(scenario.steps, step_results):
+    for step, result in zip(scenario.steps, step_results, strict=False):
         if step.action.method != "tools/list":
             continue
         names = _manifest_tool_names(result.response)
@@ -444,6 +444,89 @@ def _detect_unbounded_tool_loop(
     call_results: list[StepResult] = [
         result
         for step, result in zip(scenario.steps, step_results)
+        if step.action.method == "tools/call"
+    ]
+    if len(call_results) < 2:
+        # Not enough repeated calls to constitute a loop — nothing to assert.
+        return None
+
+    total = len(call_results)
+    rejected_indices = [
+        cr.step_index
+        for cr in call_results
+        if isinstance(cr.response, dict)
+        and _resolve_path(cr.response, "error") is not None
+    ]
+    final_call = call_results[-1]
+    final_rejected = (
+        isinstance(final_call.response, dict)
+        and _resolve_path(final_call.response, "error") is not None
+    )
+
+    if final_rejected:
+        # Server applied a call budget and was still rejecting at the end of the
+        # loop — the loop is bounded.  Secure: no finding.
+        return None
+
+    detail = (
+        f"Server answered all {total} calls of a repeated tool-invocation loop "
+        f"within one session without ever exhausting a call budget "
+        f"(rejected={len(rejected_indices)}, final call accepted). An unbounded "
+        f"recursive/looping tool chain burns the operator's wallet — this is the "
+        f"core T10 denial-of-wallet failure. Enforce a per-session call budget "
+        f"(max calls per session) and a recursion/loop guard, returning a "
+        f"rate-limit error (JSON-RPC -32029) once the budget is exhausted."
+    )
+    return StepResult(
+        step_index=len(step_results),
+        description="T10 call-budget / loop check",
+        passed=False,
+        response=None,
+        failures=(
+            AssertionFailure(
+                target="session.call_budget_enforced",
+                operator="eq",
+                expected=True,
+                actual=False,
+                message=detail,
+            ),
+        ),
+        error=None,
+    )
+
+
+def _detect_unbounded_tool_loop(
+    scenario: Scenario,
+    step_results: list[StepResult],
+) -> StepResult | None:
+    """Detect an unbounded recursive/looping tool-chain (T10 denial-of-wallet).
+
+    The loop scenario issues a run of repeated ``tools/call`` steps within a
+    single session, simulating an agent caught in a recursive tool-invocation
+    loop (tool A's output drives the next call, ad infinitum — the pattern that
+    burns the operator's wallet).  Because every call in the loop is an
+    identical, valid invocation of a tool that exists on the server, the ONLY
+    reason a server would reject one is that a resource control fired:
+    a per-session call budget, a rate limit, or a loop guard.
+
+    A SECURE server exhausts its call budget partway through the loop and keeps
+    rejecting every subsequent call, so the FINAL loop iteration is rejected.
+    A VULNERABLE server answers the entire loop, so the final iteration
+    succeeds — the loop is unbounded and the wallet is burned.
+
+    Returns a synthetic FAILING ``StepResult`` when the final tools/call step
+    succeeded (no budget ever applied), or None when the server bounded the
+    loop (final call rejected) — or when the scenario has fewer than two
+    tools/call steps (not a loop test).
+
+    Rejection is detected via the ``error`` pseudo-path, which normalises both
+    JSON-RPC protocol errors (``{"error": {...}}``) and MCP content-layer errors
+    (``{"result": {"isError": true}}``) — a server may signal a budget either
+    way, and both count as the loop being bounded.
+    """
+    call_results: list[StepResult] = [
+        result
+        for step, result in zip(scenario.steps, step_results, strict=False)
         if step.action.method == "tools/call"
     ]
     if len(call_results) < 2:
@@ -703,7 +786,7 @@ class StatefulHarness:
         finally:
             try:
                 await session.close()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
 
     async def _run_step(

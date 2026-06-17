@@ -69,7 +69,7 @@ class TestT06ToolIntegrity:
         # but we can verify the assertion logic: response.error == False means "success expected".
         # Use a no-tools server so tools/list returns an empty list (still a success).
         # The real "error" case is tested by checking probe assertion semantics directly.
-        from cosai_mcp.catalog.models import Assertion, Operator
+        from cosai_mcp.catalog.models import Operator
         assert any(a.target == "response.error" and a.operator == Operator.EQ and a.value is False
                    for a in probe.assertions), "T06-001-p1 must assert response.error == False"
 
@@ -108,7 +108,7 @@ class TestT11SupplyChain:
         threat = catalog.load_file(Path("official/T11-001.json"))
         probe = threat.probes[0]
 
-        with MockMCPServer(tools_call_response=error_response(-32601, "Method not found")) as server:
+        with MockMCPServer(tools_call_response=error_response(-32601, "Method not found")) as server:  # noqa: E501
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 
@@ -135,7 +135,7 @@ class TestT11SupplyChain:
         probe = threat.probes[0]
 
         # -32602 (Invalid params) is also an acceptable rejection
-        with MockMCPServer(tools_call_response=error_response(-32602, "Tool not in allowlist")) as server:
+        with MockMCPServer(tools_call_response=error_response(-32602, "Tool not in allowlist")) as server:  # noqa: E501
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 
@@ -153,7 +153,7 @@ class TestT11SupplyChain:
         threat = catalog.load_file(Path("official/T11-001.json"))
         probe = threat.probes[1]  # path-traversal tool name probe
 
-        with MockMCPServer(tools_call_response=error_response(-32601, "Invalid tool name")) as server:
+        with MockMCPServer(tools_call_response=error_response(-32601, "Invalid tool name")) as server:  # noqa: E501
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 
@@ -184,7 +184,7 @@ class TestT11SupplyChain:
 
         results = []
         for probe in threat.probes:
-            with MockMCPServer(tools_call_response=error_response(-32601, "Not in allowlist")) as server:
+            with MockMCPServer(tools_call_response=error_response(-32601, "Not in allowlist")) as server:  # noqa: E501
                 server.wait_ready()
                 r = await run_probe(probe, threat, server)
                 results.append(r)

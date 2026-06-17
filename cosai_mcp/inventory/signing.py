@@ -37,11 +37,11 @@ import json
 import os
 from typing import Any
 
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
 )
-from cryptography.exceptions import InvalidSignature
 
 from cosai_mcp.exceptions import SignatureVerificationError
 from cosai_mcp.inventory.snapshot import ToolInventory

@@ -1,22 +1,22 @@
 """Tests for adversarial probe infrastructure: canary, enforcer, AdversarialMode."""
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
+from cosai_mcp.adversarial import AdversarialMode
 from cosai_mcp.adversarial.canary import (
-    Canary,
     _CANARY_PATTERN,
-    generate_canary,
+    Canary,
     detect_canary,
+    generate_canary,
 )
 from cosai_mcp.adversarial.enforcer import (
     UnsafeProbeError,
-    validate_dual_optin,
     check_no_external_endpoints,
-    _reject_if_external_url,
+    validate_dual_optin,
 )
-from cosai_mcp.adversarial import AdversarialMode
-
 
 # ---------------------------------------------------------------------------
 # Canary generation
@@ -189,7 +189,7 @@ class TestDualOptin:
 class TestExternalEndpointCheck:
 
     def test_no_urls_passes(self):
-        probe = {"id": "T03-ADV-001-p1", "payload": {"name": "my_tool", "arguments": {"input": "hello"}}}
+        probe = {"id": "T03-ADV-001-p1", "payload": {"name": "my_tool", "arguments": {"input": "hello"}}}  # noqa: E501
         check_no_external_endpoints(probe, "http://myserver.example.com:8000")
 
     def test_same_host_url_passes(self):
@@ -209,7 +209,7 @@ class TestExternalEndpointCheck:
     def test_stateful_probe_without_flag_raises(self):
         probe = {"id": "T05-ADV-001", "mode": "stateful"}
         with pytest.raises(UnsafeProbeError, match="stateful"):
-            check_no_external_endpoints(probe, "http://myserver.example.com:8000", allow_stateful=False)
+            check_no_external_endpoints(probe, "http://myserver.example.com:8000", allow_stateful=False)  # noqa: E501
 
     def test_stateful_probe_with_flag_passes(self):
         probe = {"id": "T05-ADV-001", "mode": "stateful"}
@@ -274,7 +274,7 @@ class TestAdversarialMode:
 
     def test_adversarial_mode_is_frozen(self):
         mode = AdversarialMode()
-        with pytest.raises(Exception):
+        with pytest.raises((AttributeError, TypeError, dataclasses.FrozenInstanceError)):
             mode.enabled = True  # type: ignore[misc]
 
     def test_regression_scan_id_stamped_into_canary(self):
@@ -299,10 +299,16 @@ class TestStatefulProbeGate:
 
     def _make_stateful_threat(self) -> object:
         """Return a ThreatDefinition with mode='stateful' and an adversarial ID."""
-        from cosai_mcp.catalog.models import (
-            ThreatDefinition, Provenance, Severity, Probe, Assertion, Operator
-        )
         import types
+
+        from cosai_mcp.catalog.models import (
+            Assertion,
+            Operator,
+            Probe,
+            Provenance,
+            Severity,
+            ThreatDefinition,
+        )
         assertion = Assertion(
             target="response.error",
             operator=Operator.EQ,
@@ -342,9 +348,7 @@ class TestStatefulProbeGate:
 
     def test_regression_readoly_threat_mode_default(self):
         """Standard threats default to mode='read-only' when field is absent."""
-        from cosai_mcp.catalog.models import (
-            ThreatDefinition, Provenance, Severity
-        )
+        from cosai_mcp.catalog.models import Provenance, Severity, ThreatDefinition
         threat = ThreatDefinition(
             schema_version="1.0",
             id="T01-001",

@@ -81,7 +81,7 @@ def evaluate_assertion(assertion: Assertion, response: dict[str, Any]) -> Assert
         elif op == Operator.MATCHES_REGEX:
             pattern = assertion.compiled_pattern
             target_str = str(actual if actual is not None else "")
-            passed = bool(pattern.search(target_str)) if pattern else False  # type: ignore[union-attr]
+            passed = bool(pattern.search(target_str)) if pattern else False  # type: ignore[attr-defined]
         elif op == Operator.STATUS_IN:
             passed = actual in expected  # type: ignore[operator]
         elif op == Operator.ERROR_CODE_IN:

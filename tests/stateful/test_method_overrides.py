@@ -19,9 +19,8 @@ from cosai_mcp.harness.mock_server import MockMCPServer
 from cosai_mcp.stateful.harness import (
     Scenario,
     ScenarioStep,
-    StepAction,
-    StepAssertion,
     StatefulHarness,
+    StepAction,
     _apply_method_overrides,
 )
 from cosai_mcp.stateful.scenarios import t2_privilege_escalation_chain

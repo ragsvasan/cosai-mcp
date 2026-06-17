@@ -4,23 +4,28 @@ Run: pytest tests/harness/ -v
 """
 from __future__ import annotations
 
-import html
 import json
 import threading
 import types
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
+from unittest.mock import AsyncMock, create_autospec
 
 import pytest
 
-from cosai_mcp.catalog.models import Assertion, Operator, Probe, Provenance, Severity, ThreatDefinition
+from cosai_mcp.catalog.models import (
+    Assertion,
+    Operator,
+    Probe,
+    Provenance,
+    Severity,
+    ThreatDefinition,
+)
 from cosai_mcp.config import ScanConfig
-from cosai_mcp.harness.assertions import evaluate_assertion, _extract_target
+from cosai_mcp.harness.assertions import _extract_target, evaluate_assertion
 from cosai_mcp.harness.context import ProbeContext
 from cosai_mcp.harness.mock_server import MockMCPServer
-from cosai_mcp.harness.result import AssertionResult, ProbeResult, make_probe_result, _html_escape
+from cosai_mcp.harness.result import AssertionResult, _html_escape, make_probe_result
 from cosai_mcp.harness.runner import (
-    ProbeRunner,
     _probe_from_dict,
     _probe_to_dict,
     _result_from_dict,
@@ -30,7 +35,6 @@ from cosai_mcp.harness.runner import (
 )
 from cosai_mcp.session import MCPSession
 from cosai_mcp.transport.base import Transport
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -278,7 +282,7 @@ class TestAssertions:
             "jsonrpc": "2.0",
             "id": "1",
             "result": {"content": [{"type": "text", "text": "Unknown tool: foo"}], "isError": True},
-            "_body": '{"content": [{"type": "text", "text": "Unknown tool: foo"}], "isError": true}',
+            "_body": '{"content": [{"type": "text", "text": "Unknown tool: foo"}], "isError": true}',  # noqa: E501
         }
         assertion = _make_assertion(
             "response.error_code", Operator.ERROR_CODE_IN, (-32601, -32602, -32603)
@@ -427,7 +431,7 @@ class TestProbeContext:
         assert result.duration_seconds >= 0.0
 
 
-def _protocol_error_response(code: int = -32601, message: str = "Method not found") -> dict[str, Any]:
+def _protocol_error_response(code: int = -32601, message: str = "Method not found") -> dict[str, Any]:  # noqa: E501
     resp: dict[str, Any] = {
         "jsonrpc": "2.0",
         "id": "1",
@@ -676,7 +680,7 @@ class TestIntegrationMockServer:
         returns an application (security) error → probe asserting
         response.error==True passes.  Uses -32001 (auth rejection); a -3260x
         protocol-validation code would correctly be downgraded to INCONCLUSIVE."""
-        override = {"jsonrpc": "2.0", "id": 0, "error": {"code": -32001, "message": "Auth required"}}
+        override = {"jsonrpc": "2.0", "id": 0, "error": {"code": -32001, "message": "Auth required"}}  # noqa: E501
 
         with MockMCPServer(tools_call_response=override) as server:
             from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
@@ -755,7 +759,7 @@ class TestP3PanelRegressions:
     def test_regression_validate_raw_result_rejects_missing_keys(self):
         """_validate_raw_result raises ValueError when required keys are absent."""
         with pytest.raises(ValueError, match="missing required keys"):
-            _validate_raw_result({"probe_id": "p1"})  # missing threat_id, passed, assertions, duration
+            _validate_raw_result({"probe_id": "p1"})  # missing threat_id, passed, assertions, duration  # noqa: E501
 
     def test_regression_validate_raw_result_accepts_valid_dict(self):
         """_validate_raw_result accepts a valid subprocess result dict."""
@@ -1215,8 +1219,9 @@ class TestProbeModifierFields:
         This exercises the early-exit path in _probe_subprocess_entry that returns
         inconclusive before any network connection is attempted.
         """
-        from cosai_mcp.harness.runner import _probe_subprocess_entry
         import multiprocessing
+
+        from cosai_mcp.harness.runner import _probe_subprocess_entry
         probe = Probe(
             id="T02-005-p1",
             transport="http",
@@ -1337,6 +1342,7 @@ class TestNewCatalogEntriesLoad:
 
     def _load_official_catalog(self) -> list:
         from pathlib import Path
+
         from cosai_mcp.catalog.loader import CatalogLoader
         catalog_root = (
             Path(__file__).parent.parent.parent / "catalog"

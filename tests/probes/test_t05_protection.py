@@ -6,8 +6,7 @@ from pathlib import Path
 import pytest
 
 from cosai_mcp.harness.mock_server import MockMCPServer
-from tests.probes.conftest import error_response, ok_response, run_probe
-
+from tests.probes.conftest import ok_response, run_probe
 
 # ===========================================================================
 # T05-001 catalog loads and probe tests
@@ -49,7 +48,7 @@ class TestT05001Probes:
 
     @pytest.mark.asyncio
     async def test_t05_001_vulnerable_server_fails(self, catalog):
-        """Server leaks API key (sk-) in response body → not_contains assertion fails → probe fails."""
+        """Server leaks API key (sk-) in response body → not_contains assertion fails → probe fails."""  # noqa: E501
         t = catalog.load_file(Path("official/T05-001.json"))
         probe = t.probes[0]
 

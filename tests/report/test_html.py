@@ -1,12 +1,9 @@
 """Tests for HTML report builder — CSP, reference rendering, escaping."""
 from __future__ import annotations
 
-import pytest
-
 from cosai_mcp.catalog.models import Severity
-from cosai_mcp.harness.result import make_probe_result, AssertionResult
+from cosai_mcp.harness.result import make_probe_result
 from cosai_mcp.report.html import HtmlReportBuilder, HtmlReportSection, _safe_url
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -112,7 +109,7 @@ class TestHtmlReferences:
     def test_html_references_empty(self):
         b = _builder()
         b.add_section(_section(references=()))
-        html = b.build()  # must not raise
+        b.build()  # must not raise
 
     def test_safe_url_accepts_https(self):
         assert _safe_url("https://example.com") == "https://example.com"
@@ -233,7 +230,7 @@ class TestHtmlRegressions:
         with no render-time defence-in-depth. Direct construction bypasses
         make_probe_result. Now: unescape + re-escape at render time.
         """
-        from cosai_mcp.harness.result import ProbeResult, AssertionResult
+        from cosai_mcp.harness.result import ProbeResult
         result = ProbeResult(
             probe_id="T01-001",
             threat_id="T01",
@@ -281,7 +278,7 @@ class TestInconclusiveScenarioRendering:
         Before the fix, the renderer only checked sc.passed — any non-passing
         scenario (including inconclusive) was rendered with st-finding / FINDING.
         """
-        from cosai_mcp.report.html import HtmlScenarioSection, HtmlReportBuilder
+        from cosai_mcp.report.html import HtmlReportBuilder, HtmlScenarioSection
 
         sc = HtmlScenarioSection(
             scenario_id="T2-SC-001",
@@ -289,17 +286,17 @@ class TestInconclusiveScenarioRendering:
             category="T2",
             passed=False,
             steps=[],
-            inconclusive_reason="Scenario requires tool(s) not present on this server: admin_delete",
+            inconclusive_reason="Scenario requires tool(s) not present on this server: admin_delete",  # noqa: E501
         )
-        b = HtmlReportBuilder(target_url="http://localhost:8000", scan_timestamp="2026-05-21T00:00:00Z")
+        b = HtmlReportBuilder(target_url="http://localhost:8000", scan_timestamp="2026-05-21T00:00:00Z")  # noqa: E501
         b.add_scenario(sc)
         report = b.build()
-        assert "st-inconclusive" in report, "inconclusive scenario must use st-inconclusive CSS class"
+        assert "st-inconclusive" in report, "inconclusive scenario must use st-inconclusive CSS class"  # noqa: E501
         assert "INCONCLUSIVE" in report, "inconclusive scenario must display INCONCLUSIVE status"
 
     def test_regression_html_failed_scenario_still_finding(self):
         """A genuinely failed scenario (no inconclusive_reason) must still render as FINDING."""
-        from cosai_mcp.report.html import HtmlScenarioSection, HtmlReportBuilder
+        from cosai_mcp.report.html import HtmlReportBuilder, HtmlScenarioSection
 
         sc = HtmlScenarioSection(
             scenario_id="T6-SC-001",
@@ -309,7 +306,7 @@ class TestInconclusiveScenarioRendering:
             steps=[],
             inconclusive_reason=None,
         )
-        b = HtmlReportBuilder(target_url="http://localhost:8000", scan_timestamp="2026-05-21T00:00:00Z")
+        b = HtmlReportBuilder(target_url="http://localhost:8000", scan_timestamp="2026-05-21T00:00:00Z")  # noqa: E501
         b.add_scenario(sc)
         report = b.build()
         assert "st-finding" in report

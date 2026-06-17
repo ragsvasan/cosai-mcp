@@ -6,8 +6,6 @@ condition) do NOT trigger exit 2 — they are distinct from errors.
 """
 from __future__ import annotations
 
-import pytest
-
 from cosai_mcp.api import _determine_exit_code
 from cosai_mcp.harness.result import ProbeResult
 
@@ -99,7 +97,7 @@ def test_suppressed_probes_excluded_from_qualifying() -> None:
     """Suppressed (baseline-accepted) probes are not qualifying.
     If only suppressed probes exist and all are errored, must still return 0."""
     probe_results = [
-        _make_probe(probe_id="T01-001", passed=False, error="timed out after 10.0s", suppressed=True),
+        _make_probe(probe_id="T01-001", passed=False, error="timed out after 10.0s", suppressed=True),  # noqa: E501
     ]
     code = _determine_exit_code(
         probe_results=probe_results,
@@ -116,7 +114,7 @@ def test_all_timeout_with_threat_severity_returns_exit2() -> None:
 
     threat_severity = {"T01": Severity("critical")}
     probe_results = [
-        _make_probe(probe_id="T01-001", threat_id="T01", passed=False, error="timed out after 10.0s"),
+        _make_probe(probe_id="T01-001", threat_id="T01", passed=False, error="timed out after 10.0s"),  # noqa: E501
     ]
     code = _determine_exit_code(
         probe_results=probe_results,
@@ -148,8 +146,8 @@ def test_regression_passed_probe_with_inconclusive_reason_not_exit2_with_severit
 
     threat_severity = {"T01": Severity("critical")}
     probe_results = [
-        _make_probe(probe_id="T01-001", threat_id="T01", passed=True, inconclusive_reason="note: partial"),
-        _make_probe(probe_id="T01-002", threat_id="T01", passed=False, error="timed out after 10.0s"),
+        _make_probe(probe_id="T01-001", threat_id="T01", passed=True, inconclusive_reason="note: partial"),  # noqa: E501
+        _make_probe(probe_id="T01-002", threat_id="T01", passed=False, error="timed out after 10.0s"),  # noqa: E501
     ]
     code = _determine_exit_code(
         probe_results=probe_results,

@@ -20,7 +20,6 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
-
 _DEFAULT_TOOLS = [
     {"name": "echo", "description": "Echoes input", "inputSchema": {"type": "object"}},
 ]
@@ -30,7 +29,7 @@ class _MCPHandler(BaseHTTPRequestHandler):
     """Minimal HTTP handler implementing the MCP Streamable HTTP transport."""
 
     # Injected by MockMCPServer
-    server: "_MockHTTPServer"
+    server: _MockHTTPServer
 
     def log_message(self, fmt: str, *args: Any) -> None:
         pass  # suppress noisy output in tests
@@ -75,7 +74,7 @@ class _MCPHandler(BaseHTTPRequestHandler):
 class _MockHTTPServer(HTTPServer):
     """HTTPServer subclass that holds a reference to MockMCPServer."""
 
-    def __init__(self, server_address: tuple[str, int], mock_server: "MockMCPServer") -> None:
+    def __init__(self, server_address: tuple[str, int], mock_server: MockMCPServer) -> None:
         self.mock_server = mock_server
         super().__init__(server_address, _MCPHandler)
 
@@ -123,14 +122,6 @@ class MockMCPServer:
         JSON-RPC error.  Calls with no Bearer token are not de-duplicated.
         Default False (vulnerable: a replayed token is accepted every time),
         which is exactly the condition T01-003 must detect.
-    call_budget:
-        If set, the server enforces a per-session ``tools/call`` budget: the
-        first ``call_budget`` calls are answered normally and every call beyond
-        it returns a JSON-RPC rate-limit error (-32029).  Once tripped it stays
-        tripped (all subsequent calls rejected), modelling a secure server that
-        bounds recursive/looping tool chains (T10 denial-of-wallet).  Default
-        None = unlimited (vulnerable). ``tools/list`` is never counted, so the
-        MCP handshake does not consume the budget.
     """
 
     def __init__(
@@ -145,7 +136,6 @@ class MockMCPServer:
         confirmation_bypasses_scope: bool = False,
         confirmation_gates_access: bool = False,
         reject_replayed_tokens: bool = False,
-        call_budget: int | None = None,
     ) -> None:
         self._tools = tools if tools is not None else list(_DEFAULT_TOOLS)
         self._tools_call_response = tools_call_response
@@ -164,8 +154,6 @@ class MockMCPServer:
         self._confirmation_gates_access = confirmation_gates_access
         self._reject_replayed_tokens = reject_replayed_tokens
         self._seen_token_ids: set[str] = set()  # JTI replay cache (guarded by _log_lock)
-        self._call_budget = call_budget
-        self._tools_call_count: int = 0
         self._last_request_headers: dict[str, str] = {}
 
     @property
@@ -244,25 +232,6 @@ class MockMCPServer:
         if method == "tools/call":
             params = request.get("params", {})
             name = params.get("name", "unknown")
-
-            # Per-session call budget (T10 denial-of-wallet).  Counted across
-            # the server's lifetime and applied before any other tool logic so
-            # the budget bounds every call regardless of tool.  Once the budget
-            # is exhausted it stays exhausted (every later call rejected),
-            # modelling a secure server that breaks a recursive/looping chain.
-            if self._call_budget is not None:
-                with self._log_lock:
-                    self._tools_call_count += 1
-                    over_budget = self._tools_call_count > self._call_budget
-                if over_budget:
-                    return {
-                        "jsonrpc": "2.0",
-                        "id": req_id,
-                        "error": {
-                            "code": -32029,
-                            "message": "Per-session call budget exceeded",
-                        },
-                    }
 
             # JTI replay cache (T1): reject the SECOND presentation of a token.
             if self._reject_replayed_tokens:
@@ -374,7 +343,7 @@ class MockMCPServer:
                 jti = payload.get("jti")
                 if jti:
                     return f"jti:{jti}"
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
         return f"tok:{token}"
 
@@ -396,7 +365,7 @@ class MockMCPServer:
                 )
                 scope_str: str = payload.get("scope", "")
                 return required in scope_str.split()
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
         return False
 
@@ -432,7 +401,7 @@ class MockMCPServer:
             self._thread.join(timeout=5)
             self._thread = None
 
-    def __enter__(self) -> "MockMCPServer":
+    def __enter__(self) -> MockMCPServer:
         self.start()
         return self
 

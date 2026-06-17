@@ -87,6 +87,7 @@ class TestScanManifestT5Wiring:
 
     def test_regression_t5_wiring_run_scan_credential_leak(self) -> None:
         from pathlib import Path
+
         from cosai_mcp.api import _run_scan
         from cosai_mcp.harness.mock_server import MockMCPServer
 
@@ -114,6 +115,7 @@ class TestScanManifestT5Wiring:
 
     def test_regression_t5_pii_strict_flows_through_run_scan(self) -> None:
         from pathlib import Path
+
         from cosai_mcp.api import _run_scan
         from cosai_mcp.harness.mock_server import MockMCPServer
 

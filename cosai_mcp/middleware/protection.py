@@ -16,17 +16,18 @@ Two tiers, split for speed and false-positive control:
 from __future__ import annotations
 
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any
 
 try:
     import re2 as _re
     _RE2_AVAILABLE = True
     _ReError = _re.error
 except ImportError:
-    import re as _re  # type: ignore[no-redef]
+    import re as _re  # noqa: F811
     _RE2_AVAILABLE = False
-    _ReError = _re.error  # type: ignore[assignment]
+    _ReError = _re.error
     warnings.warn(
         "google-re2 not available; falling back to stdlib re. "
         "Production deployments must use google-re2 (no backtracking guarantee).",
@@ -149,7 +150,7 @@ class PIIScrubber:
         patterns = list(_DEFAULT_PATTERNS)
         if pii_strict:
             patterns += _STRICT_PATTERNS
-        self._compiled: list[tuple[str, object]] = []
+        self._compiled: list[tuple[str, Any]] = []
         for name, pattern in patterns:
             try:
                 self._compiled.append((name, _re.compile(pattern)))
@@ -172,7 +173,7 @@ class PIIScrubber:
         all_matches: list[tuple[int, int, str]] = []
         for pii_type, pattern in self._compiled:
             corroborate = _CORROBORATORS.get(pii_type)
-            for m in pattern.finditer(text):  # type: ignore[union-attr]
+            for m in pattern.finditer(text):
                 if corroborate is not None and not corroborate(m.group(0)):
                     continue  # candidate failed corroboration (e.g. Luhn) — skip
                 all_matches.append((m.start(), m.end(), pii_type))
@@ -223,7 +224,7 @@ class ContextLeakChecker:
     def check(self, current_session_id: str, content: str) -> LeakCheckResult:
         """Scan *content* for session-ID-like tokens that belong to a different session."""
         findings: list[LeakFinding] = []
-        for m in self._pattern.finditer(content):  # type: ignore[union-attr]
+        for m in self._pattern.finditer(content):
             found = m.group(0)
             if found != current_session_id:
                 findings.append(LeakFinding(

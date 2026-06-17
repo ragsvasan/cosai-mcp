@@ -45,7 +45,7 @@ class TestT03CommandInjection:
         threat = catalog.load_file(Path("official/T03-001.json"))
         probe = threat.probes[0]  # "; cat /etc/passwd" probe
 
-        with MockMCPServer(tools_call_response=error_response(-32602, "Invalid argument")) as server:
+        with MockMCPServer(tools_call_response=error_response(-32602, "Invalid argument")) as server:  # noqa: E501
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 
@@ -60,7 +60,7 @@ class TestT03CommandInjection:
         probe = threat.probes[0]
 
         # Simulates a server that runs the command and returns output
-        with MockMCPServer(tools_call_response=ok_response("root:x:0:0:root:/root:/bin/bash")) as server:
+        with MockMCPServer(tools_call_response=ok_response("root:x:0:0:root:/root:/bin/bash")) as server:  # noqa: E501
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 
@@ -73,7 +73,7 @@ class TestT03CommandInjection:
         threat = catalog.load_file(Path("official/T03-001.json"))
         probe = threat.probes[1]  # $(id) probe
 
-        with MockMCPServer(tools_call_response=ok_response("uid=1000(user) gid=1000(user)")) as server:
+        with MockMCPServer(tools_call_response=ok_response("uid=1000(user) gid=1000(user)")) as server:  # noqa: E501
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 
@@ -123,7 +123,7 @@ class TestT03PathTraversal:
         threat = catalog.load_file(Path("official/T03-002.json"))
         probe = threat.probes[0]
 
-        with MockMCPServer(tools_call_response=error_response(-32602, "Path not allowed")) as server:
+        with MockMCPServer(tools_call_response=error_response(-32602, "Path not allowed")) as server:  # noqa: E501
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 

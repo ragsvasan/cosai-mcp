@@ -13,18 +13,16 @@ from cosai_mcp.api import (
     COVERAGE_MATRIX,
     MIDDLEWARE_ONLY_CATEGORIES,
     ScanResult,
-    Scanner,
     _apply_env_scrub,
+    _parse_target,
     _run_scan,
     check_reachable,
-    _parse_target,
 )
-from cosai_mcp.exceptions import ScannerInternalError, TargetUnreachableError
+from cosai_mcp.exceptions import TargetUnreachableError
 from cosai_mcp.profiles import BUILTIN_PROFILES, resolve_profile
 from cosai_mcp.profiles.models import ServerProfile
 from cosai_mcp.report.sign import OrgSigningKeyError
 from cosai_mcp.report.verify import VerifyStatus, verify_audit_log
-
 
 # ---------------------------------------------------------------------------
 # Top-level CLI group
@@ -73,26 +71,7 @@ class _AdvancedHelpCommand(click.Command):
             )
 
 
-def _parse_tool_allowlist(raw: str | None) -> tuple[str, ...] | None:
-    """Parse the comma-separated --tool-allowlist value into a tuple of names.
-
-    Returns None when no value is supplied (T11 then reports INCONCLUSIVE), or a
-    tuple of stripped, de-duplicated, non-empty names.  An all-whitespace value
-    is treated as 'not supplied' (None) rather than an empty approved set.
-    """
-    if raw is None:
-        return None
-    names = [n.strip() for n in raw.split(",") if n.strip()]
-    if not names:
-        return None
-    # De-dupe while preserving order.
-    seen: dict[str, None] = {}
-    for n in names:
-        seen.setdefault(n, None)
-    return tuple(seen)
-
-
-def _help_advanced_cb(ctx: click.Context, param: click.Parameter, value: bool):
+def _help_advanced_cb(ctx: click.Context, param: click.Parameter, value: bool) -> None:
     if not value or ctx.resilient_parsing:
         return
     # Per-invocation signal on ctx.meta (never on the Command instance, which
@@ -215,7 +194,7 @@ def main() -> None:
 @click.option("--allow-private-targets/--block-private-targets", default=True, hidden=True,
               help="Allow scanning RFC1918/loopback targets (default: allowed for dev use). "
                    "Use --block-private-targets in CI to enforce public-target-only policy.")
-@click.option("--catalog-root", type=click.Path(exists=True, file_okay=False), default=None, hidden=True,
+@click.option("--catalog-root", type=click.Path(exists=True, file_okay=False), default=None, hidden=True,  # noqa: E501
               help="Override catalog root directory (default: ./catalog).")
 @click.option("--auth-token", default=None, envvar="COSAI_AUTH_TOKEN", hidden=True,
               help="Bearer token for servers that require auth on the MCP handshake.")
@@ -233,10 +212,6 @@ def main() -> None:
               help="Widen the T5 secret/PII manifest scan to the broad-PII tier "
                    "(SSN, IBAN, US phone, Luhn-validated PAN) on top of the always-on "
                    "anchored-credential tier. Off by default to keep scans fast.")
-@click.option("--tool-allowlist", default=None, hidden=True,
-              help="Comma-separated approved tool names for the T11 supply-chain scan. "
-                   "Discovered tools not on the list (or within one edit of an entry — "
-                   "typosquat) are flagged. Without it, T11 is reported INCONCLUSIVE.")
 @click.option("--profile", default=None,
               help="Server profile name (e.g. mnemo, fastmcp). Optional — omit for a "
                    "generic scan. Sets mcp_path, auth header format, tool name map, "
@@ -339,7 +314,6 @@ def scan(
     mcp_path: str,
     no_adaptive: bool,
     pii_strict: bool,
-    tool_allowlist: str | None,
     profile: str | None,
     allow_custom_profiles: bool,
     adversarial: bool,
@@ -399,7 +373,7 @@ def scan(
     if report_coverage:
         _print_coverage_matrix()
 
-    cat_list = [c.strip() for c in categories.split(",") if c.strip()] if categories != "all" else None
+    cat_list = [c.strip() for c in categories.split(",") if c.strip()] if categories != "all" else None  # noqa: E501
     effective_catalog_root = Path(catalog_root) if catalog_root else CATALOG_ROOT
 
     # -- Resolve server profile (exit 2 on unknown name or bad custom file) --
@@ -464,7 +438,6 @@ def scan(
             probe_delay_seconds=probe_delay,
             baseline_path=Path(baseline_path) if baseline_path else None,
             pii_strict=pii_strict,
-            tool_allowlist=_parse_tool_allowlist(tool_allowlist),
             stateful_method_overrides=_parse_method_overrides(method_overrides),
         )
     except ValueError as exc:
@@ -560,7 +533,7 @@ def scan(
                 allow_private=allow_private_targets,
             )
         except Exception as exc:  # noqa: BLE001
-            click.echo(f"[IR] Containment error (scan result unchanged): {type(exc).__name__}", err=True)
+            click.echo(f"[IR] Containment error (scan result unchanged): {type(exc).__name__}", err=True)  # noqa: E501
 
     # -- Scorecard (exits 2 on write failure — explicitly configured path must succeed) --
     if scorecard_path:
@@ -603,6 +576,7 @@ def scorecard_verify(scorecard_file: str) -> None:
         2  File cannot be read or is not a valid scorecard.
     """
     import json as _json
+
     from cosai_mcp.scorecard.models import Scorecard
     from cosai_mcp.scorecard.signing import ScorecardVerificationError, verify_scorecard
 
@@ -634,6 +608,7 @@ def scorecard_show(scorecard_file: str, do_verify: bool) -> None:
         2  Invalid or unreadable scorecard file.
     """
     import json as _json
+
     from cosai_mcp.scorecard.models import Grade, Scorecard
     from cosai_mcp.scorecard.signing import ScorecardVerificationError, verify_scorecard
 
@@ -658,7 +633,7 @@ def scorecard_show(scorecard_file: str, do_verify: bool) -> None:
         Grade.NOT_TESTED: "–",
     }
 
-    click.echo(f"\nConformance Scorecard")
+    click.echo("\nConformance Scorecard")
     click.echo(f"  Target     : {sc.target_url}")
     click.echo(f"  Timestamp  : {sc.scan_timestamp}")
     click.echo(f"  Conformance: {sc.conformance_level.value}")
@@ -741,7 +716,7 @@ def profile_list() -> None:
     click.echo("\nBuilt-in server profiles:\n")
     click.echo(f"  {'NAME':<20} {'SKIP':<14} DESCRIPTION")
     click.echo("  " + "-" * 70)
-    for name, p in sorted(BUILTIN_PROFILES.items()):
+    for _name, p in sorted(BUILTIN_PROFILES.items()):
         skip = ",".join(sorted(p.skip_categories)) or "—"
         click.echo(f"  {p.name:<20} {skip:<14} {p.description}")
     click.echo()
@@ -843,8 +818,8 @@ def inventory_capture(
         2  Capture failed (unreachable server, handshake error, or a private
            target while --block-private-targets is set).
     """
-    from cosai_mcp.inventory.snapshot import capture as _capture
     from cosai_mcp.inventory.signing import sign_inventory
+    from cosai_mcp.inventory.snapshot import capture as _capture
 
     try:
         inv = _capture(target, timeout=timeout, allow_private_targets=allow_private)
@@ -885,8 +860,8 @@ def inventory_verify(artifact: str) -> None:
         1  Signature invalid or artifact tampered.
         2  File unreadable or malformed JSON.
     """
-    from cosai_mcp.inventory.signing import verify_inventory
     from cosai_mcp.exceptions import SignatureVerificationError
+    from cosai_mcp.inventory.signing import verify_inventory
 
     try:
         data = json.loads(Path(artifact).read_text(encoding="utf-8"))
@@ -938,10 +913,10 @@ def inventory_diff(
         1  Drift detected and --fail-on-drift is set.
         2  File unreadable, malformed JSON, or signature invalid.
     """
-    from cosai_mcp.inventory.snapshot import ToolInventory
-    from cosai_mcp.inventory.signing import verify_inventory
-    from cosai_mcp.inventory.drift import detect_drift
     from cosai_mcp.exceptions import SignatureVerificationError
+    from cosai_mcp.inventory.drift import detect_drift
+    from cosai_mcp.inventory.signing import verify_inventory
+    from cosai_mcp.inventory.snapshot import ToolInventory
 
     def _load(path: str) -> ToolInventory:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -982,9 +957,9 @@ def inventory_diff(
             click.echo(f"    before: {entry.before[:120]}")
             click.echo(f"    after:  {entry.after[:120]}")
         elif entry.after is not None:
-            click.echo(f"  [{kind}] {entry.tool_name}: {entry.after[:120]}")
+            click.echo(f"  [{kind}] {entry.tool_name}: {str(entry.after)[:120]}")
         else:
-            click.echo(f"  [{kind}] {entry.tool_name}: {entry.before[:120]}")
+            click.echo(f"  [{kind}] {entry.tool_name}: {str(entry.before)[:120]}")
 
     if fail_on_drift:
         sys.exit(1)
@@ -995,7 +970,7 @@ def inventory_diff(
 # ---------------------------------------------------------------------------
 
 def _emit_scan_telemetry(
-    result: "ScanResult",
+    result: ScanResult,
     target: str,
     emit_to: str,
     emit_auth_header: str | None,
@@ -1005,14 +980,14 @@ def _emit_scan_telemetry(
     """Emit all probe results as OCSF events and report anomalies to stderr."""
     from urllib.parse import urlparse, urlunparse
 
+    from cosai_mcp.telemetry.anomaly import AnomalyDetector
     from cosai_mcp.telemetry.emitter import HttpEmitter
     from cosai_mcp.telemetry.ocsf import build_detection_finding
-    from cosai_mcp.telemetry.anomaly import AnomalyDetector
 
     # Build probe_id → severity string from the threat catalog on the result
     probe_severity: dict[str, str] = {}
     for threat in result.threats:
-        sev_str = threat.severity.value if hasattr(threat.severity, "value") else str(threat.severity)
+        sev_str = threat.severity.value if hasattr(threat.severity, "value") else str(threat.severity)  # noqa: E501
         for probe_def in threat.probes:
             probe_severity[probe_def.id] = sev_str
 
@@ -1048,7 +1023,7 @@ def _emit_scan_telemetry(
     # Redact any userinfo (credentials) from the URL before printing
     parsed = urlparse(emit_to)
     safe_emit = urlunparse(parsed._replace(
-        netloc=parsed.hostname + (f":{parsed.port}" if parsed.port else "")
+        netloc=(parsed.hostname or "") + (f":{parsed.port}" if parsed.port else "")
     ))
     click.echo(
         f"Telemetry: {emitted} event(s) emitted to {safe_emit}"
@@ -1067,7 +1042,7 @@ def _emit_scan_telemetry(
 # ---------------------------------------------------------------------------
 
 def _run_ir_containment(
-    result: "ScanResult",
+    result: ScanResult,
     target: str,
     contain_on_anomaly: bool,
     ir_report_path: str | None,
@@ -1085,8 +1060,8 @@ def _run_ir_containment(
     """
     from urllib.parse import urlparse, urlunparse
 
-    from cosai_mcp.ir.incident import build_incident, ContainmentAction
     from cosai_mcp.ir.containment import perform_containment
+    from cosai_mcp.ir.incident import ContainmentAction, build_incident
 
     # Build probe_id → severity string from the threat catalog on the result
     probe_severity: dict[str, str] = {}
@@ -1161,11 +1136,10 @@ def _run_ir_containment(
     )
 
     # Redact credentials from emit URL before printing
-    safe_emit = emit_to
     if emit_to:
         parsed = urlparse(emit_to)
-        safe_emit = urlunparse(parsed._replace(
-            netloc=parsed.hostname + (f":{parsed.port}" if parsed.port else "")
+        urlunparse(parsed._replace(
+            netloc=(parsed.hostname or "") + (f":{parsed.port}" if parsed.port else "")
         ))
 
     click.echo(
@@ -1229,8 +1203,9 @@ def ir_contain(
         2  Invalid incident file.
     """
     import json as _json
-    from cosai_mcp.ir.incident import IncidentRecord, ContainmentAction
+
     from cosai_mcp.ir.containment import perform_containment
+    from cosai_mcp.ir.incident import ContainmentAction, IncidentRecord
 
     try:
         raw = _json.loads(Path(incident_file).read_text(encoding="utf-8"))
@@ -1288,6 +1263,7 @@ def ir_status(incident_file: str) -> None:
         2  Invalid or unreadable incident file.
     """
     import json as _json
+
     from cosai_mcp.ir.incident import IncidentRecord
 
     try:
@@ -1330,9 +1306,9 @@ def _print_coverage_matrix() -> None:
 
 def _print_scan_summary(result: ScanResult, fail_on: str = "critical") -> None:
     total_probes = len(result.probe_results)
-    failed_probes = sum(1 for r in result.probe_results if not r.passed and not r.inconclusive_reason)
+    failed_probes = sum(1 for r in result.probe_results if not r.passed and not r.inconclusive_reason)  # noqa: E501
     total_scenarios = len(result.scenario_results)
-    failed_scenarios = sum(1 for r in result.scenario_results if not r.passed and not r.inconclusive_reason)
+    failed_scenarios = sum(1 for r in result.scenario_results if not r.passed and not r.inconclusive_reason)  # noqa: E501
 
     click.echo(f"\nTarget: {result.target_url}")
     click.echo(f"Timestamp: {result.scan_timestamp}")
@@ -1343,8 +1319,8 @@ def _print_scan_summary(result: ScanResult, fail_on: str = "critical") -> None:
     )
 
     total_non_inconclusive_findings = (
-        sum(1 for r in result.probe_results if not r.passed and r.error is None and not r.inconclusive_reason and not r.suppressed)
-        + sum(1 for r in result.scenario_results if not r.passed and r.status not in ("scan-incomplete", "inconclusive"))
+        sum(1 for r in result.probe_results if not r.passed and r.error is None and not r.inconclusive_reason and not r.suppressed)  # noqa: E501
+        + sum(1 for r in result.scenario_results if not r.passed and r.status not in ("scan-incomplete", "inconclusive"))  # noqa: E501
     )
     inconclusive_count = (
         sum(1 for r in result.probe_results if r.inconclusive_reason)
@@ -1367,7 +1343,7 @@ def _print_scan_summary(result: ScanResult, fail_on: str = "critical") -> None:
             inconc_note = f" ({inconclusive_count} inconclusive.)" if inconclusive_count else ""
             click.echo(f"[CLEAN] No findings.{inconc_note}")
     elif result.exit_code == 1:
-        click.echo(f"[FINDINGS] {failed_probes + failed_scenarios} issue(s) at or above {fail_on!r} severity.")
+        click.echo(f"[FINDINGS] {failed_probes + failed_scenarios} issue(s) at or above {fail_on!r} severity.")  # noqa: E501
     else:
         click.echo("[ERROR] Scan completed with internal errors — treat as failure.", err=True)
 
@@ -1378,54 +1354,14 @@ def _print_scan_summary(result: ScanResult, fail_on: str = "critical") -> None:
 # ---------------------------------------------------------------------------
 
 def _make_manifest_stubs() -> tuple[dict, dict]:
-    """Build (sarif_stubs, html_stubs) for passive manifest-scan findings.
+    """Build (sarif_stubs, html_stubs) for T04 and T09 manifest findings.
 
-    Both dicts are keyed by bare category code (e.g. "T09") because that is what
-    the passive scans (_scan_manifest_t4/t5/t6/t9/t11) write into
-    ProbeResult.threat_id. A category missing here is silently dropped from the
-    SARIF/HTML report, so every passive-scan category MUST have a stub.
+    Both dicts are keyed by bare category code (e.g. "T09") because that is
+    what _scan_manifest_t4 and _scan_manifest_t9 write into ProbeResult.threat_id.
     """
     from cosai_mcp.catalog.models import Severity
 
     sarif: dict = {
-        "T05": {
-            "rule_id": "T05-001",
-            "name": "T5 Data Protection — Secret/PII in Tool Manifest",
-            "severity": Severity.HIGH,
-            "remediation": (
-                "Tool names and descriptions must not embed credentials or PII. "
-                "Remove any API key, token, or personal data from the manifest; "
-                "inject secrets via environment/secrets-manager at runtime, never "
-                "in tool definitions. Ref: CoSAI T5, CWE-312."
-            ),
-            "owasp_ref": "MCP-Top10-A05",
-            "cwe": ("CWE-312", "CWE-200"),
-        },
-        "T06": {
-            "rule_id": "T06-001",
-            "name": "T6 Integrity — Manifest Tool-Name Collision/Shadowing",
-            "severity": Severity.HIGH,
-            "remediation": (
-                "Tool names must be unique and must not collide with, shadow, or "
-                "typosquat (Levenshtein 1 of) a reserved MCP method or another "
-                "tool. Enforce a unique, signed tool allowlist. Ref: CoSAI T6, CWE-345."
-            ),
-            "owasp_ref": "MCP-Top10-A06",
-            "cwe": ("CWE-345",),
-        },
-        "T11": {
-            "rule_id": "T11-001",
-            "name": "T11 Supply Chain — Unexpected/Typosquatted Tool",
-            "severity": Severity.HIGH,
-            "remediation": (
-                "A discovered tool is not on the operator allowlist, or is within "
-                "one edit of an approved name (typosquat). Confirm the tool is "
-                "approved and signed, or remove it from the server. Maintain an "
-                "explicit approved-tool allowlist. Ref: CoSAI T11, CWE-1357."
-            ),
-            "owasp_ref": "MCP-Top10-A11",
-            "cwe": ("CWE-1357", "CWE-494"),
-        },
         "T09": {
             "rule_id": "T09-001",
             "name": "T9 Totem Violation — Missing Two-Stage Commit",
@@ -1505,7 +1441,7 @@ def _write_sarif_report(result: ScanResult, path: Path) -> None:
             rule_description=getattr(threat, "remediation", "")[:512],
             owasp_ref=threat.owasp_ref,
             cwe=threat.cwe,
-            confidence=getattr(threat, "confidence", None).value
+            confidence=getattr(getattr(threat, "confidence", None), "value", "medium")
             if getattr(threat, "confidence", None) is not None
             else "medium",
         )
@@ -1529,7 +1465,7 @@ def _write_sarif_report(result: ScanResult, path: Path) -> None:
         # it is emitting comparable signed reports but is silently emitting
         # none is exactly the failure WP6 must not introduce.
         click.echo(f"[WARN] Report not signed — {exc}", err=True)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         pass  # signing unavailable (no keyring / no key) — continue without signature
 
 
@@ -1564,7 +1500,7 @@ def _write_html_report(result: ScanResult, path: Path, report_mode: str = "full"
         from cosai_mcp.scorecard.builder import build_scorecard
         _sc = build_scorecard(result, signed=False)
         builder.set_coverage([c.to_dict() for c in _sc.categories])
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         pass
 
     # Build probe_context lookup: probe_id → ProbeContext
@@ -1608,12 +1544,13 @@ def _write_html_report(result: ScanResult, path: Path, report_mode: str = "full"
     threat_by_id = {t.id: t for t in result.threats}
 
     for threat_id, probe_results in sorted(results_by_threat.items()):
-        threat = threat_by_id.get(threat_id)
+        threat = threat_by_id.get(threat_id)  # type: ignore[assignment]
         if threat is None:
             # Manifest-scan results carry a bare category code — use stub metadata.
             stub = _MANIFEST_STUBS_HTML.get(threat_id)
             if stub is None:
                 continue
+            threat = stub
             passed = all(r.passed for r in probe_results)
             section = HtmlReportSection(
                 threat_id=stub["rule_id"],
@@ -1640,7 +1577,7 @@ def _write_html_report(result: ScanResult, path: Path, report_mode: str = "full"
             probe_results=probe_results,
             remediation=getattr(threat, "remediation", ""),
             references=getattr(threat, "references", ()),
-            probe_contexts=contexts,
+            probe_contexts=[c for c in contexts if c is not None] or None,
         )
         builder.add_section(section)
 
@@ -1694,9 +1631,8 @@ def _write_adversarial_html_report(
     target_url: str,
     ownership_declaration: str,
 ) -> None:
-    import html as _html
     from cosai_mcp.catalog.models import Severity
-    from cosai_mcp.report.adversarial_html import AdversarialHtmlReport, AdversarialFinding
+    from cosai_mcp.report.adversarial_html import AdversarialFinding, AdversarialHtmlReport
 
     report = AdversarialHtmlReport(
         target_url=target_url,
@@ -1748,7 +1684,7 @@ def _write_adversarial_html_report(
         sig_path.write_text(json.dumps(sig.to_dict(), indent=2), encoding="utf-8")
     except OrgSigningKeyError as exc:
         click.echo(f"[WARN] Adversarial report not signed — {exc}", err=True)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         pass  # signing unavailable (no keyring / no key) — continue without signature
 
 

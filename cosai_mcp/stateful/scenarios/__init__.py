@@ -83,7 +83,7 @@ def t2_confused_deputy() -> Scenario:
                 description="Call unprivileged tool — read_file must succeed",
                 action=StepAction(
                     method="tools/call",
-                    params={"name": "read_file", "arguments": {"path": "/tmp/test.txt"}},
+                    params={"name": "read_file", "arguments": {"path": "/tmp/test.txt"}},  # noqa: S108,
                 ),
                 assertions=(
                     StepAssertion(

@@ -31,11 +31,6 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
-# Single source of truth for the Cyrillic/Greek→Latin homoglyph fold, shared with
-# the T6 detector so the T4 and T6 scanners fold an identical character set.
-from cosai_mcp.middleware.integrity import HOMOGLYPH_MAP as _HOMOGLYPHS
-
-
 # ---------------------------------------------------------------------------
 # Injection pattern library — RE2-compatible (no backreferences/lookbehind)
 # ---------------------------------------------------------------------------
@@ -52,13 +47,13 @@ _INJECTION_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"jailbreak", re.IGNORECASE),
     re.compile(r"DAN\s+mode", re.IGNORECASE),
     re.compile(r"developer\s+mode\s+(enabled|on|activated)", re.IGNORECASE),
-    re.compile(r"bypass\s+(your\s+)?(safety|content|ethical)\s+(filters?|guidelines?|restrictions?)", re.IGNORECASE),
+    re.compile(r"bypass\s+(your\s+)?(safety|content|ethical)\s+(filters?|guidelines?|restrictions?)", re.IGNORECASE),  # noqa: E501
     re.compile(r"reveal\s+(your\s+)?(system|initial|original)\s+prompt", re.IGNORECASE),
     re.compile(r"print\s+(your\s+)?(system|initial|original)\s+prompt", re.IGNORECASE),
     re.compile(r"repeat\s+(your\s+)?(system|initial|original)\s+prompt", re.IGNORECASE),
     re.compile(r"exfiltrate", re.IGNORECASE),
     re.compile(r"always\s+(first\s+)?call\s+(the\s+)?\w+\s+tool", re.IGNORECASE),
-    re.compile(r"before\s+(anything|every(thing)?)\s+(else\s+)?(you\s+)?(must\s+)?call", re.IGNORECASE),
+    re.compile(r"before\s+(anything|every(thing)?)\s+(else\s+)?(you\s+)?(must\s+)?call", re.IGNORECASE),  # noqa: E501
 ]
 
 # Non-English phrasings of "ignore previous instructions" and friends. Attackers
@@ -69,7 +64,7 @@ _INJECTION_PATTERNS += [
     # Spanish
     re.compile(r"ignora\s+(todas\s+)?(las\s+)?instrucciones\s+(previas|anteriores)", re.IGNORECASE),
     # French
-    re.compile(r"ignore[rz]?\s+(toutes\s+)?les\s+instructions\s+(précédentes|precedentes)", re.IGNORECASE),
+    re.compile(r"ignore[rz]?\s+(toutes\s+)?les\s+instructions\s+(précédentes|precedentes)", re.IGNORECASE),  # noqa: E501
     # German
     re.compile(r"ignoriere\s+(alle\s+)?(vorherigen|vorigen)\s+anweisungen", re.IGNORECASE),
     # Portuguese / Italian
@@ -111,9 +106,18 @@ _INVISIBLE_CHARS: dict[int, None] = dict.fromkeys(
     None,
 )
 
-# Homoglyph fold table (Cyrillic/Greek → Latin), built from the shared
-# HOMOGLYPH_MAP imported at the top of this module so the T4 and T6 scanners fold
-# an IDENTICAL character set (a defense review caught the two tables drifting).
+# Common Cyrillic/Greek homoglyphs → Latin look-alike. Folded so that e.g.
+# Cyrillic "іgnоrе" (mixed-script) collapses onto ASCII "ignore".
+_HOMOGLYPHS: dict[str, str] = {
+    # Cyrillic
+    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y",
+    "ѕ": "s", "і": "i", "ј": "j", "ԁ": "d", "ո": "n", "м": "m", "т": "t",
+    "к": "k", "в": "b", "н": "h", "А": "A", "Е": "E", "О": "O", "Р": "P",
+    "С": "C", "Х": "X", "У": "Y", "В": "B", "Н": "H", "К": "K", "М": "M", "Т": "T",
+    # Greek
+    "ο": "o", "ρ": "p", "α": "a", "ε": "e", "ι": "i", "ν": "v", "τ": "t",
+    "Ο": "O", "Ρ": "P", "Α": "A", "Ε": "E", "Τ": "T", "Ι": "I",
+}
 _HOMOGLYPH_TABLE = {ord(k): v for k, v in _HOMOGLYPHS.items()}
 
 # Leetspeak fold: digits/symbols → the Latin letter they impersonate. Applied as
@@ -157,33 +161,19 @@ def _normalize_unicode(text: str) -> str:
     return norm.translate(_HOMOGLYPH_TABLE)
 
 
-# Upper bound on how many decoded base64/hex fragments become scan variants for a
-# single field. Each fragment adds a variant that is matched against every
-# pattern, so an adversarial description packed with hundreds of decodable
-# fragments could otherwise blow up the per-field match count. The cap keeps the
-# work bounded; legitimate injection payloads need only one decoded fragment.
-_MAX_DECODED_FRAGMENTS = 16
-
-
 def _decode_encoded_fragments(text: str) -> list[str]:
     """Best-effort decode of base64/hex substrings to printable text.
 
     Returns decoded strings that are predominantly printable, so an injection
     hidden as base64/hex inside a description or response is revealed to the
-    regex pass. Non-decodable or binary fragments are ignored. At most
-    ``_MAX_DECODED_FRAGMENTS`` fragments are returned (bounds adversarial blowup).
+    regex pass. Non-decodable or binary fragments are ignored.
     """
     out: list[str] = []
 
     def _mostly_printable(s: str) -> bool:
         return bool(s) and sum(c.isprintable() or c.isspace() for c in s) >= 0.8 * len(s)
 
-    def _capped() -> bool:
-        return len(out) >= _MAX_DECODED_FRAGMENTS
-
     for frag in _B64_FRAGMENT_RE.findall(text):
-        if _capped():
-            break
         candidate = frag.rstrip("=")
         std = candidate.replace("-", "+").replace("_", "/")
         for variant in {candidate, std}:
@@ -196,8 +186,6 @@ def _decode_encoded_fragments(text: str) -> list[str]:
                 out.append(decoded)
 
     for frag in _HEX_FRAGMENT_RE.findall(text):
-        if _capped():
-            break
         if len(frag) % 2 != 0:
             continue
         try:
@@ -207,7 +195,7 @@ def _decode_encoded_fragments(text: str) -> list[str]:
         if _mostly_printable(decoded):
             out.append(decoded)
 
-    return out[:_MAX_DECODED_FRAGMENTS]
+    return out
 
 
 def _detection_variants(text: str) -> list[str]:
@@ -288,7 +276,7 @@ class ToolPoisoningDetector:
             self._check(name, f"tool:{name}:name", _INJECTION_PATTERNS, result, "critical")
 
             description = str(tool.get("description", ""))
-            self._check(description, f"tool:{name}:description", _TOOL_DESCRIPTION_PATTERNS, result, "critical")
+            self._check(description, f"tool:{name}:description", _TOOL_DESCRIPTION_PATTERNS, result, "critical")  # noqa: E501
 
             schema = tool.get("inputSchema", {})
             if isinstance(schema, dict):
@@ -320,7 +308,7 @@ class ToolPoisoningDetector:
     def _scan_schema(self, schema: dict[str, Any], location: str, result: ScanResult) -> None:
         desc = str(schema.get("description", ""))
         if desc:
-            self._check(desc, location + ":description", _TOOL_DESCRIPTION_PATTERNS, result, "critical")
+            self._check(desc, location + ":description", _TOOL_DESCRIPTION_PATTERNS, result, "critical")  # noqa: E501
         for prop_name, prop_def in schema.get("properties", {}).items():
             if isinstance(prop_def, dict):
                 self._scan_schema(prop_def, f"{location}.{prop_name}", result)

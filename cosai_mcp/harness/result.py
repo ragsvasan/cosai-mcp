@@ -59,7 +59,7 @@ class ProbeResult:
     duration_seconds: float
     inconclusive_reason: str | None = None  # HTML-escaped
     synthesis_attempted: bool = False  # True when adaptive retry was attempted
-    canary_detected: bool = False  # True when canary string was found in response (adversarial mode)
+    canary_detected: bool = False  # True when canary string was found in response (adversarial mode)  # noqa: E501
     suppressed: bool = False  # True when matched by a .cosai-baseline entry —
     # excluded from exit-code computation but STILL listed in the report.
 

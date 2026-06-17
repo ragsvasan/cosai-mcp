@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 import httpx
 
 from cosai_mcp.config import ScanConfig
-from cosai_mcp.exceptions import DNSRebindingError, SuspiciousRedirectError
+from cosai_mcp.exceptions import DNSRebindingError
 from cosai_mcp.transport.base import (
     Transport,
     check_dns_rebinding,
@@ -53,7 +53,7 @@ class _PinnedAsyncTransport(httpx.AsyncBaseTransport):
         if results:
             # Prefer IPv4 to match the address family used by resolve_and_pin.
             results.sort(key=lambda r: 0 if r[0] == socket.AF_INET else 1)
-            actual_ip = results[0][4][0]
+            actual_ip: str = str(results[0][4][0])
             check_dns_rebinding(self._pinned_ip, actual_ip)
 
         # FIX: substitute the pinned IP into the URL so the inner transport
@@ -153,7 +153,7 @@ class StreamableHTTPTransport(Transport):
     async def connect(self) -> None:
         """Resolve and pin the target IP, then create the httpx client."""
         parsed = urlparse(self._base_url)
-        host = parsed.hostname or self._config.target_host
+        host: str = parsed.hostname or self._config.target_host or ""
         self._pinned_ip = resolve_and_pin(host, self._config)
 
         pinned_transport = _PinnedAsyncTransport(self._pinned_ip, self._config)
@@ -213,7 +213,7 @@ class StreamableHTTPTransport(Transport):
         if isinstance(data, dict):
             data["_status_code"] = response.status_code
             data["_headers"] = {k.lower(): v for k, v in response.headers.items()}
-        return data  # type: ignore[no-any-return]
+        return data
 
     async def send_notification(self, notification: dict[str, Any]) -> None:
         """POST a pre-built JSON-RPC notification (no id, fire-and-forget)."""
@@ -226,7 +226,7 @@ class StreamableHTTPTransport(Transport):
                 headers=self._build_headers(),
             )
             check_redirect(response.status_code)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass  # notifications are fire-and-forget
 
     # Hard caps so a hostile server cannot inflate scan wall-time by holding

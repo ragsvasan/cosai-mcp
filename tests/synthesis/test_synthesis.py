@@ -17,7 +17,6 @@ from cosai_mcp.synthesis import (
     threat_pattern_from_category,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -294,15 +293,20 @@ class TestAdaptiveRetryIntegration:
 
     def test_execute_probe_retries_on_schema_mismatch(self):
         """When first result is INCONCLUSIVE and tool is provided, runner retries."""
-        from unittest.mock import patch, MagicMock
         import dataclasses
+        from unittest.mock import patch
 
-        from cosai_mcp.config import ScanConfig
-        from cosai_mcp.harness.runner import ProbeRunner
-        from cosai_mcp.harness.result import ProbeResult, make_probe_result
         from cosai_mcp.catalog.models import (
-            Assertion, Operator, Probe, Provenance, Severity, ThreatDefinition,
+            Assertion,
+            Operator,
+            Probe,
+            Provenance,
+            Severity,
+            ThreatDefinition,
         )
+        from cosai_mcp.config import ScanConfig
+        from cosai_mcp.harness.result import make_probe_result
+        from cosai_mcp.harness.runner import ProbeRunner
 
         config = ScanConfig(
             target_host="localhost",
@@ -312,7 +316,7 @@ class TestAdaptiveRetryIntegration:
         )
         runner = ProbeRunner(config=config, target_url="http://localhost:8080")
 
-        tool = _make_tool(string_params=("query",), required_params=frozenset({"query"}))
+        _make_tool(string_params=("query",), required_params=frozenset({"query"}))
 
         probe = Probe(
             id="T03-001-p1",
@@ -325,7 +329,7 @@ class TestAdaptiveRetryIntegration:
                 Assertion(target="response.error", operator=Operator.EQ, value=True),
             ),
         )
-        threat = ThreatDefinition(
+        ThreatDefinition(
             schema_version="1.0",
             id="T03-001",
             category="T3",
@@ -355,13 +359,13 @@ class TestAdaptiveRetryIntegration:
 
         call_count = {"n": 0}
 
-        def fake_run_once_impl(probe_arg, threat_arg, variables, timeout, reject, discovered_tool=None):
+        def fake_run_once_impl(probe_arg, threat_arg, variables, timeout, reject, discovered_tool=None):  # noqa: E501
             call_count["n"] += 1
             if call_count["n"] == 1:
                 return inconclusive_result
             return pass_result
 
-        with patch.object(runner, "run_probe", wraps=runner.run_probe) as mock_run:
+        with patch.object(runner, "run_probe", wraps=runner.run_probe):
             # Inject a side effect only for the subprocess internals
             with patch.object(
                 runner,
@@ -373,16 +377,15 @@ class TestAdaptiveRetryIntegration:
                 pass
 
         # Test via direct patching of run_probe itself (first call → inconclusive, second → pass)
-        original_run_probe = runner.run_probe.__func__
 
         calls = []
 
         def patched_run_probe(self, probe_arg, threat_arg, variables=None, timeout_seconds=None,
                               pass_on_auth_reject=False, discovered_tool=None):
-            calls.append(dict(
-                probe_id=probe_arg.id,
-                has_tool=discovered_tool is not None,
-            ))
+            calls.append({
+                "probe_id": probe_arg.id,
+                "has_tool": discovered_tool is not None,
+            })
             if len(calls) == 1:
                 return inconclusive_result
             return pass_result
@@ -398,10 +401,13 @@ class TestAdaptiveRetryIntegration:
 
     def test_no_adaptive_flag_skips_synthesis(self):
         """With adaptive=False, run_probe never passes discovered_tool to itself."""
-        from cosai_mcp.harness.runner import ProbeRunner, _synthesize_probe
         from cosai_mcp.catalog.models import (
-            Assertion, Operator, Probe, Provenance, Severity, ThreatDefinition,
+            Probe,
+            Provenance,
+            Severity,
+            ThreatDefinition,
         )
+        from cosai_mcp.harness.runner import _synthesize_probe
 
         probe = Probe(
             id="T03-001-p1",
@@ -443,10 +449,15 @@ class TestAdaptiveRetryIntegration:
         a benign functional call — producing a false positive.  _synthesize_probe
         must return None for T2 so the first (schema-rejected) result is preserved.
         """
-        from cosai_mcp.harness.runner import _synthesize_probe
         from cosai_mcp.catalog.models import (
-            Assertion, Operator, Probe, Provenance, Severity, ThreatDefinition,
+            Assertion,
+            Operator,
+            Probe,
+            Provenance,
+            Severity,
+            ThreatDefinition,
         )
+        from cosai_mcp.harness.runner import _synthesize_probe
 
         probe = Probe(
             id="T02-001-p1",

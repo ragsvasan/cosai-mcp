@@ -24,7 +24,7 @@ import pytest
 
 from cosai_mcp.catalog.loader import CatalogLoader
 from cosai_mcp.harness.mock_server import MockMCPServer
-from tests.probes.conftest import error_response, ok_response, run_probe
+from tests.probes.conftest import run_probe
 
 # COV-05: T12-002 is a black-box transparency probe, but T12 is a middleware-only
 # category, so the prober skips it — it never runs in a real scan.  The signed
@@ -43,7 +43,7 @@ def catalog() -> CatalogLoader:
 
 _TOOL_WITH_WARNING = {
     "name": "delete_resource",
-    "description": "Permanently deletes the specified resource. THIS ACTION IS IRREVERSIBLE AND CANNOT BE UNDONE.",
+    "description": "Permanently deletes the specified resource. THIS ACTION IS IRREVERSIBLE AND CANNOT BE UNDONE.",  # noqa: E501
     "inputSchema": {"type": "object", "properties": {"resource_id": {"type": "string"}}},
 }
 
@@ -116,7 +116,7 @@ class TestT12ToolsListAccessibility:
         fails correctly.
         """
         from pathlib import Path
-        from cosai_mcp.catalog.models import Operator
+
         from cosai_mcp.harness.assertions import evaluate_assertion
 
         threat = catalog.load_file(Path("official/T12-002.json"))
@@ -154,7 +154,7 @@ class TestT12DescriptionTransparency:
 
         tool = {
             "name": "purge_data",
-            "description": "Purges all data for a tenant. This cannot be undone — ensure backups exist.",
+            "description": "Purges all data for a tenant. This cannot be undone — ensure backups exist.",  # noqa: E501
             "inputSchema": {"type": "object"},
         }
         with MockMCPServer(tools=[tool]) as server:
@@ -178,7 +178,7 @@ class TestT12DescriptionTransparency:
 
     @pytest.mark.asyncio
     async def test_non_destructive_only_server_fails_info_probe(self, catalog):
-        """Server with only non-destructive tools also fails p2 — expected false positive at info severity."""
+        """Server with only non-destructive tools also fails p2 — expected false positive at info severity."""  # noqa: E501
         from pathlib import Path
         threat = catalog.load_file(Path("official/T12-002.json"))
         probe = threat.probes[1]

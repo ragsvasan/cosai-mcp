@@ -2,18 +2,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class Grade(str, Enum):
-    PASS = "pass"
+class Grade(StrEnum):
+    PASS = "pass"  # noqa: S105
     WARN = "warn"           # findings below "high" severity only
     FAIL = "fail"           # any high or critical finding
     NOT_TESTED = "not_tested"  # zero probes executed
 
 
-class ConformanceLevel(str, Enum):
+class ConformanceLevel(StrEnum):
     FULL_CONFORMANCE = "full_conformance"
     PARTIAL_CONFORMANCE = "partial_conformance"
     NON_CONFORMANT = "non_conformant"
@@ -68,7 +68,7 @@ class CategoryResult:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "CategoryResult":
+    def from_dict(cls, d: dict[str, Any]) -> CategoryResult:
         return cls(
             category=str(d["category"]),
             grade=Grade(d["grade"]),
@@ -120,7 +120,7 @@ class Scorecard:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Scorecard":
+    def from_dict(cls, d: dict[str, Any]) -> Scorecard:
         return cls(
             scan_id=str(d["scan_id"]),
             target_url=str(d["target_url"]),

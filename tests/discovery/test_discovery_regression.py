@@ -6,17 +6,13 @@ from __future__ import annotations
 
 import types
 
-import pytest
-
 from cosai_mcp.discovery import (
     _MAX_DESCRIPTION_LEN,
     _MAX_PROPERTIES,
-    _SCHEMA_SIZE_LIMIT_BYTES,
+    _parse_input_schema,
     _tool_dict_to_discovered,
     _validate_tool_name,
-    _parse_input_schema,
 )
-
 
 # ---------------------------------------------------------------------------
 # Sonnet P0 / Opus F3 — tool name validation
@@ -155,8 +151,8 @@ class TestRegressionPropertyCountCap:
         assert len(sp) == 5  # under limit, all preserved
 
     def test_regression_oversize_synthesis_bounded(self):
-        from cosai_mcp.synthesis import synthesize_probe_payload, _OVERSIZE_VALUE
         from cosai_mcp.discovery import DiscoveredTool
+        from cosai_mcp.synthesis import _OVERSIZE_VALUE, synthesize_probe_payload
 
         # Even if we have 64 string params (max), oversize synthesis uses all 64.
         # Each is 100 KB; total = 6.4 MB — bounded, acceptable.
@@ -193,6 +189,7 @@ class TestRegressionSynthesisAttemptedFlagAllOutcomes:
 
     def test_regression_synthesis_attempted_true_on_pass_retry(self):
         import dataclasses
+
         from cosai_mcp.harness.result import make_probe_result
 
         pass_result = make_probe_result(
@@ -211,6 +208,7 @@ class TestRegressionSynthesisAttemptedFlagAllOutcomes:
 
     def test_regression_synthesis_attempted_true_on_fail_retry(self):
         import dataclasses
+
         from cosai_mcp.harness.result import make_probe_result
 
         fail_result = make_probe_result(
@@ -225,6 +223,7 @@ class TestRegressionSynthesisAttemptedFlagAllOutcomes:
 
     def test_regression_synthesis_attempted_true_on_inconclusive_retry(self):
         import dataclasses
+
         from cosai_mcp.harness.result import make_probe_result
 
         inc_result = make_probe_result(
@@ -252,11 +251,14 @@ class TestRegressionNoSynthesisForNonToolsCallProbe:
     """
 
     def test_regression_tools_list_probe_not_synthesized(self):
-        from cosai_mcp.harness.runner import _synthesize_probe
         from cosai_mcp.catalog.models import (
-            Probe, Provenance, Severity, ThreatDefinition,
+            Probe,
+            Provenance,
+            Severity,
+            ThreatDefinition,
         )
         from cosai_mcp.discovery import DiscoveredTool
+        from cosai_mcp.harness.runner import _synthesize_probe
 
         probe = Probe(
             id="T08-001-p1",
@@ -291,11 +293,14 @@ class TestRegressionNoSynthesisForNonToolsCallProbe:
         assert result is None, "Non-tools/call probe must not be synthesized"
 
     def test_regression_initialize_probe_not_synthesized(self):
-        from cosai_mcp.harness.runner import _synthesize_probe
         from cosai_mcp.catalog.models import (
-            Probe, Provenance, Severity, ThreatDefinition,
+            Probe,
+            Provenance,
+            Severity,
+            ThreatDefinition,
         )
         from cosai_mcp.discovery import DiscoveredTool
+        from cosai_mcp.harness.runner import _synthesize_probe
 
         probe = Probe(
             id="T01-001-p1",

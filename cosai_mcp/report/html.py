@@ -6,12 +6,10 @@ from __future__ import annotations
 
 import html as _html_stdlib
 from dataclasses import dataclass
-from typing import Any
 
 from cosai_mcp.catalog.models import Severity
 from cosai_mcp.harness.result import ProbeResult
 from cosai_mcp.report.remediation import RemediationBlock, get_remediation
-
 
 _CSP = (
     "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; "
@@ -417,8 +415,8 @@ class HtmlReportBuilder:
             grade = str(row.get("grade", "not_tested"))
             label, colour = _GRADE_STYLE.get(grade, ("NOT TESTED", "var(--mn-muted, #888)"))
             engine = _h(str(row.get("coverage_engine", "")))
-            probes = int(row.get("probe_count", 0) or 0)
-            inconclusive = int(row.get("inconclusive_count", 0) or 0)
+            probes = int(row.get("probe_count", 0) or 0)  # type: ignore[call-overload]
+            inconclusive = int(row.get("inconclusive_count", 0) or 0)  # type: ignore[call-overload]
             extra = f" · {inconclusive} inconclusive" if inconclusive else ""
             rows_html.append(
                 f"<tr><td>{cat}</td><td>{engine}</td>"
@@ -449,7 +447,7 @@ class HtmlReportBuilder:
                 r.inconclusive_reason for r in s.probe_results
             )
 
-        total_threats = len(self._sections)
+        len(self._sections)
         passed_threats = sum(1 for s in self._sections if s.passed)
         finding_threats = sum(1 for s in self._sections if _section_is_finding(s))
         inconclusive_count = (
@@ -459,7 +457,7 @@ class HtmlReportBuilder:
             + sum(1 for sc in self._scenarios if sc.inconclusive_reason)
         )
 
-        total_scenarios = len(self._scenarios)
+        len(self._scenarios)
         failed_scenarios = sum(
             1 for s in self._scenarios if not s.passed and not s.inconclusive_reason
         )
@@ -520,7 +518,7 @@ class HtmlReportBuilder:
             f"<div class='lbl'>Total findings</div></div>\n"
             f"<div class='stat-box'><div class='num num-pass'>{passed_threats}</div>"
             f"<div class='lbl'>Categories passed</div></div>\n"
-            f"<div class='stat-box'><div class='num' style='color:var(--mn-warn)'>{inconclusive_count}</div>"
+            f"<div class='stat-box'><div class='num' style='color:var(--mn-warn)'>{inconclusive_count}</div>"  # noqa: E501
             f"<div class='lbl'>Inconclusive</div></div>\n"
             "</div>\n"
             f"{self._render_coverage_matrix()}\n"
@@ -569,7 +567,7 @@ class HtmlReportBuilder:
                     f"<td class='td-cat'>{_h(_CATEGORY_NAMES.get(s.category, s.category))}</td>"
                     f"<td><span class='badge {sev_cls}'>{_h(s.severity.value.upper())}</span></td>"
                     f"<td><span class='badge {st_cls}'>{_h(status)}</span></td>"
-                    f"<td style='font-size:0.775rem;color:var(--mn-text-3)'>{_h(assertion_summary)}</td>"
+                    f"<td style='font-size:0.775rem;color:var(--mn-text-3)'>{_h(assertion_summary)}</td>"  # noqa: E501
                     f"</tr>\n"
                 )
 
@@ -594,7 +592,7 @@ class HtmlReportBuilder:
                 f"<td class='td-cat'>{_h(cat_name)} (scenario)</td>"
                 f"<td><span class='badge sev-high'>HIGH</span></td>"
                 f"<td><span class='badge {st_cls}'>{_h(status)}</span></td>"
-                f"<td style='font-size:0.775rem;color:var(--mn-text-3)'>{_h(assertion_summary)}</td>"
+                f"<td style='font-size:0.775rem;color:var(--mn-text-3)'>{_h(assertion_summary)}</td>"  # noqa: E501
                 f"</tr>\n"
             )
 
@@ -627,7 +625,7 @@ class HtmlReportBuilder:
             parts.extend(self._render_section(s) for s in finding_sections)
 
         if pass_sections:
-            parts.append("<div class='section-group-title'>Passed — No Vulnerabilities Detected</div>\n")
+            parts.append("<div class='section-group-title'>Passed — No Vulnerabilities Detected</div>\n")  # noqa: E501
             parts.extend(self._render_section(s) for s in pass_sections)
 
         return "".join(parts)
@@ -650,7 +648,7 @@ class HtmlReportBuilder:
 
         if section.passed:
             body = (
-                f"<p class='pass-note'>✓ All probes passed — no {_h(cat_name)} vulnerabilities detected.</p>\n"
+                f"<p class='pass-note'>✓ All probes passed — no {_h(cat_name)} vulnerabilities detected.</p>\n"  # noqa: E501
                 f"{probes_html}\n"
             )
         else:
@@ -658,7 +656,7 @@ class HtmlReportBuilder:
             remediation_details = self._render_remediation_details(section)
             body = (
                 f"{probes_html}\n"
-                f"<div class='remediation'><span class='lbl'>How to fix:</span> {_h(section.remediation)}</div>\n"
+                f"<div class='remediation'><span class='lbl'>How to fix:</span> {_h(section.remediation)}</div>\n"  # noqa: E501
                 f"{remediation_details}"
                 f"<div class='refs'>References: {refs_html}</div>\n"
             )

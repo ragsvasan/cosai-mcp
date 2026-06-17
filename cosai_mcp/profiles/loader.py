@@ -5,6 +5,7 @@ import ast
 import re
 import types
 from pathlib import Path
+from typing import Any
 
 from cosai_mcp.profiles.builtin import BUILTIN_PROFILES
 from cosai_mcp.profiles.models import ServerProfile
@@ -33,13 +34,13 @@ _SAFE_AST_TYPES = (
     ast.Del,
 )
 
-_PROFILE_FIELD_TYPES: dict[str, type] = {
+_PROFILE_FIELD_TYPES: dict[str, Any] = {
     "name": str,
     "description": str,
     "mcp_path": str,
-    "auth_header_format": (str, type(None)),     # type: ignore[assignment]
+    "auth_header_format": (str, type(None)),
     "tool_name_map": dict,
-    "skip_categories": (frozenset, set, list),   # type: ignore[assignment]
+    "skip_categories": (frozenset, set, list),
     "notes": str,
 }
 
@@ -138,7 +139,7 @@ def _dict_to_profile(raw: dict, source_path: Path) -> ServerProfile:
     # mcp_path — must start with /
     mcp_path = raw["mcp_path"]
     if not isinstance(mcp_path, str) or not mcp_path.startswith("/"):
-        raise ValueError(f"Profile 'mcp_path' must be a string starting with '/', got {mcp_path!r}.")
+        raise ValueError(f"Profile 'mcp_path' must be a string starting with '/', got {mcp_path!r}.")  # noqa: E501
 
     # auth_header_format
     ahf = raw["auth_header_format"]
@@ -169,7 +170,7 @@ def _dict_to_profile(raw: dict, source_path: Path) -> ServerProfile:
     if isinstance(sc_raw, (list, set, frozenset)):
         for item in sc_raw:
             if not isinstance(item, str):
-                raise ValueError(f"Profile 'skip_categories' must contain only strings; got {item!r}.")
+                raise ValueError(f"Profile 'skip_categories' must contain only strings; got {item!r}.")  # noqa: E501
         skip_categories: frozenset = frozenset(item.upper() for item in sc_raw)
     else:
         raise ValueError("Profile 'skip_categories' must be a list or set.")
@@ -211,7 +212,7 @@ def resolve_profile(
     """
     # 1. Built-in
     if name in BUILTIN_PROFILES:
-        return BUILTIN_PROFILES[name]
+        return BUILTIN_PROFILES[name]  # type: ignore[no-any-return]
 
     # 2/3. User-written — gated by --allow-custom-profiles
     if not allow_custom:
@@ -233,10 +234,10 @@ def resolve_profile(
             # (guards against symlink-based traversal)
             try:
                 candidate.resolve().relative_to(directory.resolve())
-            except ValueError:
+            except ValueError as exc:
                 raise ValueError(
                     f"Profile file {candidate} resolves outside allowed directory {directory}."
-                )
+                ) from exc
             return _parse_user_profile(candidate)
 
     searched = " and ".join(str(d) for d in search_dirs)

@@ -96,10 +96,10 @@ def sign_catalog(catalog_root: Path) -> list[Path]:
     verify_pub = get_catalog_public_key()
     if signer_pub != verify_pub:
         raise ValueError(
-            "Signing key public bytes do not match the active verification "
+            "Signing key public bytes do not match the active verification "  # noqa: S608
             "key. Update cosai_mcp/keys._HARDCODED_PUBLIC_KEY (or set "
             "COSAI_PUBKEY) to the signing key's public bytes before re-signing. "
-            f"signer={signer_pub.hex()} verify={verify_pub.hex()}"
+            f"signer={signer_pub.hex()} verify={verify_pub.hex()}"  # noqa: S608
         )
 
     official_dir = catalog_root / "official"

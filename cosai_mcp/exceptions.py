@@ -1,8 +1,6 @@
 """Custom exceptions for cosai-mcp."""
 from __future__ import annotations
 
-import warnings
-
 
 class CosaiMCPError(Exception):
     """Base exception for all cosai-mcp errors."""

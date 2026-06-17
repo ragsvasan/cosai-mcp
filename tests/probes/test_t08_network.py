@@ -57,7 +57,7 @@ class TestT08SSRF:
         threat = catalog.load_file(Path("official/T08-001.json"))
         probe = threat.probes[0]
 
-        with MockMCPServer(tools_call_response=ok_response("ami-id\ninstance-id\nhostname")) as server:
+        with MockMCPServer(tools_call_response=ok_response("ami-id\ninstance-id\nhostname")) as server:  # noqa: E501
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 
@@ -73,7 +73,7 @@ class TestT08SSRF:
         threat = catalog.load_file(Path("official/T08-001.json"))
         probe = threat.probes[1]  # localhost:22 / 10.0.0.1 probe
 
-        with MockMCPServer(tools_call_response=error_response(-32602, "Private address blocked")) as server:
+        with MockMCPServer(tools_call_response=error_response(-32602, "Private address blocked")) as server:  # noqa: E501
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 
@@ -117,7 +117,7 @@ class TestT08UnencryptedTransport:
 
     @pytest.mark.asyncio
     async def test_server_responds_to_initialize(self, catalog):
-        """T08-002-p1 checks initialize succeeds — finding is logged by reporter, not a pass/fail gate."""
+        """T08-002-p1 checks initialize succeeds — finding is logged by reporter, not a pass/fail gate."""  # noqa: E501
         from pathlib import Path
         threat = catalog.load_file(Path("official/T08-002.json"))
         probe = threat.probes[0]

@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import pytest_asyncio
 
 from cosai_mcp.catalog.loader import CatalogLoader
 from cosai_mcp.catalog.models import Probe, ThreatDefinition
@@ -16,7 +15,6 @@ from cosai_mcp.harness.mock_server import MockMCPServer
 from cosai_mcp.harness.result import ProbeResult
 from cosai_mcp.session import MCPSession
 from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
-
 
 CATALOG_ROOT = Path(__file__).parent.parent.parent / "catalog"
 

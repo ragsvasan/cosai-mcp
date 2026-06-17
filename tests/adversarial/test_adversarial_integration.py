@@ -13,8 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from cosai_mcp.catalog.template import substitute_probe_payload, _ALLOWED_VARS
-
+from cosai_mcp.catalog.template import _ALLOWED_VARS, substitute_probe_payload
 
 # ---------------------------------------------------------------------------
 # ARCH [1]: {{canary}} in template allowlist
@@ -40,7 +39,7 @@ class TestCanaryTemplateVariable:
     def test_canary_substitution_in_nested_assertion(self):
         """{{canary}} substitution must succeed in assertion value (nested dict)."""
         assertion = {"value": "{{canary}}", "operator": "not_contains"}
-        result = substitute_probe_payload(assertion, {"canary": "COSAI_PROBE_T03-ADV-001_DEADBEEF_abc123"})
+        result = substitute_probe_payload(assertion, {"canary": "COSAI_PROBE_T03-ADV-001_DEADBEEF_abc123"})  # noqa: E501
         assert result["value"] == "COSAI_PROBE_T03-ADV-001_DEADBEEF_abc123"
 
     def test_canary_value_cannot_inject_secondary_template(self):

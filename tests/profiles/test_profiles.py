@@ -4,7 +4,7 @@ from __future__ import annotations
 import types
 import warnings
 from pathlib import Path
-from unittest.mock import create_autospec, patch, MagicMock
+from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
 from click.testing import CliRunner
@@ -12,9 +12,8 @@ from click.testing import CliRunner
 from cosai_mcp.cli import main
 from cosai_mcp.harness.runner import ProbeRunner
 from cosai_mcp.profiles import BUILTIN_PROFILES, ServerProfile, resolve_profile
-from cosai_mcp.profiles.loader import _parse_user_profile, _SAFE_AST_TYPES
+from cosai_mcp.profiles.loader import _parse_user_profile
 from cosai_mcp.stateful.harness import StatefulHarness
-
 
 # ---------------------------------------------------------------------------
 # test_builtin_profiles_load_without_error
@@ -56,8 +55,8 @@ def test_profile_applies_tool_name_map():
 
 def test_profile_skips_categories():
     """Profiles with skip_categories cause those categories to be absent from scan."""
-    from cosai_mcp.api import _run_scan, CATALOG_ROOT
-    from pathlib import Path
+
+    from cosai_mcp.api import CATALOG_ROOT, _run_scan
 
     mnemo = BUILTIN_PROFILES["mnemo"]
     assert "T8" in mnemo.skip_categories
@@ -81,7 +80,7 @@ def test_profile_skips_categories():
         )
         MockHarness.return_value = mock_harness_inst
 
-        result = _run_scan(
+        _run_scan(
             target="http://localhost:8000",
             categories=None,
             engine="prober",
@@ -206,7 +205,7 @@ def test_profile_unknown_name_cli_exit2():
 
 def test_regression_no_profile_behavior_unchanged():
     """With no --profile, _run_scan() accepts profile=None without error and uses mcp_path as-is."""
-    from cosai_mcp.api import _run_scan, CATALOG_ROOT
+    from cosai_mcp.api import CATALOG_ROOT, _run_scan
 
     with (
         patch("cosai_mcp.api._run_discovery", return_value=("ping", ())),
@@ -273,8 +272,7 @@ def test_regression_null_in_auth_header_format(tmp_path: Path):
 
 def test_regression_stateful_engine_respects_skip_categories():
     """openai-plugin profile (skip_categories=T7) prevents t7_session_token_binding from running."""
-    from cosai_mcp.api import _run_scan, CATALOG_ROOT
-    from cosai_mcp.stateful.scenarios import t7_session_token_binding
+    from cosai_mcp.api import CATALOG_ROOT, _run_scan
 
     openai_plugin = BUILTIN_PROFILES["openai-plugin"]
     assert "T7" in openai_plugin.skip_categories
@@ -341,8 +339,9 @@ def test_regression_skip_categories_case_normalised(tmp_path: Path):
 
 def test_regression_empty_threat_list_warning():
     """skip_categories that filters all threats emits a warning rather than silently exiting 0."""
-    from cosai_mcp.api import _run_scan, CATALOG_ROOT
     import types as _types
+
+    from cosai_mcp.api import CATALOG_ROOT, _run_scan
 
     # Profile that skips every T-category
     all_cats = frozenset(f"T{i}" for i in range(1, 13))

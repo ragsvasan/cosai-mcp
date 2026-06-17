@@ -157,7 +157,7 @@ async def test_corroborated_failure_is_finding() -> None:
     resp = {
         "jsonrpc": "2.0",
         "id": 0,
-        "result": {"content": [{"type": "text", "text": "root:x:0:0:/root:/bin/sh"}], "isError": False},
+        "result": {"content": [{"type": "text", "text": "root:x:0:0:/root:/bin/sh"}], "isError": False},  # noqa: E501
     }
     with MockMCPServer(tools_call_response=resp) as server:
         server.wait_ready()

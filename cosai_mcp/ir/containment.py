@@ -67,7 +67,7 @@ def _assert_egress_allowed(url: str, *, allow_private: bool) -> None:
             f"Cannot resolve containment target host {hostname!r}"
         )
     for res in results:
-        raw_ip = res[4][0]
+        raw_ip: str = str(res[4][0])
         if is_always_blocked(raw_ip):
             raise PrivateAddressError(
                 f"Containment target {hostname!r} resolves to {raw_ip}, which "
@@ -117,7 +117,7 @@ def _generate_block_commands(target_url: str) -> list[str]:
     else:
         lines += [
             f"# Could not resolve {hostname!r} — block by hostname instead:",
-            f"# iptables does not support hostnames; use DNS sinkhole or WAF rule.",
+            "# iptables does not support hostnames; use DNS sinkhole or WAF rule.",
             f"# Add to /etc/hosts:  0.0.0.0  {hostname}",
         ]
     return lines
@@ -208,7 +208,7 @@ def _session_kill(
         ) as client:
             # Best-effort: attempt DELETE; most MCP servers return 404 or 405 — that's fine.
             client.delete(target_url)
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass  # intentionally silent — connection close is best-effort
 
     return ContainmentResult(

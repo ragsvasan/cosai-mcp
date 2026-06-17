@@ -1,9 +1,9 @@
 # cosai-mcp — Coverage Status
 
-**Date:** 2026-06-16
-**Build:** 1546/1546 tests passing
-**Catalog:** 39 signed threat definitions + 4 adversarial (Ed25519, signatures now enforced)
-**Status:** All phases P0–P13 complete. Codex P1/P2 findings resolved. WG-89 reviewer items 1–12 merged.
+**Date:** 2026-05-04
+**Build:** 1462/1462 tests passing
+**Catalog:** 26 signed threat definitions + 4 adversarial (Ed25519, signatures now enforced)
+**Status:** All phases P0–P13 complete. Codex P1/P2 findings resolved.
 
 ---
 
@@ -17,10 +17,8 @@ cosai-mcp uses three fundamentally different detection mechanisms. The right eng
 | **Stateful conformance harness** | Scripted multi-turn sessions with state tracking | Session state changes, mid-session mutations |
 | **Middleware instrumentation** | Library deployed inside the target server | Content flowing through the call path |
 
-**Critical constraint (locked architecture decision):** T4 response-body injection, T9, and T12 are structurally undetectable from outside the call path. However, several categories have a passively-detectable structural layer the scanner runs over the already-fetched `tools/list` manifest:
+**Critical constraint (locked architecture decision):** T4 response-body injection, T9, and T12 are structurally undetectable from outside the call path. However, T4, T6, and T9 each have a passively-detectable structural layer the scanner runs over the already-fetched `tools/list` manifest:
 - **T4 manifest poisoning** (injection hidden in `tools/list` metadata): the scanner runs `ToolPoisoningDetector` on the already-fetched manifest and surfaces findings with `threat_id="T04"`.
-- **T5 manifest secrets** (credentials/PII embedded in tool names/descriptions): `_scan_manifest_t5` flags anchored credential patterns (AWS/GCP/Azure/GitHub/GitLab/Google/JWT), redacting the value to `[REDACTED:<type>]`; `--pii-strict` adds SSN/IBAN/phone/Luhn-PAN. Findings surface with `threat_id="T05"`.
-- **T11 supply-chain** (typosquat / unexpected tool): `_scan_manifest_t11` compares discovered tools against the operator `--tool-allowlist` (Levenshtein-1 typosquat + not-on-list). INCONCLUSIVE (not clean) without an allowlist. Findings surface with `threat_id="T11"`.
 - **T6 manifest integrity** (tool shadowing / typosquat): `_scan_manifest_t6` flags exact name collisions, tool names within Levenshtein 1 of a reserved MCP method (e.g. `tools_call` vs `tools/call`), and near-duplicate tool names (plural variants suppressed). Findings surface with `threat_id="T06"`; a clean manifest emits a PASS marker.
 - **T9 Totem violations** (destructive tools missing two-stage commit): the scanner inspects `tools/list` for tools with unambiguously-destructive verb names (delete, remove, drop, destroy, wipe, purge, reset, revoke, terminate, etc.) that lack a `confirmed`/`dry_run` boolean parameter and have no `_preview`/`_plan` sibling — the structural signal for TKA Totem non-compliance (CoSAI WS4 T9 contribution). Findings surface with `threat_id="T09"`.
 
@@ -32,50 +30,18 @@ Full T4/T9/T12 coverage still requires middleware instrumentation inside the tar
 
 | # | Category | Engine | Catalog entries | Status |
 |---|----------|--------|----------------|--------|
-| T1 | Improper Authentication | Black-box prober | T01-001–006 | **Done** — missing auth, cross-session token, token replay (jti), DPoP binding, wrong-error-code-for-unknown-method (T01-005), real JTI-replay + distinct JWT-validation probes (`alg`/`iss`/`aud`/`exp`, T01-006) |
+| T1 | Improper Authentication | Black-box prober | T01-001–004 | **Done** — missing auth, cross-session token, token replay (jti), DPoP binding |
 | T2 | Missing Access Control | Black-box + stateful harness | T02-001, T02-003 | **Done** — privilege scope probe; destructive one-shot (T02-003); stateful privilege escalation chain + confused deputy |
-| T3 | Input Validation Failures | Black-box prober | T03-001–007 | **Done** — command/path injection, SQL injection (T03-004), NoSQL operator injection (T03-005), SSTI (T03-003), XXE (T03-006), CRLF/header injection (T03-007), null bytes, oversized payloads. Payloads bind to discovered tools via synthesis. |
-| T4 | Data/Control Boundary | Black-box prober (passive) + Middleware | — | **Done** — passive manifest scan wired into `_run_scan`; `ToolPoisoningDetector` (with a Unicode/whitespace **normalization pre-pass** so homoglyph/zero-width-obfuscated injection can't evade the match) + `ResponseBoundaryGuard` for full response-path coverage |
-| T5 | Inadequate Data Protection | Black-box prober + passive manifest scan | T05-001, T05-002 + `_scan_manifest_t5` | **Done** — anchored credential set (AWS/GCP/Azure/GitHub/GitLab/Google/JWT) + context-leak (internal host, stack trace) in responses and manifest; strict tier `--pii-strict` (SSN, IBAN, phone, Luhn-PAN). Secrets redacted to `[REDACTED:<type>]`. |
-| T6 | Integrity/Verification | Passive manifest scan + stateful harness | `_scan_manifest_t6` | **Done** — passive manifest-integrity scan (name collision, reserved-method shadow, Levenshtein-1 typosquat, **homoglyph** confusables, optional operator **reference allowlist** for known-good tool names); stateful mid-session manifest-drift diff enforced in `run_scenario` (rug pull) |
+| T3 | Input Validation Failures | Black-box prober | T03-001, T03-002 | **Done** — command injection, path traversal, SQL injection, null bytes, oversized payloads |
+| T4 | Data/Control Boundary | Black-box prober (passive) + Middleware | — | **Done** — passive manifest scan wired into `_run_scan`; `ToolPoisoningDetector` + `ResponseBoundaryGuard` for full response-path coverage |
+| T5 | Inadequate Data Protection | Black-box prober | T05-001, T05-002 | **Done** — PII pattern detection, credential pattern detection in tool responses |
+| T6 | Integrity/Verification | Passive manifest scan + stateful harness | `_scan_manifest_t6` | **Done** — passive manifest-integrity scan (name collision, reserved-method shadow, Levenshtein-1 typosquat); stateful mid-session manifest-drift diff enforced in `run_scenario` (rug pull) |
 | T7 | Session Security Failures | Stateful harness | — | **Done** — session fixation, token-in-URL, cross-session replay, explicit revocation (T7-SC-002) |
-| T8 | Network Binding Failures | Black-box prober | T08-001–009 | **Done** — SSRF: RFC1918/link-local/loopback, AWS IMDSv1 (T08-001) + IMDSv2 (T08-006), GCP (T08-004), Azure (T08-005), Alibaba (T08-007), `file://` (T08-008), IPv6 ULA/link-local (T08-009); protocol version; honest bind-config scope (0.0.0.0 / wildcard-bind flagged against documented intent, not blindly) + optional TLS inspection |
+| T8 | Network Binding Failures | Black-box prober | T08-001–003 | **Done** — SSRF (RFC1918/link-local/loopback/file://), protocol version, 0.0.0.0 binding detection |
 | T9 | Trust Boundary Failures | Middleware + passive manifest scan | — | **Done** — passive Totem manifest scan (destructive tools missing two-stage commit); full coverage via LLMOutputSanitizer + TrustBoundaryChecker (deploy middleware in target) |
-| T10 | Resource Management | Black-box prober + stateful harness | T10-001–005 | **Done** — oversized input (T10-001), rate-limit liveness (T10-002), recursive payload nesting (T10-003), HTTP-layer burst 429/503 (T10-004), JSON-RPC-layer per-session call budget -32029 (T10-005); **stateful** recursive/looping tool-chain → per-session call-budget enforcement (T10-SC-001). _Out of scope (documented):_ heartbeat / progress-notification timeout and concurrent-connection cap / slow-loris / gzip-bomb — see note below |
-| T11 | Supply Chain/Lifecycle | Passive manifest scan | `_scan_manifest_t11` (+ legacy T11-001) | **Done** — operator-allowlist scan (`--tool-allowlist`): Levenshtein-1 typosquat + unexpected/unauthorized tool. **INCONCLUSIVE (not clean) without an allowlist** — the legacy fictional-tool probe is a vacuous liveness check only. |
+| T10 | Resource Management | Black-box prober | T10-001–003 | **Done** — oversized input, rate limiting (429), recursive payload / DoW, heartbeat |
+| T11 | Supply Chain/Lifecycle | Black-box prober | T11-001 | **Done** — tool allowlist enforcement, typosquatting (Levenshtein ≤ 1), signature verification |
 | T12 | Insufficient Logging | Middleware only | — | **Middleware-only** — hash-chained DAG audit log via `cosai audit verify`. Audit logging is structurally unobservable from a black-box prober (the trail is internal to the server, never exposed over JSON-RPC). The former black-box `T12-002` probe tests destructive-tool *description* transparency (UX), not logging — it is honestly named `tests/probes/test_t12_description_transparency.py`; `tests/probes/test_t12_logging.py` is now a placeholder documenting that no black-box T12 logging probe is possible. The signed `T12-002` file was relocated out of the production catalog to `tests/fixtures/`; audit COV-05. |
-
-### T10 denial-of-wallet — coverage and scope notes
-
-The core denial-of-wallet (DoW) threat — an agent driven into a recursive or
-looping tool chain that burns the operator's wallet — is covered by the
-**stateful** scenario `T10-SC-001` (`t10_recursive_tool_loop`). It issues a run
-of repeated `tools/call` requests within one session and FAILS the target if it
-answers the entire loop without ever exhausting a per-session call budget. Per-
-session budgets are inherently stateful: a black-box probe opens a fresh
-connection per probe, so a single-shot probe cannot observe a budget that
-accrues across calls. The burst probe `T10-005` (`probe_count`, single session)
-detects the JSON-RPC-layer budget code (`-32029`) that the HTTP-layer burst probe
-`T10-004` (429/503) misses.
-
-The following T10 sub-threats are **intentionally out of scope** for the
-black-box / stateful scanner, and are documented here rather than half-covered:
-
-- **Heartbeat / progress-notification timeout.** Detecting that a server marks a
-  session dead after `heartbeat_interval_secs` requires holding a session open
-  and asserting on a wall-clock timeout. This is non-deterministic from outside
-  the server (depends on the server's configured interval) and would make scans
-  slow and flaky. It is enforced server-side by the `resources` middleware, not
-  probed. Candidate for a future timed stateful scenario with an explicit,
-  operator-supplied interval.
-- **Concurrent-connection cap, slow-loris, gzip/zip-bomb.** These are
-  load/DoS-generation tests: they require sustained adversarial traffic
-  (many simultaneous connections, partial-request trickling, decompression
-  amplification). The scanner is deliberately a correctness tool with per-probe
-  process isolation and a hard network allowlist (see locked architecture);
-  generating sustained DoS traffic would weaponize the harness and risk the
-  target. Use a dedicated load/DoS testing tool for these; cosai-mcp does not
-  attempt them.
 
 ---
 
@@ -115,7 +81,7 @@ Requires `--adversarial --i-own-this-target`. Blocked against RFC1918 and loopba
 
 ## Test Suite
 
-**1546 tests passing** across:
+**1462 tests passing** across:
 
 | Module | What |
 |--------|------|

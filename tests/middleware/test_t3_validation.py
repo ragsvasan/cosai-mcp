@@ -7,9 +7,7 @@ from cosai_mcp.middleware.validation import (
     InjectionGuard,
     ParameterValidationError,
     ParameterValidator,
-    ValidationFinding,
 )
-
 
 # ===========================================================================
 # InjectionGuard — standalone scan
@@ -110,7 +108,7 @@ class TestParameterValidator:
         v = self._validator_with_schema()
         with pytest.raises(ParameterValidationError) as exc_info:
             v.validate("search", {"query": "hello", "extra": "not allowed"})
-        assert any("schema_violation:additionalProperties" in f.issue for f in exc_info.value.findings)
+        assert any("schema_violation:additionalProperties" in f.issue for f in exc_info.value.findings)  # noqa: E501
 
     def test_unknown_tool_rejected_by_default(self):
         v = ParameterValidator()  # allow_unknown_tools=False by default

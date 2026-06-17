@@ -2,17 +2,14 @@
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
 
 from cosai_mcp.cli import main
-from cosai_mcp.scorecard.builder import build_scorecard, _grade_category, _determine_conformance
+from cosai_mcp.scorecard.builder import _determine_conformance, _grade_category
 from cosai_mcp.scorecard.models import (
     CategoryResult,
     ConformanceLevel,
@@ -24,7 +21,6 @@ from cosai_mcp.scorecard.signing import (
     sign_scorecard,
     verify_scorecard,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -135,7 +131,7 @@ class TestConformanceLevels:
         assert _determine_conformance(cats) == ConformanceLevel.NON_CONFORMANT
 
     def test_excessive_not_tested_is_insufficient(self) -> None:
-        cats = [CategoryResult(f"T{i}", Grade.NOT_TESTED, 0, 0, 0, 0, "prober") for i in range(1, 13)]
+        cats = [CategoryResult(f"T{i}", Grade.NOT_TESTED, 0, 0, 0, 0, "prober") for i in range(1, 13)]  # noqa: E501
         assert _determine_conformance(cats) == ConformanceLevel.INSUFFICIENT_COVERAGE
 
     def test_warn_not_counted_as_fail(self) -> None:
@@ -275,6 +271,7 @@ class TestSigning:
         from cryptography.hazmat.primitives.asymmetric.ed25519 import (
             Ed25519PrivateKey,
         )
+
         from cosai_mcp.scorecard.signing import _canonical_bytes, _signable_dict
 
         attacker = Ed25519PrivateKey.generate()
@@ -301,6 +298,7 @@ class TestSigning:
         from cryptography.hazmat.primitives.asymmetric.ed25519 import (
             Ed25519PrivateKey,
         )
+
         from cosai_mcp.scorecard.signing import _canonical_bytes, _signable_dict
 
         monkeypatch.setenv("COSAI_SCORECARD_PUBKEY", "!!!not-base64!!!")
@@ -324,6 +322,7 @@ class TestSigning:
         from cryptography.hazmat.primitives.asymmetric.ed25519 import (
             Ed25519PrivateKey,
         )
+
         from cosai_mcp.scorecard.signing import _canonical_bytes, _signable_dict
 
         attacker = Ed25519PrivateKey.generate()
@@ -350,6 +349,7 @@ class TestSigning:
     def test_regression_scorecard_tampered_then_resigned_rejected(self) -> None:
         """Re-signing a tampered scorecard with a different key must be rejected."""
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
         from cosai_mcp.scorecard.signing import _canonical_bytes, _signable_dict
 
         # Start with a clean signed scorecard
@@ -398,7 +398,7 @@ class TestScorecardCLI:
 
     def test_scorecard_verify_exits_1_on_tampered(self, tmp_path: Path) -> None:
         p = tmp_path / "scorecard.json"
-        sc = self._write_scorecard(p, signed=True)
+        self._write_scorecard(p, signed=True)
         raw = json.loads(p.read_text())
         raw["target_url"] = "http://attacker.example.com"
         p.write_text(json.dumps(raw), encoding="utf-8")
