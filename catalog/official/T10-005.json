@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "id": "T10-005",
+  "category": "T10",
+  "severity": "high",
+  "cosai_ref": "T10",
+  "owasp_ref": "MCP-Top10-A10",
+  "cwe": [
+    "CWE-770",
+    "CWE-400"
+  ],
+  "probes": [
+    {
+      "id": "T10-005-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "description": "Send 50 rapid tools/call invocations within a single session to model a recursive/looping tool chain (denial-of-wallet). A server with a per-session call budget must reject at least one of the calls with the JSON-RPC rate-limit error -32029. This complements T10-004, which only detects rate limiting expressed at the HTTP transport layer (429/503); a server that bounds calls with a JSON-RPC -32029 error (HTTP 200 body) is invisible to T10-004 but caught here. If none of the 50 calls is rejected with -32029, no per-session call budget is enforced at the JSON-RPC layer.",
+      "probe_count": 50,
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "n": "1"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.error_code",
+          "operator": "eq",
+          "value": -32029,
+          "description": "At least one of the rapid in-session calls must return the JSON-RPC error code -32029 (rate limit / call budget exceeded) to confirm a per-session call budget is enforced. The exact-match `eq` operator is used deliberately: a budget control returns the specific -32029 JSON-RPC code, so a generic MCP content-layer error (result.isError:true with no error.code) on a normal call is NOT accepted as proof of a budget — that avoids clearing an evasive/broken server that errors on every call but enforces no budget. -32029 is the canonical rate-limit code recommended in the T10 remediation; servers using a different code should be reviewed and mapped accordingly."
+        }
+      ]
+    }
+  ],
+  "remediation": "Enforce a per-session tools/call budget (maximum calls per session and per minute) in addition to HTTP-layer rate limiting. Return JSON-RPC error -32029 (rate limit exceeded) with a Retry-After hint once the budget is exhausted, and keep rejecting until the session resets. Pair the budget with a recursion/loop guard so a tool whose output drives further tool calls cannot run an unbounded chain (denial-of-wallet).",
+  "references": [
+    "https://cosai.org/T10",
+    "https://cwe.mitre.org/data/definitions/770.html",
+    "https://cwe.mitre.org/data/definitions/400.html"
+  ]
+}

@@ -41,9 +41,41 @@ Full T4/T9/T12 coverage still requires middleware instrumentation inside the tar
 | T7 | Session Security Failures | Stateful harness | — | **Done** — session fixation, token-in-URL, cross-session replay, explicit revocation (T7-SC-002) |
 | T8 | Network Binding Failures | Black-box prober | T08-001–009 | **Done** — SSRF: RFC1918/link-local/loopback, AWS IMDSv1 (T08-001) + IMDSv2 (T08-006), GCP (T08-004), Azure (T08-005), Alibaba (T08-007), `file://` (T08-008), IPv6 ULA/link-local (T08-009); protocol version; 0.0.0.0 binding detection |
 | T9 | Trust Boundary Failures | Middleware + passive manifest scan | — | **Done** — passive Totem manifest scan (destructive tools missing two-stage commit); full coverage via LLMOutputSanitizer + TrustBoundaryChecker (deploy middleware in target) |
-| T10 | Resource Management | Black-box prober | T10-001–003 | **Done** — oversized input, rate limiting (429), recursive payload / DoW, heartbeat |
+| T10 | Resource Management | Black-box prober + stateful harness | T10-001–005 | **Done** — oversized input (T10-001), rate-limit liveness (T10-002), recursive payload nesting (T10-003), HTTP-layer burst 429/503 (T10-004), JSON-RPC-layer per-session call budget -32029 (T10-005); **stateful** recursive/looping tool-chain → per-session call-budget enforcement (T10-SC-001). _Out of scope (documented):_ heartbeat / progress-notification timeout and concurrent-connection cap / slow-loris / gzip-bomb — see note below |
 | T11 | Supply Chain/Lifecycle | Passive manifest scan | `_scan_manifest_t11` (+ legacy T11-001) | **Done** — operator-allowlist scan (`--tool-allowlist`): Levenshtein-1 typosquat + unexpected/unauthorized tool. **INCONCLUSIVE (not clean) without an allowlist** — the legacy fictional-tool probe is a vacuous liveness check only. |
 | T12 | Insufficient Logging | Middleware only | — | **Middleware-only** — hash-chained DAG audit log via `cosai audit verify`. Audit logging is structurally unobservable from a black-box prober (the trail is internal to the server, never exposed over JSON-RPC). The former black-box `T12-002` probe tests destructive-tool *description* transparency (UX), not logging — it is honestly named `tests/probes/test_t12_description_transparency.py`; `tests/probes/test_t12_logging.py` is now a placeholder documenting that no black-box T12 logging probe is possible. The signed `T12-002` file was relocated out of the production catalog to `tests/fixtures/`; audit COV-05. |
+
+### T10 denial-of-wallet — coverage and scope notes
+
+The core denial-of-wallet (DoW) threat — an agent driven into a recursive or
+looping tool chain that burns the operator's wallet — is covered by the
+**stateful** scenario `T10-SC-001` (`t10_recursive_tool_loop`). It issues a run
+of repeated `tools/call` requests within one session and FAILS the target if it
+answers the entire loop without ever exhausting a per-session call budget. Per-
+session budgets are inherently stateful: a black-box probe opens a fresh
+connection per probe, so a single-shot probe cannot observe a budget that
+accrues across calls. The burst probe `T10-005` (`probe_count`, single session)
+detects the JSON-RPC-layer budget code (`-32029`) that the HTTP-layer burst probe
+`T10-004` (429/503) misses.
+
+The following T10 sub-threats are **intentionally out of scope** for the
+black-box / stateful scanner, and are documented here rather than half-covered:
+
+- **Heartbeat / progress-notification timeout.** Detecting that a server marks a
+  session dead after `heartbeat_interval_secs` requires holding a session open
+  and asserting on a wall-clock timeout. This is non-deterministic from outside
+  the server (depends on the server's configured interval) and would make scans
+  slow and flaky. It is enforced server-side by the `resources` middleware, not
+  probed. Candidate for a future timed stateful scenario with an explicit,
+  operator-supplied interval.
+- **Concurrent-connection cap, slow-loris, gzip/zip-bomb.** These are
+  load/DoS-generation tests: they require sustained adversarial traffic
+  (many simultaneous connections, partial-request trickling, decompression
+  amplification). The scanner is deliberately a correctness tool with per-probe
+  process isolation and a hard network allowlist (see locked architecture);
+  generating sustained DoS traffic would weaponize the harness and risk the
+  target. Use a dedicated load/DoS testing tool for these; cosai-mcp does not
+  attempt them.
 
 ---
 

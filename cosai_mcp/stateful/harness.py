@@ -93,6 +93,14 @@ class Scenario:
     threat_categories: tuple[str, ...]
     steps: tuple[ScenarioStep, ...]
     description: str = ""
+    # When True, the harness runs the per-session call-budget / loop check
+    # (``_detect_unbounded_tool_loop``) after all steps complete: a scenario
+    # that issues a run of repeated tools/call steps (simulating an agent stuck
+    # in a recursive tool-invocation loop — the core T10 denial-of-wallet
+    # threat) FAILS if the server answered the entire loop without ever
+    # applying a call budget.  Additive/opt-in; default False preserves the
+    # behaviour of every existing T2/T6/T7 scenario.
+    loop_budget_check: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +406,92 @@ def _apply_method_overrides(
         threat_categories=scenario.threat_categories,
         steps=tuple(new_steps),
         description=scenario.description,
+        # Preserve the T10 loop-budget opt-in across remapping so an
+        # operator's method_overrides does not silently drop the check.
+        loop_budget_check=scenario.loop_budget_check,
+    )
+
+
+def _detect_unbounded_tool_loop(
+    scenario: Scenario,
+    step_results: list[StepResult],
+) -> StepResult | None:
+    """Detect an unbounded recursive/looping tool-chain (T10 denial-of-wallet).
+
+    The loop scenario issues a run of repeated ``tools/call`` steps within a
+    single session, simulating an agent caught in a recursive tool-invocation
+    loop (tool A's output drives the next call, ad infinitum — the pattern that
+    burns the operator's wallet).  Because every call in the loop is an
+    identical, valid invocation of a tool that exists on the server, the ONLY
+    reason a server would reject one is that a resource control fired:
+    a per-session call budget, a rate limit, or a loop guard.
+
+    A SECURE server exhausts its call budget partway through the loop and keeps
+    rejecting every subsequent call, so the FINAL loop iteration is rejected.
+    A VULNERABLE server answers the entire loop, so the final iteration
+    succeeds — the loop is unbounded and the wallet is burned.
+
+    Returns a synthetic FAILING ``StepResult`` when the final tools/call step
+    succeeded (no budget ever applied), or None when the server bounded the
+    loop (final call rejected) — or when the scenario has fewer than two
+    tools/call steps (not a loop test).
+
+    Rejection is detected via the ``error`` pseudo-path, which normalises both
+    JSON-RPC protocol errors (``{"error": {...}}``) and MCP content-layer errors
+    (``{"result": {"isError": true}}``) — a server may signal a budget either
+    way, and both count as the loop being bounded.
+    """
+    call_results: list[StepResult] = [
+        result
+        for step, result in zip(scenario.steps, step_results)
+        if step.action.method == "tools/call"
+    ]
+    if len(call_results) < 2:
+        # Not enough repeated calls to constitute a loop — nothing to assert.
+        return None
+
+    total = len(call_results)
+    rejected_indices = [
+        cr.step_index
+        for cr in call_results
+        if isinstance(cr.response, dict)
+        and _resolve_path(cr.response, "error") is not None
+    ]
+    final_call = call_results[-1]
+    final_rejected = (
+        isinstance(final_call.response, dict)
+        and _resolve_path(final_call.response, "error") is not None
+    )
+
+    if final_rejected:
+        # Server applied a call budget and was still rejecting at the end of the
+        # loop — the loop is bounded.  Secure: no finding.
+        return None
+
+    detail = (
+        f"Server answered all {total} calls of a repeated tool-invocation loop "
+        f"within one session without ever exhausting a call budget "
+        f"(rejected={len(rejected_indices)}, final call accepted). An unbounded "
+        f"recursive/looping tool chain burns the operator's wallet — this is the "
+        f"core T10 denial-of-wallet failure. Enforce a per-session call budget "
+        f"(max calls per session) and a recursion/loop guard, returning a "
+        f"rate-limit error (JSON-RPC -32029) once the budget is exhausted."
+    )
+    return StepResult(
+        step_index=len(step_results),
+        description="T10 call-budget / loop check",
+        passed=False,
+        response=None,
+        failures=(
+            AssertionFailure(
+                target="session.call_budget_enforced",
+                operator="eq",
+                expected=True,
+                actual=False,
+                message=detail,
+            ),
+        ),
+        error=None,
     )
 
 
@@ -586,6 +680,16 @@ class StatefulHarness:
             drift_step = _detect_manifest_drift(scenario, step_results)
             if drift_step is not None:
                 step_results.append(drift_step)
+
+            # T10 denial-of-wallet detection.  A scenario that opts in with
+            # loop_budget_check=True issues a run of repeated tools/call steps
+            # simulating a recursive tool-invocation loop.  If the server
+            # answered the entire loop without ever applying a per-session call
+            # budget, append a synthetic failing step so the scenario FAILS.
+            if scenario.loop_budget_check:
+                loop_step = _detect_unbounded_tool_loop(scenario, step_results)
+                if loop_step is not None:
+                    step_results.append(loop_step)
 
             all_passed = all(r.passed for r in step_results)
             return ScenarioResult(

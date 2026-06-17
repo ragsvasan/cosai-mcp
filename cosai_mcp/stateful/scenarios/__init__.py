@@ -1,4 +1,4 @@
-"""Built-in scenario factories for T2, T6, and T7 conformance testing.
+"""Built-in scenario factories for T2, T6, T7, and T10 conformance testing.
 
 Each function returns a ``Scenario`` that the ``StatefulHarness`` can run
 against a real or mock MCP server.
@@ -7,6 +7,7 @@ Threat category coverage:
 * T2 — Missing Access Control: privilege escalation, confused deputy
 * T6 — Integrity/Verification: tool shadowing detection
 * T7 — Session Security: session token binding, token revocation
+* T10 — Resource Management: recursive/looping tool-chain (denial-of-wallet)
 """
 from __future__ import annotations
 
@@ -145,6 +146,68 @@ def t6_tool_shadowing_mid_session() -> Scenario:
                     StepAssertion(target="result.tools", operator="is_not_none"),
                 ),
             ),
+        ),
+    )
+
+
+def t10_recursive_tool_loop(loop_calls: int = 16) -> Scenario:
+    """T10: Recursive / looping tool-chain — denial-of-wallet.
+
+    Simulates an agent caught in a recursive tool-invocation loop: the same
+    tool is called ``loop_calls`` times in rapid succession within a single
+    session, the way a poisoned tool whose output drives the next call would
+    drive an agent in an unbounded cycle.  This is where most production money
+    is burned ("denial of wallet"), and — unlike a one-shot black-box probe —
+    it can only be exercised across a *stateful* multi-call session.
+
+    A SECURE server enforces a per-session call budget: it exhausts the budget
+    partway through the loop and keeps rejecting every subsequent call, so the
+    final loop iteration is rejected.  Scenario *passes* (server is bounded).
+
+    A VULNERABLE server answers the entire loop with no budget, so the final
+    iteration succeeds.  The harness ``loop_budget_check`` then appends a
+    synthetic failing step and the scenario *fails* (denial-of-wallet finding).
+
+    Per-step assertions are intentionally empty: an individual successful tool
+    call is not itself a finding (a server is allowed to answer calls).  The
+    verdict comes entirely from the harness-level call-budget check, which
+    inspects every tools/call result once the loop completes.
+
+    ``loop_calls`` defaults to 16 — large enough that any reasonable per-session
+    budget trips before the end, small enough to stay well within probe
+    timeouts.  Callers may lower it for fast tests.
+    """
+    # Defensive floor: the loop check needs at least two calls to be meaningful.
+    loop_calls = max(2, loop_calls)
+    return Scenario(
+        id="T10-SC-001",
+        name="Recursive tool-chain loop — per-session call budget",
+        threat_categories=("T10",),
+        description=(
+            "Call the same tool repeatedly within one session to simulate an "
+            "agent stuck in a recursive tool-invocation loop. A server that "
+            "answers the entire loop without ever applying a per-session call "
+            "budget is vulnerable to T10 denial-of-wallet. A secure server "
+            "exhausts its call budget and rejects the final iteration."
+        ),
+        loop_budget_check=True,
+        steps=tuple(
+            ScenarioStep(
+                description=(
+                    f"Loop iteration {i + 1}/{loop_calls} — repeated tool call"
+                ),
+                action=StepAction(
+                    method="tools/call",
+                    params={
+                        "name": "echo",
+                        "arguments": {"iteration": str(i)},
+                    },
+                ),
+                # No per-step assertion: an individual answered call is not a
+                # finding. The harness call-budget check renders the verdict.
+                assertions=(),
+            )
+            for i in range(loop_calls)
         ),
     )
 
