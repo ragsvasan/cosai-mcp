@@ -1,15 +1,12 @@
 """Tests for T1 middleware: JtiCache and SessionBoundIdentity (DPoP)."""
 from __future__ import annotations
 
-import json
-import time
-import threading
 import base64
-
-import pytest
+import json
+import threading
+import time
 
 from cosai_mcp.middleware.auth import JtiCache, SessionBoundIdentity
-
 
 # ===========================================================================
 # JtiCache — replay detection

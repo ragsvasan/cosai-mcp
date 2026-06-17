@@ -23,9 +23,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cosai_mcp.report.sign import (
     OrgSigningKeyError,
     ReportSigner,
+    _pub_fingerprint,
     org_signing_key,
     verify_report_signature,
-    _pub_fingerprint,
 )
 from cosai_mcp.scorecard.models import (
     CategoryResult,
@@ -235,8 +235,8 @@ class TestCliSurfacesMisconfiguredOrgKey:
     def test_sarif_report_warns_on_bad_org_key(self, monkeypatch, tmp_path):
         from click.testing import CliRunner
 
-        from cosai_mcp.cli import main
         from cosai_mcp.api import ScanResult
+        from cosai_mcp.cli import main
 
         monkeypatch.setenv(_ENV, "not-valid-base64!!!")
         sarif_out = tmp_path / "r.sarif"
@@ -274,8 +274,8 @@ class TestCliSurfacesMisconfiguredOrgKey:
     ):
         from click.testing import CliRunner
 
-        from cosai_mcp.cli import main
         from cosai_mcp.api import ScanResult
+        from cosai_mcp.cli import main
 
         monkeypatch.setenv(_ENV, "not-valid-base64!!!")
         sc_out = tmp_path / "sc.json"

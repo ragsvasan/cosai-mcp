@@ -57,7 +57,7 @@ class Probe:
     payload: types.MappingProxyType  # frozen dict
     assertions: tuple                # tuple[Assertion, ...]
     probe_token: str | None = None   # "read" → use config.read_token instead of auth_token
-    probe_count: int = 1             # >1 → repeat N times; passes if any response satisfies assertions
+    probe_count: int = 1             # >1 → repeat N times; passes if any response satisfies assertions  # noqa: E501
     probe_headers: types.MappingProxyType | None = None  # extra HTTP headers added to the request
     # Corroboration (schema 1.1, additive): positive-evidence assertions that
     # must ALL hold for a failed primary assertion to be reported as a finding.

@@ -117,7 +117,7 @@ class ReportSignature:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "ReportSignature":
+    def from_dict(cls, d: dict[str, Any]) -> ReportSignature:
         return cls(
             public_key_fingerprint=d["public_key_fingerprint"],
             public_key_b64=d["public_key_b64"],

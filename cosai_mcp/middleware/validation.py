@@ -8,7 +8,6 @@ from typing import Any
 
 import jsonschema
 
-
 # RE2-compatible injection patterns — no backtracking constructs
 _INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("sql_injection",      re.compile(

@@ -9,7 +9,7 @@ Rules:
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from cosai_mcp.exceptions import TemplateInjectionError, UnknownVariableError
 
@@ -117,4 +117,4 @@ def substitute_probe_payload(
         bare_key = key.strip("{}")
         normalised[bare_key] = val
 
-    return _substitute_value(payload, normalised)  # type: ignore[return-value]
+    return cast(dict[str, Any], _substitute_value(payload, normalised))

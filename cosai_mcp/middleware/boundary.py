@@ -31,7 +31,6 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # Injection pattern library — RE2-compatible (no backreferences/lookbehind)
 # ---------------------------------------------------------------------------
@@ -48,13 +47,13 @@ _INJECTION_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"jailbreak", re.IGNORECASE),
     re.compile(r"DAN\s+mode", re.IGNORECASE),
     re.compile(r"developer\s+mode\s+(enabled|on|activated)", re.IGNORECASE),
-    re.compile(r"bypass\s+(your\s+)?(safety|content|ethical)\s+(filters?|guidelines?|restrictions?)", re.IGNORECASE),
+    re.compile(r"bypass\s+(your\s+)?(safety|content|ethical)\s+(filters?|guidelines?|restrictions?)", re.IGNORECASE),  # noqa: E501
     re.compile(r"reveal\s+(your\s+)?(system|initial|original)\s+prompt", re.IGNORECASE),
     re.compile(r"print\s+(your\s+)?(system|initial|original)\s+prompt", re.IGNORECASE),
     re.compile(r"repeat\s+(your\s+)?(system|initial|original)\s+prompt", re.IGNORECASE),
     re.compile(r"exfiltrate", re.IGNORECASE),
     re.compile(r"always\s+(first\s+)?call\s+(the\s+)?\w+\s+tool", re.IGNORECASE),
-    re.compile(r"before\s+(anything|every(thing)?)\s+(else\s+)?(you\s+)?(must\s+)?call", re.IGNORECASE),
+    re.compile(r"before\s+(anything|every(thing)?)\s+(else\s+)?(you\s+)?(must\s+)?call", re.IGNORECASE),  # noqa: E501
 ]
 
 # Non-English phrasings of "ignore previous instructions" and friends. Attackers
@@ -65,7 +64,7 @@ _INJECTION_PATTERNS += [
     # Spanish
     re.compile(r"ignora\s+(todas\s+)?(las\s+)?instrucciones\s+(previas|anteriores)", re.IGNORECASE),
     # French
-    re.compile(r"ignore[rz]?\s+(toutes\s+)?les\s+instructions\s+(précédentes|precedentes)", re.IGNORECASE),
+    re.compile(r"ignore[rz]?\s+(toutes\s+)?les\s+instructions\s+(précédentes|precedentes)", re.IGNORECASE),  # noqa: E501
     # German
     re.compile(r"ignoriere\s+(alle\s+)?(vorherigen|vorigen)\s+anweisungen", re.IGNORECASE),
     # Portuguese / Italian
@@ -277,7 +276,7 @@ class ToolPoisoningDetector:
             self._check(name, f"tool:{name}:name", _INJECTION_PATTERNS, result, "critical")
 
             description = str(tool.get("description", ""))
-            self._check(description, f"tool:{name}:description", _TOOL_DESCRIPTION_PATTERNS, result, "critical")
+            self._check(description, f"tool:{name}:description", _TOOL_DESCRIPTION_PATTERNS, result, "critical")  # noqa: E501
 
             schema = tool.get("inputSchema", {})
             if isinstance(schema, dict):
@@ -309,7 +308,7 @@ class ToolPoisoningDetector:
     def _scan_schema(self, schema: dict[str, Any], location: str, result: ScanResult) -> None:
         desc = str(schema.get("description", ""))
         if desc:
-            self._check(desc, location + ":description", _TOOL_DESCRIPTION_PATTERNS, result, "critical")
+            self._check(desc, location + ":description", _TOOL_DESCRIPTION_PATTERNS, result, "critical")  # noqa: E501
         for prop_name, prop_def in schema.get("properties", {}).items():
             if isinstance(prop_def, dict):
                 self._scan_schema(prop_def, f"{location}.{prop_name}", result)

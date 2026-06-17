@@ -18,12 +18,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-import pytest_asyncio
 
-from tests.probes.conftest import error_response, ok_response, run_probe
 from cosai_mcp.catalog.models import Severity
 from cosai_mcp.harness.mock_server import MockMCPServer
-
+from tests.probes.conftest import run_probe
 
 # ---------------------------------------------------------------------------
 # T07-002 catalog loading
@@ -135,8 +133,9 @@ class TestT07002ConfirmationBypass:
         probe = threat.probes[0]
 
         # Override probe_headers with valid-scope token to verify mock wiring
-        from cosai_mcp.catalog.models import Probe
         import types as _types
+
+        from cosai_mcp.catalog.models import Probe
 
         valid_token = (
             "eyJhbGciOiJub25lIn0"

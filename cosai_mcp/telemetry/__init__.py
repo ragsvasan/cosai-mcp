@@ -5,18 +5,18 @@ Three sub-modules:
 * ocsf      — OCSF Detection Finding schema builder (class_uid 2004)
 * anomaly   — threshold-based anomaly rules over emitted events
 """
-from cosai_mcp.telemetry.emitter import (
-    TelemetryEmitter,
-    NullEmitter,
-    HttpEmitter,
-    EmitResult,
-)
-from cosai_mcp.telemetry.ocsf import OcsfEvent, build_detection_finding
 from cosai_mcp.telemetry.anomaly import (
-    AnomalyRule,
     AnomalyAlert,
     AnomalyDetector,
+    AnomalyRule,
 )
+from cosai_mcp.telemetry.emitter import (
+    EmitResult,
+    HttpEmitter,
+    NullEmitter,
+    TelemetryEmitter,
+)
+from cosai_mcp.telemetry.ocsf import OcsfEvent, build_detection_finding
 
 __all__ = [
     "TelemetryEmitter",

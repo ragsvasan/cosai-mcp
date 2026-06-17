@@ -2,17 +2,16 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
+from cosai_mcp.report.sign import OrgSigningKeyError
 from cosai_mcp.scorecard.models import (
+    _ENGINE_COVERAGE,
     CategoryResult,
     ConformanceLevel,
     Grade,
     Scorecard,
-    _ENGINE_COVERAGE,
 )
-
-from cosai_mcp.report.sign import OrgSigningKeyError
 
 if TYPE_CHECKING:
     from cosai_mcp.api import ScanResult
@@ -77,7 +76,7 @@ def _determine_conformance(categories: list[CategoryResult]) -> ConformanceLevel
 
 
 def build_scorecard(
-    result: "ScanResult",
+    result: ScanResult,
     signed: bool = True,
 ) -> Scorecard:
     """Build a conformance scorecard from a completed scan result.

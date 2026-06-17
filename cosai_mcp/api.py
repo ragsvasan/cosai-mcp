@@ -173,7 +173,7 @@ def _extract_retry_after(results: list) -> float | None:
 def _run_discovery(
     target_url: str,
     config: ScanConfig,
-) -> tuple[str, object]:
+) -> tuple[str, tuple]:
     """Run tool discovery and return (first_tool_name, discovered_tools_tuple).
 
     Uses discover_tools() from cosai_mcp.discovery to get the full schema
@@ -187,7 +187,7 @@ def _run_discovery(
     discovered_tools:
         Tuple of DiscoveredTool objects (may be empty on failure).
     """
-    from cosai_mcp.discovery import discover_tools, DiscoveredTool
+    from cosai_mcp.discovery import DiscoveredTool, discover_tools
 
     discovered: tuple[DiscoveredTool, ...] = discover_tools(target_url, config)
     first_name = discovered[0].name if discovered else "ping"
@@ -244,7 +244,7 @@ def check_reachable(host: str, port: int, timeout: float = 5.0) -> None:
     try:
         with socket.create_connection((host, port), timeout=timeout):
             pass
-    except (OSError, socket.timeout) as exc:
+    except (TimeoutError, OSError) as exc:
         raise TargetUnreachableError(
             f"Cannot reach {host}:{port} — {exc}"
         ) from exc
@@ -416,7 +416,7 @@ def _determine_exit_code(
     # so a slow or rate-limiting server doesn't suppress real findings under exit 2.
     _OPERATIONAL_ERROR_MARKERS = ("timed out", "-32029")
 
-    def _is_crash(r: "ProbeResult") -> bool:
+    def _is_crash(r: ProbeResult) -> bool:
         if r.error is None:
             return False
         return not any(m in r.error for m in _OPERATIONAL_ERROR_MARKERS)
@@ -523,7 +523,7 @@ def _run_scan(
     Any unhandled exception from this function should be mapped to exit code 2.
     """
     host, port, target_url = _parse_target(target)
-    scan_timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    scan_timestamp = datetime.datetime.now(datetime.UTC).isoformat()
 
     # NOTE: _apply_env_scrub() is intentionally NOT called here (FIX [2]).
     # CLI callers call it once at process start; library callers must not mutate os.environ.
@@ -610,12 +610,12 @@ def _run_scan(
         # T4: passive manifest scan — no probe sent, uses already-fetched manifest.
         # Runs whenever T4 is in scope (no category filter, or T4 explicitly requested).
         if effective_categories is None or "T4" in effective_categories:
-            probe_results.extend(_scan_manifest_t4(tuple(discovered_tools) if discovered_tools else ()))
+            probe_results.extend(_scan_manifest_t4(tuple(discovered_tools) if discovered_tools else ()))  # noqa: E501
 
         # T9: passive Totem manifest scan — flags destructive tools missing two-stage commit.
         # Runs whenever T9 is in scope (no category filter, or T9 explicitly requested).
         if effective_categories is None or "T9" in effective_categories:
-            probe_results.extend(_scan_manifest_t9(tuple(discovered_tools) if discovered_tools else ()))
+            probe_results.extend(_scan_manifest_t9(tuple(discovered_tools) if discovered_tools else ()))  # noqa: E501
 
         # T5: passive manifest secret/PII scan — credentials or PII embedded in
         # tool names/descriptions are a data-protection leak (and a poisoning
@@ -633,7 +633,7 @@ def _run_scan(
         # (typosquat / shadowing).  Replaces the old T06-001/002 black-box probes
         # that only asserted tools/list succeeds (audit COV-02).
         if effective_categories is None or "T6" in effective_categories:
-            probe_results.extend(_scan_manifest_t6(tuple(discovered_tools) if discovered_tools else ()))
+            probe_results.extend(_scan_manifest_t6(tuple(discovered_tools) if discovered_tools else ()))  # noqa: E501
 
         # Profile: remap discovered tool name through tool_name_map if present.
         # This ensures probes use the real server tool name instead of the
@@ -648,7 +648,7 @@ def _run_scan(
         # precedence over auth_token in the transport's _build_headers().
         no_auth_config = dataclasses.replace(config, auth_token=None, auth_header=None)
 
-        runner = ProbeRunner(config=config, target_url=target_url)
+        ProbeRunner(config=config, target_url=target_url)
         for threat in threats:
             if threat.category.upper() in MIDDLEWARE_ONLY_CATEGORIES:
                 continue  # middleware-only — not probeable from outside
@@ -701,6 +701,7 @@ def _run_scan(
 
             if is_adversarial_threat and canary is not None:
                 import html as _html_mod
+
                 from cosai_mcp.adversarial.canary import detect_canary as _detect
                 annotated: list[ProbeResult] = []
                 for r in raw_results:
@@ -773,8 +774,9 @@ def _scan_manifest_t4(
     Called from _run_scan after _run_discovery, inside the prober block.
     """
     import json as _json
-    from cosai_mcp.middleware.boundary import ToolPoisoningDetector
+
     from cosai_mcp.harness.result import ProbeResult as _ProbeResult
+    from cosai_mcp.middleware.boundary import ToolPoisoningDetector
 
     if not discovered_tools:
         return []
@@ -809,7 +811,9 @@ def _scan_manifest_t4(
 def _scan_manifest_t9(
     discovered_tools: tuple,
 ) -> list[ProbeResult]:
-    """Scan tools/list manifest for T9 Totem violations — destructive tools missing two-stage commit.
+    """Scan tools/list manifest for T9 Totem violations.
+
+    Flags destructive tools missing two-stage commit.
 
     A tool is flagged when:
       - Its NAME (split on _ / - / space) contains a clearly-destructive verb, AND
@@ -923,12 +927,12 @@ def _scan_manifest_t5(
     Passive — no probe sent.  Mirrors ``_scan_manifest_t4/t6/t9``.  Called from
     ``_run_scan`` whenever T5 is in scope.
     """
+    from cosai_mcp.harness.result import make_probe_result
     from cosai_mcp.middleware.protection import (
         CREDENTIAL_TYPES,
         STRICT_PII_TYPES,
         PIIScrubber,
     )
-    from cosai_mcp.harness.result import make_probe_result
 
     if not discovered_tools:
         return []
@@ -984,8 +988,8 @@ def _scan_manifest_t6(discovered_tools: tuple) -> list[ProbeResult]:
     nothing is flagged, one passing ProbeResult is emitted so a clean T6 grades
     PASS (the scan ran and found no integrity issue) rather than NOT_TESTED.
     """
-    from cosai_mcp.middleware.integrity import fold_homoglyphs, levenshtein
     from cosai_mcp.harness.result import ProbeResult as _ProbeResult
+    from cosai_mcp.middleware.integrity import fold_homoglyphs, levenshtein
 
     if not discovered_tools:
         return []

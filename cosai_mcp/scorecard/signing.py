@@ -48,8 +48,8 @@ def _get_or_create_private_key() -> Ed25519PrivateKey:
 
     try:
         import keyring
-    except ImportError:
-        raise RuntimeError("keyring package is required for scorecard signing")
+    except ImportError as exc:
+        raise RuntimeError("keyring package is required for scorecard signing") from exc
 
     raw_b64 = keyring.get_password(_SERVICE, _USERNAME)
     if raw_b64:

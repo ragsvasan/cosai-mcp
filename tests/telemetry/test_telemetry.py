@@ -6,21 +6,18 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 from typing import Any
-from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
 from click.testing import CliRunner
 
 from cosai_mcp.cli import main
-from cosai_mcp.telemetry.anomaly import AnomalyAlert, AnomalyDetector, AnomalyRule
-from cosai_mcp.telemetry.emitter import EmitResult, HttpEmitter, NullEmitter
+from cosai_mcp.telemetry.anomaly import AnomalyDetector, AnomalyRule
+from cosai_mcp.telemetry.emitter import HttpEmitter, NullEmitter
 from cosai_mcp.telemetry.ocsf import (
-    OcsfEvent,
     _SEVERITY_MAP,
     build_detection_finding,
     probe_result_to_ocsf,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -128,7 +125,7 @@ class TestHttpEmitter:
             srv.stop()
 
     def test_emit_sends_auth_header(self) -> None:
-        srv = _RecordingHTTPServer()
+        _RecordingHTTPServer()
 
         class AuthCapture(BaseHTTPRequestHandler):
             captured_auth: str | None = None
@@ -280,7 +277,7 @@ class TestAnomalyDetector:
     def test_no_alerts_below_threshold(self) -> None:
         det = AnomalyDetector(high_finding_rate_threshold=5, critical_burst_threshold=3)
         for _ in range(5):
-            alerts = det.ingest(_make_finding_event("high"))
+            det.ingest(_make_finding_event("high"))
         assert not any(a.rule == AnomalyRule.HIGH_FINDING_RATE for a in det.alerts)
 
     def test_high_finding_rate_fires(self) -> None:

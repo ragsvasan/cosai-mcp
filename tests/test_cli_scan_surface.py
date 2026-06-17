@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from cosai_mcp.api import _run_scan
 from cosai_mcp.harness.mock_server import MockMCPServer
 
@@ -47,7 +45,7 @@ class TestReadTokenWiring:
         t02_005 = [r for r in result.probe_results if r.probe_id.startswith("T02-005")]
         assert t02_005, "T02-005 probes should be present in a T2 scan"
         for r in t02_005:
-            assert not (r.inconclusive_reason and "requires --read-token" in r.inconclusive_reason), (
+            assert not (r.inconclusive_reason and "requires --read-token" in r.inconclusive_reason), (  # noqa: E501
                 f"{r.probe_id} still skipped for missing read token despite "
                 f"--read-token being configured"
             )

@@ -6,9 +6,8 @@ import json
 import pytest
 
 from cosai_mcp.catalog.models import Severity
-from cosai_mcp.harness.result import make_probe_result, AssertionResult
+from cosai_mcp.harness.result import AssertionResult, make_probe_result
 from cosai_mcp.report.sarif import SarifBuilder, ScanContext, _sanitize_message
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -32,7 +31,7 @@ def _failed_result(
     threat_id: str = "T01",
     response_body: str = "",
     error: str | None = None,
-) -> "make_probe_result":
+) -> make_probe_result:
     assertion = AssertionResult(
         target="response.error",
         operator="eq",
@@ -51,7 +50,7 @@ def _failed_result(
     )
 
 
-def _passed_result(probe_id: str = "T01-001", threat_id: str = "T01") -> "make_probe_result":
+def _passed_result(probe_id: str = "T01-001", threat_id: str = "T01") -> make_probe_result:
     assertion = AssertionResult(
         target="response.error",
         operator="eq",

@@ -26,11 +26,9 @@ from __future__ import annotations
 import html
 import re
 import unicodedata
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
-from cosai_mcp.middleware.boundary import ResponseBoundaryGuard, ScanResult
-
+from cosai_mcp.middleware.boundary import ResponseBoundaryGuard
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -41,7 +39,7 @@ _CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")  # excludes \
 _NULL_BYTE_RE    = re.compile(r"\x00")
 
 # Unicode categories that are almost always attacker-controlled obfuscation
-_DANGEROUS_UNICODE_CATEGORIES = frozenset({"Cf", "Cs", "Co", "Cn"})  # format, surrogate, private, unassigned
+_DANGEROUS_UNICODE_CATEGORIES = frozenset({"Cf", "Cs", "Co", "Cn"})  # format, surrogate, private, unassigned  # noqa: E501
 
 
 @dataclass(frozen=True)
@@ -177,7 +175,7 @@ class TrustBoundaryChecker:
         if result.flagged:
             summary = "; ".join(result.findings[:3])
             raise TrustBoundaryViolation(
-                f"LLM output rejected at trust boundary"
+                "LLM output rejected at trust boundary"
                 + (f" [{context}]" if context else "")
                 + f": {summary}"
             )

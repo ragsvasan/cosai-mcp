@@ -5,9 +5,9 @@ Three sub-modules:
 * signing    — Ed25519 sign/verify inventory artifacts (per-installation key)
 * drift      — compare two ToolInventory snapshots, return DriftReport
 """
-from cosai_mcp.inventory.snapshot import ToolInventory, ToolRecord, capture
+from cosai_mcp.inventory.drift import DriftKind, DriftReport, detect_drift
 from cosai_mcp.inventory.signing import sign_inventory, verify_inventory
-from cosai_mcp.inventory.drift import DriftReport, DriftKind, detect_drift
+from cosai_mcp.inventory.snapshot import ToolInventory, ToolRecord, capture
 
 __all__ = [
     "ToolInventory",

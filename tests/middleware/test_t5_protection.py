@@ -10,9 +10,7 @@ with warnings.catch_warnings():
     warnings.simplefilter("ignore", RuntimeWarning)
     from cosai_mcp.middleware.protection import (
         ContextLeakChecker,
-        LeakCheckResult,
         PIIScrubber,
-        ScrubResult,
     )
 
 
@@ -183,6 +181,7 @@ class TestContextLeakChecker:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
             import importlib
+
             import cosai_mcp.middleware.protection as m
             importlib.reload(m)
 

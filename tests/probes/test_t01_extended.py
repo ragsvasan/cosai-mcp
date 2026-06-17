@@ -8,7 +8,6 @@ import pytest
 from cosai_mcp.harness.mock_server import MockMCPServer
 from tests.probes.conftest import error_response, ok_response, run_probe
 
-
 # ===========================================================================
 # T01-003 catalog and probe tests
 # ===========================================================================

@@ -4,15 +4,14 @@ from __future__ import annotations
 import base64
 import json
 import types
+import warnings as _warnings
 from pathlib import Path
 from typing import Any
-
-import warnings as _warnings
 
 try:
     import re2  # google-re2
 except ImportError:  # pragma: no cover
-    import re as re2  # type: ignore[no-redef]
+    import re as re2  # noqa: F811
     _warnings.warn(
         "google-re2 not available; falling back to stdlib re for catalog pattern validation. "
         "Production deployments must use google-re2 (pip install google-re2) "
@@ -33,7 +32,6 @@ from cosai_mcp.catalog.models import (
 from cosai_mcp.catalog.schema import validate_threat_json
 from cosai_mcp.exceptions import (
     PathTraversalError,
-    SchemaValidationError,
     SignatureVerificationError,
     UnsafePatternError,
 )
@@ -48,10 +46,10 @@ def _assert_no_mutable_containers(obj: Any, path: str = "") -> None:
         )
     if isinstance(obj, dict):
         raise TypeError(
-            f"Mutable dict found at {path!r} — all dict fields must be converted to MappingProxyType."
+            f"Mutable dict found at {path!r} — all dict fields must be converted to MappingProxyType."  # noqa: E501
         )
     if hasattr(obj, "__dataclass_fields__"):
-        for field_name in obj.__dataclass_fields__:  # type: ignore[union-attr]
+        for field_name in obj.__dataclass_fields__:  
             _assert_no_mutable_containers(getattr(obj, field_name), f"{path}.{field_name}")
     if isinstance(obj, tuple):
         for i, item in enumerate(obj):
@@ -250,7 +248,7 @@ class CatalogLoader:
     # ------------------------------------------------------------------
 
     def load_all(self) -> list[ThreatDefinition]:
-        """Load all threat definitions: official/ (always) + adversarial/ and custom/ (if allowed)."""
+        """Load all threat definitions: official/ (always) + adversarial/ and custom/ (if allowed)."""  # noqa: E501
         threats: list[ThreatDefinition] = []
 
         official_dir = self._root / "official"
@@ -346,7 +344,7 @@ class CatalogLoader:
 
         data = json.loads(raw_bytes)
         validate_threat_json(data)
-        return _parse_threat(data, Provenance.OFFICIAL, is_custom=False, allow_regex_in_custom=False)
+        return _parse_threat(data, Provenance.OFFICIAL, is_custom=False, allow_regex_in_custom=False)  # noqa: E501
 
     def _load_adversarial(self, json_path: Path) -> ThreatDefinition:
         """Load an adversarial catalog file with full Ed25519 verification.

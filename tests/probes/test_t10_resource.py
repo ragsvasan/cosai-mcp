@@ -40,7 +40,7 @@ class TestT10OversizedInput:
         threat = catalog.load_file(Path("official/T10-001.json"))
         probe = threat.probes[0]
 
-        with MockMCPServer(tools_call_response=error_response(-32600, "Request too large")) as server:
+        with MockMCPServer(tools_call_response=error_response(-32600, "Request too large")) as server:  # noqa: E501
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 
@@ -110,7 +110,7 @@ class TestT10RateLimiting:
         threat = catalog.load_file(Path("official/T10-002.json"))
         probe = threat.probes[0]
 
-        with MockMCPServer(tools_call_response=error_response(-32029, "Rate limit exceeded")) as server:
+        with MockMCPServer(tools_call_response=error_response(-32029, "Rate limit exceeded")) as server:  # noqa: E501
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 

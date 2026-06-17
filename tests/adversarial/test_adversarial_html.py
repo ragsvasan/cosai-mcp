@@ -1,8 +1,6 @@
 """Tests for the adversarial HTML report builder."""
 from __future__ import annotations
 
-import pytest
-
 from cosai_mcp.adversarial.canary import generate_canary
 from cosai_mcp.catalog.models import Severity
 from cosai_mcp.report.adversarial_html import AdversarialFinding, AdversarialHtmlReport
@@ -21,18 +19,18 @@ def _report(findings=()) -> AdversarialHtmlReport:
 
 
 def _finding(**kwargs) -> AdversarialFinding:
-    defaults = dict(
-        probe_id="T03-ADV-001-p1",
-        threat_id="T03-ADV-001",
-        category="T3",
-        severity=Severity.CRITICAL,
-        passed=False,
-        canary_detected=False,
-        payload_sent="some payload",
-        response_body="some response",
-        error=None,
-        canary=None,
-    )
+    defaults = {
+        "probe_id": "T03-ADV-001-p1",
+        "threat_id": "T03-ADV-001",
+        "category": "T3",
+        "severity": Severity.CRITICAL,
+        "passed": False,
+        "canary_detected": False,
+        "payload_sent": "some payload",
+        "response_body": "some response",
+        "error": None,
+        "canary": None,
+    }
     defaults.update(kwargs)
     return AdversarialFinding(**defaults)
 
@@ -178,11 +176,11 @@ class TestAdversarialReportSigning:
         sig_path.write_text. The sig must be valid JSON with the required fields.
         """
         import json
-        from pathlib import Path
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch
+
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-        from cosai_mcp.report.sign import ReportSigner, ReportSignature
+        from cosai_mcp.report.sign import ReportSigner
 
         # Use a fresh ephemeral key — no keyring I/O in tests
         private_key = Ed25519PrivateKey.generate()
@@ -193,7 +191,6 @@ class TestAdversarialReportSigning:
 
         # Build a minimal ScanResult-like object
         from cosai_mcp.api import ScanResult
-        from cosai_mcp.catalog.models import ThreatDefinition, Severity, Provenance
 
         result = ScanResult(
             target_url="http://target.example.com",
@@ -228,6 +225,7 @@ class TestAdversarialReportSigning:
         """If signing fails (e.g. keyring unavailable), the HTML report must still
         be written successfully — signing is best-effort."""
         from unittest.mock import patch
+
         from cosai_mcp.api import ScanResult
 
         result = ScanResult(
@@ -244,7 +242,7 @@ class TestAdversarialReportSigning:
 
         # Make ReportSigner construction raise (e.g. keyring unavailable);
         # patch at source module so the local import inside the function sees the mock.
-        with patch("cosai_mcp.report.sign.ReportSigner", side_effect=RuntimeError("keyring unavailable")):
+        with patch("cosai_mcp.report.sign.ReportSigner", side_effect=RuntimeError("keyring unavailable")):  # noqa: E501
             from cosai_mcp.cli import _write_adversarial_html_report
             _write_adversarial_html_report(
                 result=result,

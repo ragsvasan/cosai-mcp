@@ -6,10 +6,13 @@ Registered as a pytest11 entry point in pyproject.toml so that
 """
 from __future__ import annotations
 
-from typing import Generator
+from collections.abc import Generator
+from typing import TYPE_CHECKING
 
 import pytest
 
+if TYPE_CHECKING:
+    from cosai_mcp.api import ScanResult
 
 # ---------------------------------------------------------------------------
 # CLI options
@@ -84,7 +87,7 @@ def cosai_scan_result(
     cosai_severity: str,
     cosai_categories: list[str] | None,
     cosai_engine: str,
-) -> "ScanResult":  # type: ignore[name-defined]
+) -> ScanResult:
     """Run a full cosai scan against ``cosai_target`` and return the result.
 
     Skips if ``--cosai-target`` was not provided.  The result is cached for
@@ -116,7 +119,7 @@ def cosai_scan_result(
 @pytest.fixture(scope="session")
 def cosai_session_scan_result(
     request: pytest.FixtureRequest,
-) -> Generator["ScanResult", None, None]:  # type: ignore[name-defined]
+) -> Generator[ScanResult, None, None]:
     """Session-scoped scan — runs once, shared across all tests in the session.
 
     Use when your test file has many assertions against the same scan:
@@ -248,7 +251,7 @@ class CoSAIScanItem(pytest.Item):
         return str(getattr(excinfo, "value", excinfo))
 
     def reportinfo(self) -> tuple[str, int, str]:
-        return self.path, 0, f"cosai scan gate [{self.config.getoption('--cosai-target')}]"
+        return str(self.path), 0, f"cosai scan gate [{self.config.getoption('--cosai-target')}]"
 
 
 def pytest_collection_modifyitems(

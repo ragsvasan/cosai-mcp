@@ -1,7 +1,7 @@
 """ScanConfig — top-level configuration dataclass for the cosai-mcp scanner."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from urllib.parse import urlparse
 
 

@@ -6,7 +6,6 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from cosai_mcp.middleware.supply_chain import (
     AllowlistEnforcer,
-    AllowlistViolation,
     RegistrySignatureVerifier,
     SignatureVerificationError,
     SupplyChainEnforcer,

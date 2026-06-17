@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from cosai_mcp.ir.incident import IncidentRecord, _OCSF_SEV
+from cosai_mcp.ir.incident import _OCSF_SEV, IncidentRecord
 
 _CLASS_UID = 2001
 _CLASS_NAME = "Security Incident"

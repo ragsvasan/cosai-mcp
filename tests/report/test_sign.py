@@ -1,13 +1,17 @@
 """Tests for report signing and signature verification."""
 from __future__ import annotations
 
-import pytest
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 import hashlib
 
-from cosai_mcp.report.sign import ReportSigner, ReportSignature, verify_report_signature, _pub_fingerprint
+import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from cosai_mcp.report.sign import (
+    ReportSignature,
+    ReportSigner,
+    _pub_fingerprint,
+    verify_report_signature,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -49,7 +53,6 @@ class TestReportSignatureStructure:
     def test_signature_has_report_hash(self):
         sarif = '{"version":"2.1.0"}'
         sig = _sign(_signer(), sarif)
-        import hashlib
         expected = hashlib.sha256(sarif.encode()).hexdigest()
         assert sig.report_hash == expected
 

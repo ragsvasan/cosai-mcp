@@ -8,10 +8,9 @@ import pytest
 from cosai_mcp.config import ScanConfig
 from cosai_mcp.harness.mock_server import MockMCPServer
 from cosai_mcp.stateful.harness import (
-    AssertionFailure,
     Scenario,
-    ScenarioStep,
     ScenarioResult,
+    ScenarioStep,
     StatefulHarness,
     StepAction,
     StepAssertion,
@@ -27,7 +26,6 @@ from cosai_mcp.stateful.scenarios import (
     t7_session_revocation,
     t7_session_token_binding,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -398,7 +396,7 @@ class TestT6ToolShadowing:
             )
 
         # -32602 on the non-standard session/terminate step → gate fires.
-        assert _scenario_method_not_found(scenario, [_step(0, -32602), _step(1, -32000)]) is not None
+        assert _scenario_method_not_found(scenario, [_step(0, -32602), _step(1, -32000)]) is not None  # noqa: E501
         # A -32602 on the STANDARD tools/call step alone must NOT fire the gate.
         ok_term = StepResult(step_index=0, description="terminate", passed=True,
                              response={"jsonrpc": "2.0", "id": "1", "result": {}},
@@ -502,7 +500,7 @@ class TestStatefulHarnessScanIncomplete:
             steps=(
                 ScenarioStep(
                     description="Step 0 — returns -32000 server error but no exception",
-                    action=StepAction(method="tools/call", params={"name": "echo", "arguments": {}}),
+                    action=StepAction(method="tools/call", params={"name": "echo", "arguments": {}}),  # noqa: E501
                     assertions=(
                         StepAssertion(target="result", operator="is_not_none"),
                     ),
@@ -517,7 +515,7 @@ class TestStatefulHarnessScanIncomplete:
             ),
         )
         with MockMCPServer(
-            tools_call_response={"jsonrpc": "2.0", "id": 0, "error": {"code": -32000, "message": "boom"}},
+            tools_call_response={"jsonrpc": "2.0", "id": 0, "error": {"code": -32000, "message": "boom"}},  # noqa: E501
         ) as server:
             server.wait_ready()
             result = _harness().run_scenario(error_scenario, _target(server))

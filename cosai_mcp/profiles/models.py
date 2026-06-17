@@ -39,4 +39,4 @@ class ServerProfile:
 
     def apply_tool_name(self, placeholder: str) -> str:
         """Return the real tool name for ``placeholder``, or ``placeholder`` unchanged."""
-        return self.tool_name_map.get(placeholder, placeholder)
+        return self.tool_name_map.get(placeholder, placeholder)  # type: ignore[no-any-return]

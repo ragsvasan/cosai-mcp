@@ -192,7 +192,7 @@ def _is_auth_rejection(exc: Exception) -> bool:
 
 
 def _probe_subprocess_entry(
-    result_queue: "multiprocessing.Queue[dict[str, Any]]",
+    result_queue: multiprocessing.Queue[dict[str, Any]],
     probe_dict: dict[str, Any],
     threat_dict: dict[str, Any],
     config: ScanConfig,
@@ -215,6 +215,7 @@ def _probe_subprocess_entry(
     """
     async def _run() -> dict[str, Any]:
         import dataclasses
+
         from cosai_mcp.exceptions import SessionIncompleteError
         from cosai_mcp.harness.context import ProbeContext
         from cosai_mcp.session import MCPSession
@@ -224,7 +225,7 @@ def _probe_subprocess_entry(
 
         # Apply probe_token: select the appropriate bearer token for this probe.
         effective_config = config
-        if probe.probe_token == "read":
+        if probe.probe_token == "read":  # noqa: S105
             if not config.read_token:
                 # No read-scoped token configured — probe is inconclusive.
                 return make_probe_result(
@@ -258,7 +259,7 @@ def _probe_subprocess_entry(
         elif transport_type == "stdio":
             from cosai_mcp.transport.stdio import StdioTransport
             # For stdio probes target_url is the executable path
-            transport = StdioTransport([target_url], effective_config)
+            transport = StdioTransport([target_url], effective_config)  # type: ignore[assignment]
         else:
             raise ValueError(f"Unknown transport type: {transport_type!r}")
 
@@ -367,7 +368,7 @@ def _synthesize_probe(
             id=probe.id,
             transport=probe.transport,
             method=probe.method,
-            payload=synth_payload,
+            payload=synth_payload,  # type: ignore[arg-type]
             assertions=probe.assertions,
             probe_token=probe.probe_token,
             probe_count=probe.probe_count,
@@ -436,7 +437,7 @@ class ProbeRunner:
             provided and the first attempt is INCONCLUSIVE, enables one
             adaptive retry with a synthesized payload.
         """
-        timeout = timeout_seconds if timeout_seconds is not None else self._config.probe_timeout_seconds
+        timeout = timeout_seconds if timeout_seconds is not None else self._config.probe_timeout_seconds  # noqa: E501
 
         ctx: multiprocessing.context.BaseContext = multiprocessing.get_context("spawn")
         result_queue: multiprocessing.Queue[dict[str, Any]] = ctx.Queue()
@@ -444,7 +445,7 @@ class ProbeRunner:
         probe_dict = _probe_to_dict(probe)
         threat_dict = _threat_to_dict(threat)
 
-        process = ctx.Process(
+        process = ctx.Process(  # type: ignore[attr-defined]
             target=_probe_subprocess_entry,
             args=(
                 result_queue,

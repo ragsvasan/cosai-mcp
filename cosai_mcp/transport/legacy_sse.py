@@ -15,7 +15,6 @@ from urllib.parse import urlparse
 import httpx
 
 from cosai_mcp.config import ScanConfig
-from cosai_mcp.exceptions import SuspiciousRedirectError
 from cosai_mcp.transport.base import (
     Transport,
     check_redirect,
@@ -73,7 +72,7 @@ class LegacySSETransport(Transport):
     async def connect(self) -> None:
         """Resolve and pin IP, create HTTP client, start SSE listener."""
         parsed = urlparse(self._base_url)
-        host = parsed.hostname or self._config.target_host
+        host: str = parsed.hostname or self._config.target_host or ""
         self._pinned_ip = resolve_and_pin(host, self._config)
 
         pinned_transport = _PinnedAsyncTransport(self._pinned_ip, self._config)
@@ -119,7 +118,7 @@ class LegacySSETransport(Transport):
                         event_data = None
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
         finally:
             # Cancel all pending futures — the SSE stream is gone
@@ -218,7 +217,7 @@ class LegacySSETransport(Transport):
                 headers={"Content-Type": "application/json"},
             )
             check_redirect(post_response.status_code)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass  # fire-and-forget
 
     async def recv(self) -> dict[str, Any]:

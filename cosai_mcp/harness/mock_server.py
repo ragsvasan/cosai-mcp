@@ -20,7 +20,6 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
-
 _DEFAULT_TOOLS = [
     {"name": "echo", "description": "Echoes input", "inputSchema": {"type": "object"}},
 ]
@@ -30,7 +29,7 @@ class _MCPHandler(BaseHTTPRequestHandler):
     """Minimal HTTP handler implementing the MCP Streamable HTTP transport."""
 
     # Injected by MockMCPServer
-    server: "_MockHTTPServer"
+    server: _MockHTTPServer
 
     def log_message(self, fmt: str, *args: Any) -> None:
         pass  # suppress noisy output in tests
@@ -75,7 +74,7 @@ class _MCPHandler(BaseHTTPRequestHandler):
 class _MockHTTPServer(HTTPServer):
     """HTTPServer subclass that holds a reference to MockMCPServer."""
 
-    def __init__(self, server_address: tuple[str, int], mock_server: "MockMCPServer") -> None:
+    def __init__(self, server_address: tuple[str, int], mock_server: MockMCPServer) -> None:
         self.mock_server = mock_server
         super().__init__(server_address, _MCPHandler)
 
@@ -344,7 +343,7 @@ class MockMCPServer:
                 jti = payload.get("jti")
                 if jti:
                     return f"jti:{jti}"
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
         return f"tok:{token}"
 
@@ -366,7 +365,7 @@ class MockMCPServer:
                 )
                 scope_str: str = payload.get("scope", "")
                 return required in scope_str.split()
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
         return False
 
@@ -402,7 +401,7 @@ class MockMCPServer:
             self._thread.join(timeout=5)
             self._thread = None
 
-    def __enter__(self) -> "MockMCPServer":
+    def __enter__(self) -> MockMCPServer:
         self.start()
         return self
 

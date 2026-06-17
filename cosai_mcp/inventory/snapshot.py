@@ -9,8 +9,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 # Strip ASCII control characters (0x00–0x1F and 0x7F) from tool descriptions
@@ -33,7 +33,7 @@ class ToolRecord:
     input_schema: str  # canonical JSON string (sorted keys) for stable hashing
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> "ToolRecord":
+    def from_dict(cls, raw: dict[str, Any]) -> ToolRecord:
         schema = raw.get("inputSchema") or raw.get("input_schema") or {}
         return cls(
             name=str(raw.get("name", "")),
@@ -74,7 +74,7 @@ class ToolInventory:
         server_name: str,
         server_version: str,
         raw_tools: list[dict[str, Any]],
-    ) -> "ToolInventory":
+    ) -> ToolInventory:
         tools = tuple(
             sorted(
                 (ToolRecord.from_dict(t) for t in raw_tools),
@@ -89,7 +89,7 @@ class ToolInventory:
         content_hash = hashlib.sha256(canonical).hexdigest()
         return cls(
             target=target,
-            captured_at=datetime.now(timezone.utc).isoformat(),
+            captured_at=datetime.now(UTC).isoformat(),
             protocol_version=protocol_version,
             server_name=server_name,
             server_version=server_version,
@@ -109,7 +109,7 @@ class ToolInventory:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ToolInventory":
+    def from_dict(cls, data: dict[str, Any]) -> ToolInventory:
         tools = tuple(ToolRecord.from_dict(t) for t in data.get("tools", []))
         return cls(
             target=str(data["target"]),
@@ -125,7 +125,7 @@ class ToolInventory:
         return json.dumps(self.to_dict(), indent=2)
 
     @classmethod
-    def from_json(cls, text: str) -> "ToolInventory":
+    def from_json(cls, text: str) -> ToolInventory:
         return cls.from_dict(json.loads(text))
 
 
@@ -159,8 +159,9 @@ def capture(
     RuntimeError
         If the handshake fails or tools/list returns an error.
     """
-    import httpx
     from urllib.parse import urlparse
+
+    import httpx
 
     from cosai_mcp.config import ScanConfig
     from cosai_mcp.transport.base import resolve_and_pin

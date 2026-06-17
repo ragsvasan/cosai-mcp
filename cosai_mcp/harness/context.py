@@ -10,7 +10,7 @@ from cosai_mcp.catalog.models import Probe, ThreatDefinition
 from cosai_mcp.catalog.template import substitute_probe_payload
 from cosai_mcp.config import ScanConfig
 from cosai_mcp.harness.assertions import evaluate_assertion
-from cosai_mcp.harness.result import AssertionResult, ProbeResult, make_probe_result
+from cosai_mcp.harness.result import ProbeResult, make_probe_result
 from cosai_mcp.session import MCPSession
 
 if TYPE_CHECKING:
@@ -238,7 +238,7 @@ class ProbeContext:
 
         start = time.monotonic()
         try:
-            response = await self._dispatch(probe.method, resolved_payload, override_headers=probe_override_headers)
+            response = await self._dispatch(probe.method, resolved_payload, override_headers=probe_override_headers)  # noqa: E501
         except Exception as exc:
             duration = time.monotonic() - start
             return make_probe_result(
@@ -339,6 +339,6 @@ class ProbeContext:
             arguments: dict[str, Any] = payload.get("arguments", {})
             if not isinstance(arguments, dict):
                 arguments = {}
-            return await self._session.tools_call(name, arguments, override_headers=override_headers)
+            return await self._session.tools_call(name, arguments, override_headers=override_headers)  # noqa: E501
         # Default: send via the public session API — never bypass the session layer
         return await self._session.send_raw(method, payload, override_headers=override_headers)

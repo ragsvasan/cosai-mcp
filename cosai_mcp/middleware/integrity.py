@@ -8,7 +8,6 @@ import warnings
 from dataclasses import dataclass
 from typing import Any
 
-
 # Small reference allowlist of well-known MCP tool names drawn from the widely
 # deployed reference servers (filesystem, git, github, fetch, memory, sqlite,
 # time, …). When the operator supplies no allowlist, the detector falls back to

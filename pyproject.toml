@@ -71,10 +71,24 @@ line-length = 100
 select = ["E", "F", "I", "UP", "S", "B", "C4"]
 ignore = ["S101"]  # allow assert in tests
 
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",  # assert in tests
+    "S103", "S104",  # binding to all interfaces — intentional probe fixtures
+    "S105", "S106", "S107",  # hardcoded test tokens/passwords — intentional
+    "S108",  # /tmp paths in tests — intentional
+    "S301",  # pickle in tests — intentional deserialization test
+    "S306",  # mktemp in tests — intentional
+    "S603",  # subprocess in CLI integration tests — intentional
+    "S608",  # SQL-like strings in security tests — intentional
+    "B017",  # blind Exception in pytest.raises — intentional
+]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true
 ignore_missing_imports = true
+disallow_any_generics = false
 
 [tool.cosai.publish]
 # Sigstore / PEP 740 attestation — every PyPI release is attested to the

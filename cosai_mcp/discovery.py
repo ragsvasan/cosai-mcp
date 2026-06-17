@@ -221,8 +221,8 @@ async def _discover_tools_async(
     Returns empty tuple on any network or parse failure.
     Caps the manifest at _MAX_TOOLS_PER_MANIFEST to prevent iteration DoS.
     """
-    from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
     from cosai_mcp.session import MCPSession
+    from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
 
     transport = StreamableHTTPTransport(target_url, config)
     try:
@@ -246,7 +246,7 @@ async def _discover_tools_async(
     finally:
         try:
             await transport.close()
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
 

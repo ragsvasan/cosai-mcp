@@ -13,13 +13,13 @@ Safety invariants (non-negotiable):
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from .canary import Canary, generate_canary, detect_canary
+from .canary import Canary, detect_canary, generate_canary
 from .enforcer import (
     UnsafeProbeError,
-    validate_dual_optin,
     check_no_external_endpoints,
+    validate_dual_optin,
 )
 
 

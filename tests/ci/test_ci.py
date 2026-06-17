@@ -1,11 +1,8 @@
 """P9 CI/CD tests: GitHub Action config, Docker, SARIF upload semantics."""
 from __future__ import annotations
 
-import json
-import subprocess
 from pathlib import Path
 
-import pytest
 import yaml
 
 ROOT = Path(__file__).parent.parent.parent
@@ -148,8 +145,8 @@ class TestDockerfile:
         content = DOCKERFILE.read_text()
         # Ensure USER directive comes before ENTRYPOINT
         lines = content.splitlines()
-        user_idx = next((i for i, l in enumerate(lines) if l.startswith("USER")), None)
-        entrypoint_idx = next((i for i, l in enumerate(lines) if l.startswith("ENTRYPOINT")), None)
+        user_idx = next((i for i, ln in enumerate(lines) if ln.startswith("USER")), None)
+        entrypoint_idx = next((i for i, ln in enumerate(lines) if ln.startswith("ENTRYPOINT")), None)  # noqa: E501
         assert user_idx is not None, "Dockerfile must have a USER directive"
         assert entrypoint_idx is not None, "Dockerfile must have an ENTRYPOINT"
         assert user_idx < entrypoint_idx, \

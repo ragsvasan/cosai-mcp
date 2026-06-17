@@ -34,7 +34,7 @@ class TestT02ConfusedDeputy:
         threat = catalog.load_file(Path("official/T02-001.json"))
         probe = threat.probes[0]  # session_id injection probe
 
-        with MockMCPServer(tools_call_response=error_response(-32001, "Session mismatch")) as server:
+        with MockMCPServer(tools_call_response=error_response(-32001, "Session mismatch")) as server:  # noqa: E501
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 
@@ -60,7 +60,7 @@ class TestT02ConfusedDeputy:
         threat = catalog.load_file(Path("official/T02-001.json"))
         probe = threat.probes[1]  # privilege_level=99 probe
 
-        with MockMCPServer(tools_call_response=error_response(-32001, "Privilege escalation denied")) as server:
+        with MockMCPServer(tools_call_response=error_response(-32001, "Privilege escalation denied")) as server:  # noqa: E501
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 
@@ -107,7 +107,7 @@ class TestT02MethodNotFoundIsInconclusive:
         from pathlib import Path
         threat = catalog.load_file(Path(threat_file))
         probe = threat.probes[0]
-        with MockMCPServer(tools_call_response=error_response(-32601, "Method not found")) as server:
+        with MockMCPServer(tools_call_response=error_response(-32601, "Method not found")) as server:  # noqa: E501
             server.wait_ready()
             result = await run_probe(probe, threat, server)
         assert result.passed is False
@@ -118,7 +118,7 @@ class TestT02MethodNotFoundIsInconclusive:
         from pathlib import Path
         threat = catalog.load_file(Path("official/T07-002.json"))
         probe = threat.probes[0]
-        with MockMCPServer(tools_call_response=error_response(-32601, "Method not found")) as server:
+        with MockMCPServer(tools_call_response=error_response(-32601, "Method not found")) as server:  # noqa: E501
             server.wait_ready()
             result = await run_probe(probe, threat, server)
         assert result.passed is False
@@ -170,7 +170,7 @@ class TestT02DestructiveOneShotTool:
         threat = catalog.load_file(Path("official/T02-003.json"))
         probe = threat.probes[0]  # action:delete, force:true
 
-        with MockMCPServer(tools_call_response=error_response(-32001, "Confirmation token required")) as server:
+        with MockMCPServer(tools_call_response=error_response(-32001, "Confirmation token required")) as server:  # noqa: E501
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 
@@ -196,7 +196,7 @@ class TestT02DestructiveOneShotTool:
         threat = catalog.load_file(Path("official/T02-003.json"))
         probe = threat.probes[1]  # operation:destroy, dry_run:false
 
-        with MockMCPServer(tools_call_response=error_response(-32001, "Confirmation token required for destructive operations")) as server:
+        with MockMCPServer(tools_call_response=error_response(-32001, "Confirmation token required for destructive operations")) as server:  # noqa: E501
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 
@@ -209,7 +209,7 @@ class TestT02DestructiveOneShotTool:
         threat = catalog.load_file(Path("official/T02-003.json"))
         probe = threat.probes[1]
 
-        with MockMCPServer(tools_call_response=ok_response("cosai-test-resource destroyed")) as server:
+        with MockMCPServer(tools_call_response=ok_response("cosai-test-resource destroyed")) as server:  # noqa: E501
             server.wait_ready()
             result = await run_probe(probe, threat, server)
 
@@ -222,10 +222,10 @@ class TestT02DestructiveOneShotTool:
         threat = catalog.load_file(Path("official/T02-003.json"))
         probe = threat.probes[0]
         # Server that honours any destructive call — simulates a boolean-confirm-only gate
-        with MockMCPServer(tools_call_response=ok_response("Deleted (boolean confirm accepted)")) as server:
+        with MockMCPServer(tools_call_response=ok_response("Deleted (boolean confirm accepted)")) as server:  # noqa: E501
             server.wait_ready()
             result = await run_probe(probe, threat, server)
-        assert result.passed is False, "Boolean confirm gate is not two-stage commit — must be flagged"
+        assert result.passed is False, "Boolean confirm gate is not two-stage commit — must be flagged"  # noqa: E501
 
     @pytest.mark.asyncio
     async def test_all_t02_003_probes_pass_on_two_stage_server(self, catalog):
@@ -235,7 +235,7 @@ class TestT02DestructiveOneShotTool:
 
         results = []
         for probe in threat.probes:
-            with MockMCPServer(tools_call_response=error_response(-32001, "Confirmation token required")) as server:
+            with MockMCPServer(tools_call_response=error_response(-32001, "Confirmation token required")) as server:  # noqa: E501
                 server.wait_ready()
                 r = await run_probe(probe, threat, server)
                 results.append(r)

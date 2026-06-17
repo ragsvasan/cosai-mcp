@@ -4,7 +4,6 @@ from __future__ import annotations
 import csv
 import io
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -12,9 +11,11 @@ from cosai_mcp.catalog.models import Severity
 from cosai_mcp.harness.result import AssertionResult, make_probe_result
 from cosai_mcp.report.html import HtmlReportBuilder, HtmlReportSection
 from cosai_mcp.report.remediation import (
-    REMEDIATION_REGISTRY, RemediationBlock, _VALID_LANGUAGES, get_remediation,
+    _VALID_LANGUAGES,
+    REMEDIATION_REGISTRY,
+    RemediationBlock,
+    get_remediation,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -92,7 +93,7 @@ class TestRemediationBlockPresentForT11:
         b = _builder()
         b.add_section(_make_section(threat_id="T11-001", probe_id="T11-001-p1"))
         html = b.build()
-        rem = REMEDIATION_REGISTRY["T11-001-p1"]
+        REMEDIATION_REGISTRY["T11-001-p1"]
         # fix_shape is HTML-escaped — check for a key substring
         assert "registered_tools" in html
 
@@ -423,7 +424,6 @@ class TestPanelRegressions:
 
     def test_regression_verify_cmd_escaping(self):
         """verify_command_suffix with angle brackets is escaped in the report (FIX [2])."""
-        import types as _types
         rem = RemediationBlock(
             threat_id="T99-001",
             probe_id="cosai-test-p1",
@@ -479,10 +479,10 @@ class TestPanelRegressions:
             assert rem.fix_shape_language == lang
 
     def test_regression_csv_formula_injection_scrubbed(self, tmp_path):
-        """CSV cells starting with '=' are prefixed with tab to disable formula injection (FIX [10])."""
-        from cosai_mcp.report.csv_report import write_csv_report
+        """CSV cells starting with '=' are prefixed with tab to disable formula injection (FIX [10])."""  # noqa: E501
         from cosai_mcp.api import ScanResult
         from cosai_mcp.catalog.loader import CatalogLoader
+        from cosai_mcp.report.csv_report import write_csv_report
 
         loader = CatalogLoader(catalog_root=Path("catalog"), allow_custom=False)
         threats = loader.load_all()
@@ -491,8 +491,6 @@ class TestPanelRegressions:
         # Craft a probe result whose response_body will trigger formula injection
         # (make_probe_result HTML-escapes, so the final stored value may differ;
         # inject via error field which is also from the server)
-        from cosai_mcp.harness.result import ProbeResult
-        import types as _types
 
         # Build a ProbeResult with formula injection in error field
         evil_response = '=HYPERLINK("http://evil.example")'

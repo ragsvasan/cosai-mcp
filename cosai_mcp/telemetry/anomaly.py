@@ -16,11 +16,11 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class AnomalyRule(str, Enum):
+class AnomalyRule(StrEnum):
     HIGH_FINDING_RATE = "high_finding_rate"
     CRITICAL_BURST = "critical_burst"
     SEVERITY_ESCALATION = "severity_escalation"

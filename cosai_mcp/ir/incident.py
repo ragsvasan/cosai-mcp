@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import dataclass, field
-from enum import Enum
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
 
-class ContainmentAction(str, Enum):
+class ContainmentAction(StrEnum):
     """Available automated containment responses."""
 
     EMIT_INCIDENT = "emit_incident"
@@ -34,7 +34,7 @@ class ContainmentAction(str, Enum):
     """Attempt a best-effort protocol-level close of the MCP connection."""
 
 
-class IncidentSeverity(str, Enum):
+class IncidentSeverity(StrEnum):
     CRITICAL = "critical"
     HIGH = "high"
     MEDIUM = "medium"
@@ -116,7 +116,7 @@ class IncidentRecord:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "IncidentRecord":
+    def from_dict(cls, d: dict[str, Any]) -> IncidentRecord:
         return cls(
             incident_id=str(d["incident_id"]),
             target_url=str(d["target_url"]),

@@ -153,7 +153,7 @@ class StdioTransport(Transport):
                     self._process.stdin.close()
                 self._process.terminate()
                 await asyncio.wait_for(self._process.wait(), timeout=5.0)
-            except (asyncio.TimeoutError, ProcessLookupError):
+            except (TimeoutError, ProcessLookupError):
                 try:
                     self._process.kill()
                 except ProcessLookupError:
@@ -165,7 +165,7 @@ class StdioTransport(Transport):
     # Core send/recv/send_notification
     # ------------------------------------------------------------------
 
-    async def send(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+    async def send(self, method: str, params: dict[str, Any], override_headers: dict[str, str] | None = None) -> dict[str, Any]:  # noqa: E501
         """Write a JSON-RPC request to stdin; read the response from stdout."""
         if self._process is None:
             raise RuntimeError("Transport not connected — call connect() first")
@@ -194,7 +194,7 @@ class StdioTransport(Transport):
         try:
             self._process.stdin.write(data)
             await self._process.stdin.drain()
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass  # fire-and-forget
 
     async def recv(self) -> dict[str, Any]:

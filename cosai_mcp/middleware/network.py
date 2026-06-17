@@ -53,7 +53,7 @@ class BindAddressValidator:
             infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
         except socket.gaierror:
             return False
-        ips = [info[4][0] for info in infos]
+        ips = [str(info[4][0]) for info in infos]
         if not ips:
             return False
         return all(self._is_loopback_ip(ip) for ip in ips)
@@ -81,7 +81,7 @@ class BindAddressValidator:
                 error=str(exc),
             )
 
-        ips = tuple(info[4][0] for info in infos)
+        ips = tuple(str(info[4][0]) for info in infos)
         loopback_only = bool(ips) and all(self._is_loopback_ip(ip) for ip in ips)
         return BindCheckResult(
             host=host,
@@ -201,7 +201,7 @@ class TransportSecurityInspector:
             return TLSInspectionResult(
                 host=host, port=port, tls=False, mtls_required=mtls or None, error=msg,
             )
-        except (OSError, socket.timeout) as exc:
+        except (TimeoutError, OSError) as exc:
             return TLSInspectionResult(
                 host=host, port=port, tls=False, error=str(exc),
             )

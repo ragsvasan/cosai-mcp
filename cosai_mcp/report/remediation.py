@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 _VALID_LANGUAGES: frozenset[str] = frozenset({"python", "typescript", "pseudocode"})
 
 
@@ -162,7 +161,7 @@ _BLOCKS: list[RemediationBlock] = [
             "def delete_resource_plan(resource_id: str) -> dict:\n"
             "    token = secrets.token_hex(16)  # short-lived, single-use\n"
             "    store_pending(token, resource_id, ttl=60)\n"
-            "    return {'description': f'Permanently delete {resource_id}', 'confirm_token': token}\n\n"
+            "    return {'description': f'Permanently delete {resource_id}', 'confirm_token': token}\n\n"  # noqa: E501
             "def delete_resource_execute(confirm_token: str) -> dict:\n"
             "    resource_id = consume_pending(confirm_token)  # raises if invalid/expired\n"
             "    actually_delete(resource_id)\n"
@@ -185,7 +184,7 @@ _BLOCKS: list[RemediationBlock] = [
             "        _pending.pop(k, None)\n"
             "    token = secrets.token_hex(16)\n"
             "    _pending[token] = (resource_id, now + 60)\n"
-            "    return {'description': f'Permanently delete {resource_id}', 'confirm_token': token}\n\n"
+            "    return {'description': f'Permanently delete {resource_id}', 'confirm_token': token}\n\n"  # noqa: E501
             "@app.tool()\n"
             "def delete_execute(confirm_token: str) -> dict:\n"
             "    entry = _pending.pop(confirm_token, None)\n"
@@ -225,7 +224,7 @@ _BLOCKS: list[RemediationBlock] = [
             "# WRONG: if not dry_run: actually_destroy(target)\n"
             "# RIGHT: require confirm_token for any non-dry-run destructive path\n"
             "if not dry_run and not confirm_token:\n"
-            "    raise McpError(INVALID_PARAMS, 'Confirmation token required for destructive operations')"
+            "    raise McpError(INVALID_PARAMS, 'Confirmation token required for destructive operations')"  # noqa: E501
         ),
         fix_shape_language="python",
         fastmcp_snippet=None,

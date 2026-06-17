@@ -9,8 +9,8 @@ from __future__ import annotations
 import base64
 import os
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from cosai_mcp.exceptions import SignatureVerificationError
 

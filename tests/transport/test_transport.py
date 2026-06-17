@@ -5,7 +5,6 @@ Run:  pytest tests/transport/ -v
 from __future__ import annotations
 
 import asyncio
-import json
 import socket
 import warnings
 from typing import Any
@@ -13,7 +12,6 @@ from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import httpx
 import pytest
-import pytest_asyncio
 
 from cosai_mcp.config import ScanConfig
 from cosai_mcp.exceptions import (
@@ -23,7 +21,11 @@ from cosai_mcp.exceptions import (
     SessionIncompleteError,
     SuspiciousRedirectError,
 )
-from cosai_mcp.session import MCPSession, SessionStatus, SUPPORTED_VERSIONS, CLIENT_INFO, CLIENT_CAPABILITIES
+from cosai_mcp.session import (
+    SUPPORTED_VERSIONS,
+    MCPSession,
+    SessionStatus,
+)
 from cosai_mcp.transport.base import (
     Transport,
     check_dns_rebinding,
@@ -31,15 +33,13 @@ from cosai_mcp.transport.base import (
     is_private_address,
     resolve_and_pin,
 )
-from cosai_mcp.transport.legacy_sse import LegacySSETransport
 from cosai_mcp.transport.stdio import (
-    StdioTransport,
     _MAX_OUTPUT_BYTES,
+    StdioTransport,
     _safe_env,
     _strip_control_chars,
 )
 from cosai_mcp.transport.streamable_http import StreamableHTTPTransport, _PinnedAsyncTransport
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -113,7 +113,7 @@ class TestStreamableHTTPTransport:
         transport = StreamableHTTPTransport("http://example.com:8000", config)
 
         with patch("cosai_mcp.transport.base.socket.getaddrinfo",
-                   _fake_getaddrinfo("93.184.216.34")) as mock_resolve, \
+                   _fake_getaddrinfo("93.184.216.34")), \
              patch("cosai_mcp.transport.streamable_http.httpx.AsyncClient") as mock_client_cls:
 
             mock_client = AsyncMock()
@@ -663,7 +663,7 @@ class TestRegressionFindings:
         class _Capturing(httpx.AsyncBaseTransport):
             async def handle_async_request(self, req: httpx.Request) -> httpx.Response:
                 captured.append(req)
-                return httpx.Response(200, content=b"{}", headers={"content-type": "application/json"})
+                return httpx.Response(200, content=b"{}", headers={"content-type": "application/json"})  # noqa: E501
             async def aclose(self) -> None:
                 pass
 
@@ -835,7 +835,7 @@ class TestRegressionFindings:
         Test: old transport close() is called; LegacySSETransport is instantiated
         with the target URL; the session ends READY on the new transport.
         """
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch
 
         config = _public_config()
         old_transport = create_autospec(Transport, instance=True)
@@ -932,8 +932,9 @@ class TestMnemoScanRegressions:
         pinned IP is 127.0.0.1 but getaddrinfo returns ::1 first (dual-stack).
         Before the fix, the check compared the pinned IPv4 address against the
         first getaddrinfo result (::1) and flagged it as DNS rebinding."""
-        from cosai_mcp.transport.streamable_http import _PinnedAsyncTransport
         import asyncio
+
+        from cosai_mcp.transport.streamable_http import _PinnedAsyncTransport
 
         config = ScanConfig(
             target_host="localhost",

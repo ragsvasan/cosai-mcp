@@ -11,8 +11,7 @@ from cosai_mcp.middleware.integrity import (
     TyposquatDetector,
     fold_homoglyphs,
 )
-from tests.probes.conftest import error_response, ok_response, run_probe
-
+from tests.probes.conftest import run_probe
 
 CATALOG_ROOT = Path(__file__).parent.parent.parent / "catalog"
 
@@ -51,9 +50,9 @@ class TestT06002Probe:
 
     @pytest.mark.asyncio
     async def test_t06_002_initialize_error_prevents_probe(self, catalog):
-        """Server rejects initialize → session cannot start → probe raises SessionIncompleteError."""
-        from cosai_mcp.harness.mock_server import MockMCPServer
+        """Server rejects initialize → session cannot start → probe raises SessionIncompleteError."""  # noqa: E501
         from cosai_mcp.exceptions import SessionIncompleteError
+        from cosai_mcp.harness.mock_server import MockMCPServer
         t = catalog.load_file(Path("official/T06-002.json"))
         probe = t.probes[0]
 

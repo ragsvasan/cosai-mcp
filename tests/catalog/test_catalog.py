@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import types
 from pathlib import Path
 
@@ -18,7 +17,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 # Some tests assert RE2-specific rejection behaviour (ReDoS patterns, lookbehind)
 # that stdlib re does NOT enforce — skip those tests when re2 is absent.
 try:
-    import re2 as _re2_check
+    import re2 as _re2_check  # noqa: F401
     _RE2_AVAILABLE = True
 except ImportError:
     _RE2_AVAILABLE = False
@@ -28,16 +27,16 @@ _requires_re2 = pytest.mark.skipif(
     reason="google-re2 required for RE2-rejection tests (pip install google-re2)",
 )
 
-from cosai_mcp.catalog.loader import CatalogLoader
-from cosai_mcp.catalog.models import Assertion, Operator, Probe, Provenance, ThreatDefinition
-from cosai_mcp.catalog.template import substitute_probe_payload
-from cosai_mcp.exceptions import (
+from cosai_mcp.catalog.loader import CatalogLoader  # noqa: E402
+from cosai_mcp.catalog.models import Operator, Provenance  # noqa: E402
+from cosai_mcp.catalog.template import substitute_probe_payload  # noqa: E402
+from cosai_mcp.exceptions import (  # noqa: E402
     PathTraversalError,
     SchemaValidationError,
     SignatureVerificationError,
     TemplateInjectionError,
-    UnsafePatternError,
     UnknownVariableError,
+    UnsafePatternError,
 )
 
 # ---------------------------------------------------------------------------

@@ -7,15 +7,13 @@ means the manifests are identical.  The drift gate in CI should fail when
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from enum import Enum
-from typing import Sequence
+from enum import StrEnum
 
 from cosai_mcp.inventory.snapshot import ToolInventory, ToolRecord
 
 
-class DriftKind(str, Enum):
+class DriftKind(StrEnum):
     ADDED = "added"
     REMOVED = "removed"
     DESCRIPTION_CHANGED = "description_changed"

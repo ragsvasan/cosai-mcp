@@ -22,25 +22,25 @@ from unittest.mock import patch
 import pytest
 
 from cosai_mcp.api import _run_scan
-from cosai_mcp.discovery import DiscoveredTool
 from cosai_mcp.baseline import (
     Baseline,
     apply_baseline,
     finding_fingerprint,
 )
+from cosai_mcp.discovery import DiscoveredTool
 from cosai_mcp.harness.result import ProbeResult
 
 CATALOG_ROOT = Path(__file__).resolve().parents[2] / "catalog"
 
-_STUB_SCAN = dict(
-    target="http://127.0.0.1:8000",
-    categories=None,
-    engine="prober",
-    allow_custom_catalog=False,
-    probe_timeout_seconds=5.0,
-    catalog_root=CATALOG_ROOT,
-    allow_private_targets=True,
-)
+_STUB_SCAN = {
+    "target": "http://127.0.0.1:8000",
+    "categories": None,
+    "engine": "prober",
+    "allow_custom_catalog": False,
+    "probe_timeout_seconds": 5.0,
+    "catalog_root": CATALOG_ROOT,
+    "allow_private_targets": True,
+}
 
 
 def _poisoned_tool(name: str = "evil") -> DiscoveredTool:
@@ -345,10 +345,10 @@ class TestBaselineWiredIntoRunScan:
                 required_params=frozenset({"query"}),
             )
 
-            def _scan_tool(baseline_path):
+            def _scan_tool(baseline_path, _tool=tool):
                 with patch(
                     "cosai_mcp.api._run_discovery",
-                    return_value=("evil", (tool,)),
+                    return_value=("evil", (_tool,)),
                 ), patch(
                     "cosai_mcp.harness.runner.ProbeRunner.run_threat",
                     return_value=[],

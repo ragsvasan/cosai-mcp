@@ -2,17 +2,16 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import create_autospec, patch
+from unittest.mock import create_autospec
 
 import pytest
 from click.testing import CliRunner
 
 from cosai_mcp.cli import main
 from cosai_mcp.exceptions import SignatureVerificationError
-from cosai_mcp.inventory.drift import DriftEntry, DriftKind, DriftReport, detect_drift
+from cosai_mcp.inventory.drift import DriftKind, detect_drift
 from cosai_mcp.inventory.signing import _canonical_bytes, sign_inventory, verify_inventory
 from cosai_mcp.inventory.snapshot import ToolInventory, ToolRecord, capture
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -362,6 +361,7 @@ class TestSigning:
     ) -> None:
         """L-1: a base64-valid but wrong-length env pubkey must fail closed."""
         import base64 as _b64
+
         from cryptography.hazmat.primitives.asymmetric.ed25519 import (
             Ed25519PrivateKey as _Priv,
         )
@@ -455,7 +455,7 @@ class TestDrift:
 
     def test_schema_changed(self) -> None:
         base = _make_inventory(tools=[{"name": "echo", "description": "d", "inputSchema": {}}])
-        curr = _make_inventory(tools=[{"name": "echo", "description": "d", "inputSchema": {"type": "object"}}])
+        curr = _make_inventory(tools=[{"name": "echo", "description": "d", "inputSchema": {"type": "object"}}])  # noqa: E501
         report = detect_drift(base, curr)
         assert report.has_drift
         assert any(e.kind == DriftKind.SCHEMA_CHANGED for e in report.entries)
@@ -628,7 +628,7 @@ class TestInventoryCLI:
     def test_capture_unreachable_exits_2(self) -> None:
         runner = CliRunner()
         result = runner.invoke(
-            main, ["inventory", "capture", "http://127.0.0.1:1", "--no-sign", "--allow-private-targets"]
+            main, ["inventory", "capture", "http://127.0.0.1:1", "--no-sign", "--allow-private-targets"]  # noqa: E501
         )
         assert result.exit_code == 2
 

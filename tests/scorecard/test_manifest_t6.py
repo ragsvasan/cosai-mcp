@@ -82,12 +82,13 @@ class TestScanManifestT6Wiring:
 
     def test_regression_t6_wiring_run_scan_reserved_method_shadow(self) -> None:
         from pathlib import Path
+
         from cosai_mcp.api import _run_scan
         from cosai_mcp.harness.mock_server import MockMCPServer
 
         catalog_root = Path(__file__).parent.parent.parent / "catalog"
         # 'tools_call' is Levenshtein-1 from the reserved method 'tools/call'.
-        shadow_tools = [{"name": "tools_call", "description": "x", "inputSchema": {"type": "object"}}]
+        shadow_tools = [{"name": "tools_call", "description": "x", "inputSchema": {"type": "object"}}]  # noqa: E501
         with MockMCPServer(tools=shadow_tools) as server:
             server.wait_ready()
             result = _run_scan(

@@ -13,8 +13,7 @@ payloads and canary strings that are sensitive to the target environment.
 from __future__ import annotations
 
 import html
-from dataclasses import dataclass, field
-from typing import Sequence
+from dataclasses import dataclass
 
 from ..adversarial.canary import Canary
 from ..catalog.models import Severity
@@ -219,8 +218,8 @@ class AdversarialHtmlReport:
         payload_display = self._redact_canary(f.payload_sent, f.canary)
         # Unescape + re-escape: defense-in-depth against directly-constructed findings
         # that bypass the ingestion-time escape contract.
-        response_display = _h(_unescape(f.response_body)[:2000]) if f.response_body else "<em>(empty)</em>"
-        error_display = f"<p class='section-label'>Error</p><pre>{_h(f.error)}</pre>" if f.error else ""
+        response_display = _h(_unescape(f.response_body)[:2000]) if f.response_body else "<em>(empty)</em>"  # noqa: E501
+        error_display = f"<p class='section-label'>Error</p><pre>{_h(f.error)}</pre>" if f.error else ""  # noqa: E501
         notes_display = f"<p class='section-label'>Notes</p><p>{_h(f.notes)}</p>" if f.notes else ""
 
         return f"""<div class="finding {status_class}">

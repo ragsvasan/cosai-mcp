@@ -17,7 +17,6 @@ from cosai_mcp.middleware.session import (
     SessionValidationError,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -27,11 +26,11 @@ _AUDIENCE = "mcp-server"
 
 
 def _make_manager(**kwargs) -> SessionManager:
-    defaults = dict(
-        expected_issuer=_ISSUER,
-        expected_audience=_AUDIENCE,
-        allowed_algorithms=("EdDSA",),
-    )
+    defaults = {
+        "expected_issuer": _ISSUER,
+        "expected_audience": _AUDIENCE,
+        "allowed_algorithms": ("EdDSA",),
+    }
     defaults.update(kwargs)
     return SessionManager(**defaults)
 
