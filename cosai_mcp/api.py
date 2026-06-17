@@ -507,6 +507,8 @@ def _run_scan(
     adversarial_mode: AdversarialMode | None = None,
     probe_delay_seconds: float = 0.0,
     baseline_path: Path | None = None,
+    pii_strict: bool = False,
+    stateful_method_overrides: dict[str, str] | None = None,
 ) -> ScanResult:
     """Orchestrate a complete scan and return a ``ScanResult``.
 
@@ -543,6 +545,8 @@ def _run_scan(
         mcp_path=effective_mcp_path,
         auth_header=effective_auth_header,
         probe_delay_seconds=probe_delay_seconds,
+        pii_strict=pii_strict,
+        stateful_method_overrides=stateful_method_overrides,
     )
 
     # Generate a unique scan ID for this run (used for canary traceability)
@@ -612,6 +616,17 @@ def _run_scan(
         # Runs whenever T9 is in scope (no category filter, or T9 explicitly requested).
         if effective_categories is None or "T9" in effective_categories:
             probe_results.extend(_scan_manifest_t9(tuple(discovered_tools) if discovered_tools else ()))
+
+        # T5: passive manifest secret/PII scan — credentials or PII embedded in
+        # tool names/descriptions are a data-protection leak (and a poisoning
+        # delivery vector).  --pii-strict widens to the broad-PII tier.
+        if effective_categories is None or "T5" in effective_categories:
+            probe_results.extend(
+                _scan_manifest_t5(
+                    tuple(discovered_tools) if discovered_tools else (),
+                    pii_strict=config.pii_strict,
+                )
+            )
 
         # T6: passive manifest integrity scan — tool-name collisions and tool
         # names within Levenshtein 1 of a reserved MCP method or another tool
@@ -708,7 +723,10 @@ def _run_scan(
             (frozenset({"T7"}), t7_session_revocation),
         ]
         profile_skip = profile.skip_categories if profile else frozenset()
-        harness = StatefulHarness(config=config)
+        harness = StatefulHarness(
+            config=config,
+            method_overrides=config.stateful_method_overrides,
+        )
         for cats, factory in _stateful_scenarios:
             if cats & profile_skip:
                 continue  # profile declares this category not applicable
@@ -885,6 +903,71 @@ _RESERVED_MCP_METHODS: frozenset[str] = frozenset({
 })
 
 
+def _scan_manifest_t5(
+    discovered_tools: tuple,
+    pii_strict: bool = False,
+) -> list[ProbeResult]:
+    """Passive T5 secret/PII scan over the discovered tools/list manifest.
+
+    Tool names and descriptions are attacker-influenced content already fetched
+    during discovery.  A credential or PII string embedded there is a T5 data-
+    protection leak (and a tool-poisoning delivery vector).  ``PIIScrubber``
+    redacts the value, so the report shows ``[REDACTED:<type>]`` — never the raw
+    secret.
+
+    To stay low-false-positive, only unambiguous credential types are reported by
+    default; ``pii_strict`` additionally reports the broad-PII tier (SSN, IBAN,
+    US phone, Luhn-corroborated PAN).  Example emails / documentation hostnames in
+    descriptions are intentionally NOT flagged here.
+
+    Passive — no probe sent.  Mirrors ``_scan_manifest_t4/t6/t9``.  Called from
+    ``_run_scan`` whenever T5 is in scope.
+    """
+    from cosai_mcp.middleware.protection import (
+        CREDENTIAL_TYPES,
+        STRICT_PII_TYPES,
+        PIIScrubber,
+    )
+    from cosai_mcp.harness.result import make_probe_result
+
+    if not discovered_tools:
+        return []
+
+    # Reportable types for the MANIFEST scan = unambiguous credentials (+ strict
+    # PII when enabled).  The scrubber also matches context-leak patterns
+    # (internal_hostname, stack_trace) and email, but those are deliberately NOT
+    # reported here: tool descriptions routinely mention internal hostnames and
+    # example emails in legitimate documentation, so flagging them on the manifest
+    # would be high-false-positive.  Those patterns are the RESPONSE-BODY context-
+    # leak surface — detected by PIIScrubber when the T5 middleware is deployed in
+    # the call path (see middleware/protection.py), not by this passive scan.
+    reportable = CREDENTIAL_TYPES | (STRICT_PII_TYPES if pii_strict else frozenset())
+    scrubber = PIIScrubber(pii_strict=pii_strict)
+    results: list[ProbeResult] = []
+    idx = 0
+    for tool in discovered_tools:
+        blob = f"{tool.name}\n{tool.description}"
+        scrub = scrubber.scrub(blob)
+        flagged = [f for f in scrub.findings if f.pii_type in reportable]
+        if not flagged:
+            continue
+        idx += 1
+        pii_types = sorted({f.pii_type for f in flagged})
+        excerpt = (
+            f"Tool '{tool.name}' manifest entry leaks {len(flagged)} secret/PII "
+            f"value(s) [{', '.join(pii_types)}]. Redacted: {scrub.text}"
+        )
+        # make_probe_result HTML-escapes _body at ingestion (locked report rule).
+        results.append(make_probe_result(
+            probe_id=f"T05-manifest-p{idx}",
+            threat_id="T05",
+            passed=False,
+            assertions=(),
+            response={"_body": excerpt},
+        ))
+    return results
+
+
 def _scan_manifest_t6(discovered_tools: tuple) -> list[ProbeResult]:
     """Passive T6 integrity scan over the discovered tools/list manifest.
 
@@ -1054,6 +1137,8 @@ class Scanner:
         probe_delay_seconds: float = 0.0,
         baseline_path: Path | None = None,
         fail_on: str = "critical",
+        pii_strict: bool = False,
+        stateful_method_overrides: dict[str, str] | None = None,
     ) -> None:
         # Accept either a full target URL string (original form) or a ScanConfig
         # (documented public form).  When a ScanConfig is passed, its fields
@@ -1076,6 +1161,8 @@ class Scanner:
             self.profile = profile
             self.adversarial_mode = adversarial_mode
             self.baseline_path = baseline_path
+            self.pii_strict = cfg.pii_strict
+            self.stateful_method_overrides = cfg.stateful_method_overrides
             return
 
         self.target = target
@@ -1093,6 +1180,8 @@ class Scanner:
         self.adversarial_mode = adversarial_mode
         self.probe_delay_seconds = probe_delay_seconds
         self.baseline_path = baseline_path
+        self.pii_strict = pii_strict
+        self.stateful_method_overrides = stateful_method_overrides
 
     def run(self, categories: list[str] | None = None) -> ScanResult:
         """Run a complete scan and return a :class:`ScanResult`.
@@ -1122,6 +1211,8 @@ class Scanner:
                 adversarial_mode=self.adversarial_mode,
                 probe_delay_seconds=self.probe_delay_seconds,
                 baseline_path=self.baseline_path,
+                pii_strict=self.pii_strict,
+                stateful_method_overrides=self.stateful_method_overrides,
             )
         except (ValueError, TargetUnreachableError):
             raise  # let typed exceptions propagate as-is

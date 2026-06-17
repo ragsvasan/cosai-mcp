@@ -341,6 +341,66 @@ def _detect_manifest_drift(
     return None
 
 
+def _apply_method_overrides(
+    scenario: Scenario,
+    overrides: Mapping[str, str],
+) -> Scenario:
+    """Return a copy of *scenario* with placeholder methods and tool names
+    remapped to a real server's equivalents via *overrides*.
+
+    Built-in scenarios use generic placeholder identifiers — fictional tool
+    names (``admin_delete``, ``read_file``) and synthetic JSON-RPC methods
+    (``session/terminate``) — chosen to express a vulnerability *pattern*, not
+    to match any specific server.  Against a real third-party server those
+    placeholders do not exist, so every step returns ``-32601`` and the
+    scenario is (correctly) reported INCONCLUSIVE.  ``method_overrides`` lets an
+    operator map each placeholder to the equivalent identifier on their server
+    so the scenario actually exercises the security control.
+
+    The same flat ``{placeholder: real}`` mapping covers both axes because
+    methods (``session/terminate``) and tool names (``admin_delete``) live in
+    disjoint key spaces:
+
+    * ``step.action.method`` is remapped when present as a key.
+    * ``step.action.params["name"]`` (the ``tools/call`` tool name) is remapped
+      when present as a key.
+
+    Remapping happens once, up front, so every downstream consumer — the
+    tool-existence precondition gate, the unsupported-method gate, and live
+    step execution — sees the real identifiers consistently.  An empty mapping
+    returns the scenario unchanged (identity).
+    """
+    if not overrides:
+        return scenario
+
+    new_steps: list[ScenarioStep] = []
+    for step in scenario.steps:
+        action = step.action
+        new_method = overrides.get(action.method, action.method)
+
+        params = dict(action.params)
+        tool_name = params.get("name")
+        if isinstance(tool_name, str) and tool_name in overrides:
+            params["name"] = overrides[tool_name]
+
+        new_steps.append(
+            ScenarioStep(
+                description=step.description,
+                # StepAction.__post_init__ re-freezes params into a MappingProxyType.
+                action=StepAction(method=new_method, params=params),
+                assertions=step.assertions,
+            )
+        )
+
+    return Scenario(
+        id=scenario.id,
+        name=scenario.name,
+        threat_categories=scenario.threat_categories,
+        steps=tuple(new_steps),
+        description=scenario.description,
+    )
+
+
 # ---------------------------------------------------------------------------
 # StatefulHarness
 # ---------------------------------------------------------------------------
@@ -359,8 +419,17 @@ class StatefulHarness:
     callers — it is never a clean result.
     """
 
-    def __init__(self, config: ScanConfig) -> None:
+    def __init__(
+        self,
+        config: ScanConfig,
+        method_overrides: Mapping[str, str] | None = None,
+    ) -> None:
         self._config = config
+        # Frozen copy so a caller's later mutation cannot retroactively change
+        # which identifiers a scenario remaps to (parity with the frozen DSL).
+        self._method_overrides: Mapping[str, str] = _types.MappingProxyType(
+            dict(method_overrides) if method_overrides else {}
+        )
 
     def run_scenario(self, scenario: Scenario, target_url: str) -> ScenarioResult:
         """Run *scenario* synchronously against *target_url*.
@@ -394,6 +463,13 @@ class StatefulHarness:
                 passed=False,
                 step_results=(),
             )
+
+        # Remap placeholder tool names / methods to this server's equivalents
+        # before any gate or step runs, so the precondition gate, the
+        # unsupported-method gate, and live execution all see real identifiers.
+        # Result fields below still carry the ORIGINAL scenario id/name/categories
+        # so reports remain stable regardless of operator mapping.
+        scenario = _apply_method_overrides(scenario, self._method_overrides)
 
         transport = StreamableHTTPTransport(target_url, self._config)
         session = MCPSession(transport, self._config, target_url=target_url)

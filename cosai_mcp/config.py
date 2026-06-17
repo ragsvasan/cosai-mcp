@@ -74,6 +74,19 @@ class ScanConfig:
     extra_request_headers: dict[str, str] | None = None
     """Extra HTTP headers added to every request in this config context.
     Used by probe_headers to inject headers like Origin for CORS testing."""
+    pii_strict: bool = False
+    """When *True*, the T5 passive secret/PII manifest scan additionally applies
+    the broad-PII strict tier (SSN, IBAN, US phone, Luhn-corroborated PAN) on top
+    of the always-on anchored-credential tier.  Default *False* keeps the scan
+    fast and low-false-positive.  Set by the ``--pii-strict`` CLI flag."""
+    stateful_method_overrides: dict[str, str] | None = None
+    """Operator-supplied ``{placeholder: real}`` map applied by the stateful
+    harness.  Built-in scenarios use generic placeholder tool names
+    (``admin_delete``, ``read_file``) and synthetic methods (``session/terminate``)
+    that do not exist on a real server; without a mapping every such scenario is
+    reported INCONCLUSIVE.  This map remaps each placeholder to the equivalent
+    identifier on the target so the scenario actually exercises the control.
+    ``None`` (the default) leaves scenarios unchanged."""
 
     def __post_init__(self) -> None:
         # Documented public form: derive host/port from the full target URL.
