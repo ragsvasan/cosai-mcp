@@ -1,0 +1,133 @@
+{
+  "schema_version": "1.1",
+  "id": "T01-006",
+  "category": "T1",
+  "severity": "high",
+  "cosai_ref": "T1",
+  "owasp_ref": "MCP-Top10-A01",
+  "cwe": ["CWE-287", "CWE-345", "CWE-347"],
+  "confidence": "medium",
+  "probes": [
+    {
+      "id": "T01-006-p1",
+      "description": "Algorithm confusion: a token signed with alg=none (no signature) must be rejected. Accepting it means the server does not pin the JWS algorithm.",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {"probe": "alg-none"}
+      },
+      "probe_headers": {
+        "Authorization": "Bearer eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJhdHRhY2tlciIsImlzcyI6Imh0dHBzOi8vaWRwLmV4YW1wbGUiLCJhdWQiOiJtY3Atc2VydmVyIn0."
+      },
+      "assertions": [
+        {"target": "response.error", "operator": "eq", "value": true}
+      ],
+      "corroboration": [
+        {"target": "response.error", "operator": "eq", "value": false, "description": "Positive evidence the alg=none token was actually accepted and served, not merely an ambiguous transport/internal error."}
+      ]
+    },
+    {
+      "id": "T01-006-p2",
+      "description": "Issuer (iss) confusion: a token from an untrusted issuer must be rejected. Accepting it means the server does not validate the iss claim against a trusted allowlist.",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {"probe": "iss-mismatch"}
+      },
+      "probe_headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1IiwiaXNzIjoiaHR0cHM6Ly9ldmlsLmF0dGFja2VyLmV4YW1wbGUiLCJhdWQiOiJtY3Atc2VydmVyIiwiZXhwIjo0MTAyNDQ0ODAwfQ.ZmFrZXNpZw"
+      },
+      "assertions": [
+        {"target": "response.error", "operator": "eq", "value": true}
+      ],
+      "corroboration": [
+        {"target": "response.error", "operator": "eq", "value": false, "description": "Positive evidence the wrong-issuer token was actually accepted and served."}
+      ]
+    },
+    {
+      "id": "T01-006-p3",
+      "description": "Audience (aud) confusion: a token minted for a different audience must be rejected. Accepting it enables cross-service token replay (confused deputy).",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {"probe": "aud-mismatch"}
+      },
+      "probe_headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1IiwiaXNzIjoiaHR0cHM6Ly9pZHAuZXhhbXBsZSIsImF1ZCI6InNvbWUtb3RoZXItYXBpIiwiZXhwIjo0MTAyNDQ0ODAwfQ.ZmFrZXNpZw"
+      },
+      "assertions": [
+        {"target": "response.error", "operator": "eq", "value": true}
+      ],
+      "corroboration": [
+        {"target": "response.error", "operator": "eq", "value": false, "description": "Positive evidence the wrong-audience token was actually accepted and served."}
+      ]
+    },
+    {
+      "id": "T01-006-p4",
+      "description": "Expiry (exp) boundary: an expired token must be rejected. Accepting it means the server does not enforce the exp claim, giving stolen tokens unbounded lifetime.",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {"probe": "exp-past"}
+      },
+      "probe_headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1IiwiaXNzIjoiaHR0cHM6Ly9pZHAuZXhhbXBsZSIsImF1ZCI6Im1jcC1zZXJ2ZXIiLCJleHAiOjEwMDAwMDAwMDB9.ZmFrZXNpZw"
+      },
+      "assertions": [
+        {"target": "response.error", "operator": "eq", "value": true}
+      ],
+      "corroboration": [
+        {"target": "response.error", "operator": "eq", "value": false, "description": "Positive evidence the expired token was actually accepted and served."}
+      ]
+    },
+    {
+      "id": "T01-006-p5",
+      "description": "Scope narrowing: a token carrying only a narrow read scope must not be honored for a privileged operation. Honoring it means scopes are not enforced at dispatch.",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {"probe": "scope-narrow", "privileged": true}
+      },
+      "probe_headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1IiwiaXNzIjoiaHR0cHM6Ly9pZHAuZXhhbXBsZSIsImF1ZCI6Im1jcC1zZXJ2ZXIiLCJleHAiOjQxMDI0NDQ4MDAsInNjb3BlIjoicmVhZDpwdWJsaWMifQ.ZmFrZXNpZw"
+      },
+      "assertions": [
+        {"target": "response.error", "operator": "eq", "value": true}
+      ],
+      "corroboration": [
+        {"target": "response.error", "operator": "eq", "value": false, "description": "Positive evidence the under-scoped token was actually honored for the privileged call."}
+      ]
+    },
+    {
+      "id": "T01-006-p6",
+      "description": "DPoP sender-constraint: a sender-constrained (cnf/jkt) bearer token presented WITHOUT a DPoP proof header must be rejected (RFC 9449). Accepting it means the token is not actually bound to its holder and can be replayed by a thief.",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {"probe": "dpop-missing-proof"}
+      },
+      "probe_headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1IiwiaXNzIjoiaHR0cHM6Ly9pZHAuZXhhbXBsZSIsImF1ZCI6Im1jcC1zZXJ2ZXIiLCJleHAiOjQxMDI0NDQ4MDAsImNuZiI6eyJqa3QiOiIwWmNPQ09SWk5ZeS1EV3BxcTMwalp5SkdIVE4wZDJIZ2xCVjN1aWd1QTRJIn19.ZmFrZXNpZw"
+      },
+      "assertions": [
+        {"target": "response.error", "operator": "eq", "value": true}
+      ],
+      "corroboration": [
+        {"target": "response.error", "operator": "eq", "value": false, "description": "Positive evidence the sender-constrained token was accepted without a DPoP proof."}
+      ]
+    }
+  ],
+  "remediation": "Pin the JWS algorithm (reject 'none' and reject any alg not in a fixed allowlist). Validate iss against a trusted-issuer allowlist, aud against this server's identifier, and exp/nbf with no clock-skew leniency beyond a small bound. Enforce per-tool required scopes deterministically at dispatch (never infer from LLM judgment). For sender-constrained tokens (cnf/jkt), require and verify a DPoP proof (RFC 9449) bound to the request method, URI, and access token.",
+  "references": [
+    "https://cosai.org/T1",
+    "https://datatracker.ietf.org/doc/html/rfc7519#section-4.1",
+    "https://datatracker.ietf.org/doc/html/rfc8725",
+    "https://datatracker.ietf.org/doc/html/rfc9449"
+  ]
+}
