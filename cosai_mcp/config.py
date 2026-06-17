@@ -74,6 +74,11 @@ class ScanConfig:
     extra_request_headers: dict[str, str] | None = None
     """Extra HTTP headers added to every request in this config context.
     Used by probe_headers to inject headers like Origin for CORS testing."""
+    tool_allowlist: tuple[str, ...] | None = None
+    """Operator-approved tool names for T11 supply-chain checks.  When set, the
+    passive manifest scan flags any discovered tool not on this list (unexpected
+    tool) or within Levenshtein distance 1 of a listed name (typosquat).  When
+    *None*, T11 reports INCONCLUSIVE rather than a false-green pass."""
     pii_strict: bool = False
     """When *True*, the T5 passive secret/PII manifest scan additionally applies
     the broad-PII strict tier (SSN, IBAN, US phone, Luhn-corroborated PAN) on top
