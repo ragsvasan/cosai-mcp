@@ -10,15 +10,15 @@ Reference for all 12 CoSAI threat categories, their attack patterns, what cosai-
 |----------|------|--------|--------|
 | T1 | Improper Authentication | Black-box prober | Done — 5 probes (missing auth, token replay, cross-session, DPoP, wrong error code T01-005) |
 | T2 | Missing Access Control | Black-box prober + stateful harness | Done — BB: privilege scope + destructive one-shot (T02-003) + tools/list enumeration (T02-004) + read-scope write bypass (T02-005); Stateful: privilege escalation chain + confused deputy |
-| T3 | Input Validation Failures | Black-box prober | Done — injection, path traversal, SQL, null bytes, oversized payloads |
+| T3 | Input Validation Failures | Black-box prober | Done — command/path/SQL injection, NoSQL operator injection, SSTI, XXE, CRLF/header injection, null bytes, oversized payloads (payloads bound to discovered tools via synthesis) |
 | T4 | Data/Control Boundary | Middleware instrumentation | Done — requires middleware in target server |
-| T5 | Inadequate Data Protection | Black-box prober | Done — PII pattern detection, credential pattern detection in tool responses |
+| T5 | Inadequate Data Protection | Black-box prober + passive manifest scan | Done — anchored credential set (AWS/GCP/Azure/GitHub/GitLab/Google/JWT) + context-leak (internal host, stack trace); strict tier (`--pii-strict`): SSN, IBAN, phone, Luhn-PAN |
 | T6 | Integrity/Verification | Black-box prober + stateful harness | Done — BB: typosquat detection; Stateful: mid-session manifest diff (rug pull) |
 | T7 | Session Security Failures | Stateful harness + black-box prober | Done — Stateful: session fixation, token-in-URL, cross-session replay, revocation (T7-SC-002); BB: CORS wildcard (T07-001), MCP confirmation bypass (T07-002, critical), scope-before-confirmation (T07-003, high) |
-| T8 | Network Binding Failures | Black-box prober | Done — 0.0.0.0 binding, SSRF (RFC1918/link-local/loopback), shadow server detection |
+| T8 | Network Binding Failures | Black-box prober | Done — 0.0.0.0 binding, SSRF (RFC1918/link-local/loopback, AWS IMDSv1+IMDSv2, GCP/Azure/Alibaba metadata, `file://`, IPv6 ULA/link-local), shadow server detection |
 | T9 | Trust Boundary Failures | Middleware instrumentation | Done — requires middleware in target server |
 | T10 | Resource Management | Black-box prober | Done — rate limiting with probe_count (T10-004), response size limits, recursive depth, heartbeat |
-| T11 | Supply Chain/Lifecycle | Black-box prober | Done — tool allowlist, typosquat (Levenshtein ≤ 1), signature verification |
+| T11 | Supply Chain/Lifecycle | Black-box prober (passive) | Done — operator-allowlist scan (`--tool-allowlist`): typosquat (Levenshtein 1) + unexpected/unauthorized tool; **INCONCLUSIVE without an allowlist** (legacy fictional-tool probe is a vacuous liveness check) |
 | T12 | Insufficient Logging | Middleware + black-box prober | Done — middleware: hash-chained audit log; BB: T12-002 tool description transparency |
 
 **Why "Requires middleware" for T4, T9, T12?**
@@ -94,19 +94,24 @@ Treating LLM-generated tool arguments as trusted input. The LLM constructs `argu
 ### Attack patterns
 - **Command injection:** `{"cmd": "; cat /etc/passwd"}` in a shell-executing tool
 - **Path traversal:** `{"path": "../../etc/shadow"}` in a file-reading tool
-- **SQL injection:** `{"query": "'; DROP TABLE users; --"}` in a database tool
+- **SQL injection:** `{"query": "'; DROP TABLE users; --"}` in a database tool (error-based reflection)
+- **NoSQL operator injection:** `{"$ne": null}` smuggled into a query argument
+- **SSTI:** `{{1337*1337}}` / `${1337*1337}` evaluated server-side (response echoes `1787569`)
+- **XXE:** an XML argument with an external entity referencing `file:///etc/passwd`
+- **CRLF / header injection:** `\r\nX-Cosai-Injected: 1` smuggled into a reflected value
 - **Oversized payload:** argument value of 100MB causes OOM or timeout
 - **Null bytes / Unicode normalization:** bypasses naive string validation
 
 ### What cosai-mcp tests
-All probes assert `response.error.code` is in the invalid-params range (`-32602`), not `Internal error` (`-32603`) — an internal error on an injection payload may indicate the payload reached the execution layer.
+Payloads are **bound to discovered tools** via adaptive synthesis (`cosai_mcp.synthesis`) — the adversarial value is injected into a real string parameter of each discovered tool, not a fictional `cmd`/`query` field, so probes reach the tool's validation logic instead of returning a vacuous `-32602`. A protocol-validation error (`-32602`/`-32601`) on an injection probe is treated as **INCONCLUSIVE**, never a pass.
 
-- Command injection patterns in every discovered tool's string arguments
-- Path traversal patterns in path-type arguments
-- SQL injection patterns in query-type arguments
-- Null byte injection
-- Oversized arguments (10MB+)
-- Unicode normalization bypasses (`%2e%2e/` → `../`)
+- Command injection (`T03-001`) + path traversal (`T03-002`) in string/path arguments
+- SQL injection — error-based reflection of DB error signatures (`T03-004`)
+- NoSQL operator injection (`T03-005`)
+- SSTI — distinctive `1337*1337` product detection, near-zero FP (`T03-003`)
+- XXE — external-entity `/etc/passwd` exfiltration (`T03-006`)
+- CRLF / header injection — reflected response-header smuggling (`T03-007`)
+- Null byte injection, oversized arguments (10MB+), Unicode normalization (`%2e%2e/` → `../`)
 
 ### Remediation
 - Validate every tool argument against a strict JSON Schema before execution
@@ -157,10 +162,11 @@ Sensitive data leaking through the MCP context: tool responses containing PII, s
 - **Cross-agent context bleed:** stateful context from a high-privilege session leaks into a shared SSE queue consumed by a low-privilege session
 - **Credential exfiltration:** tool response contains an API key; agent uses it in a subsequent (unauthorized) tool call
 
-### What cosai-mcp tests (middleware instrumentation)
-- PII pattern detection (SSN, credit card, email, phone) in tool responses before they reach the LLM context
-- Credential pattern detection (API key formats, JWT headers) in tool responses
-- Context isolation between concurrent sessions
+### What cosai-mcp tests (black-box passive scan + middleware)
+- **Passive manifest secret scan** (`_scan_manifest_t5`): credentials embedded in tool names/descriptions — AWS `AKIA`, GCP service-account JSON, Azure SAS, GitHub `ghp_/gho_/ghs_`, GitLab `glpat-`, Google `AIza`, JWT. Secrets are redacted to `[REDACTED:<type>]` (never echoed) and HTML-escaped at ingestion.
+- **Context-leak patterns** (response-body, middleware): internal hostnames (`*.internal`, `*.svc.cluster.local`), stack traces — T5 is context leakage, not only credentials.
+- **Strict tier** (`--pii-strict`, off by default): SSN, IBAN, US phone, and **Luhn-corroborated PAN** (primary regex + Luhn checksum keeps the false-positive rate low).
+- Credential/PII scrubbing of tool responses (middleware `PIIScrubber`); context isolation between concurrent sessions.
 
 ### Remediation
 - Apply PII scrubbing to all tool responses before they enter the LLM context
@@ -241,12 +247,16 @@ MCP endpoints exposed beyond their intended network boundary. A local MCP server
 
 ### Attack patterns
 - **0.0.0.0 binding:** local development server exposed to the network; reachable by other hosts on the same network
-- **SSRF via tool:** tool designed to fetch URLs can be called with `file://`, `http://169.254.169.254/`, or internal RFC1918 addresses
+- **SSRF via tool — cloud metadata:** a URL-fetching tool called with `http://169.254.169.254/` (AWS IMDSv1 **and** the IMDSv2 token endpoint), `http://metadata.google.internal/` (GCP), Azure IMDS, or Alibaba `100.100.100.200` — steals instance credentials
+- **SSRF via tool — schemes & internal nets:** `file:///etc/passwd`, RFC1918, IPv6 ULA/link-local (`fd00::`, `fe80::`) targets
 - **Shadow MCP server:** attacker runs an MCP server on the same host that intercepts tool calls intended for the legitimate server
 
 ### What cosai-mcp tests
 - Server responds on a non-loopback interface when it should be loopback-only → flagged
-- SSRF probe: call URL-fetching tools with RFC1918, link-local, and `file://` arguments; check if they are rejected
+- SSRF probes call URL-fetching tools with cloud-metadata endpoints and assert the metadata signature does **not** appear in the response:
+  - AWS IMDSv1 (`T08-001`) + IMDSv2 token endpoint (`T08-006`)
+  - GCP metadata (`T08-004`), Azure IMDS (`T08-005`), Alibaba ECS (`T08-007`)
+  - `file://` scheme (`T08-008`); IPv6 ULA/link-local (`T08-009`) — a fetch instead of rejection is the finding
 - Tool list diff between two scans — new tools appearing without deployment signal a shadow server
 
 ### Remediation
@@ -328,12 +338,14 @@ Malicious or compromised MCP server packages distributed via agent marketplaces 
 - **Dependency confusion:** internal MCP server package name matches a public package; public version installed instead
 - **ClawHub malicious skill campaign (2026-Q1):** 1,184 skills identified on the ClawHub marketplace containing dormant payloads that activated on specific prompt patterns; 63K live instances reachable via Censys
 
-### What cosai-mcp tests (partial — static analysis)
-- Tool name Levenshtein distance check against a configured allowlist; close matches flagged
-- Tool definitions lacking integrity signatures flagged
-- Tools with unexpected origins (registry mismatch) flagged
+### What cosai-mcp tests (passive manifest scan — `--tool-allowlist`)
+The legacy "ask for a fictional tool name, treat `-32601` as a pass" probe is a **vacuous liveness check** — every conformant server passes it. The real black-box T11 surface an external scanner *can* decide is the operator's approved-tool allowlist (`_scan_manifest_t11`):
 
-Full supply chain verification (provenance, dependency graph analysis) requires the cosai-mcp static scanner component (`cosai-mcp scan-static --manifest mcp-manifest.json`).
+- **Typosquat:** a discovered tool within Levenshtein distance 1 of an approved name but not equal to it (e.g. `serch` vs approved `search`) → flagged.
+- **Unexpected tool:** a discovered tool not on the allowlist and not a near-miss → flagged as a possible unauthorized / rug-pull addition.
+- **Without `--tool-allowlist`:** there is no approved set to compare against, so T11 is reported **INCONCLUSIVE (not clean)** and the scan warns — it never silently false-greens.
+
+Registry-signature verification, version-pin drift, and rug-pull detection are inventory/middleware concerns — use `cosai inventory` drift tracking and SCA pre-deploy.
 
 ### Remediation
 - Maintain an explicit allowlist of approved MCP servers by origin and version

@@ -1,6 +1,6 @@
 # Getting Started with cosai-mcp
 
-cosai scans MCP servers for security vulnerabilities across T1–T12 via three engines (8 categories zero-config, 4 via middleware deployment). Black-box probing requires nothing on the target; middleware coverage requires deploying cosai_mcp/middleware/ — point it at any running MCP server and get a report.
+cosai scans MCP servers for security vulnerabilities across T1–T12 via three engines (9 categories zero-config, 3 via middleware deployment). Black-box probing requires nothing on the target; middleware coverage requires deploying cosai_mcp/middleware/ — point it at any running MCP server and get a report.
 
 ---
 
@@ -62,6 +62,16 @@ cosai scan http://localhost:8000 --fail-on critical
 
 # Scan specific threat categories only
 cosai scan http://localhost:8000 --categories T1,T3,T7
+
+# T5: widen the secret/PII manifest scan to the broad-PII tier
+# (SSN, IBAN, US phone, Luhn-validated PAN) on top of the always-on
+# anchored-credential tier (AWS/GCP/Azure/GitHub/GitLab/Google/JWT)
+cosai scan http://localhost:8000 --pii-strict
+
+# T11: supply-chain check — flag discovered tools not on the approved
+# allowlist, or within one edit of an approved name (typosquat).
+# Without this flag, T11 is reported INCONCLUSIVE (not clean).
+cosai scan http://localhost:8000 --tool-allowlist search,read_file,deploy
 
 # Show coverage matrix (which engine covers which category)
 cosai scan http://localhost:8000 --report-coverage
