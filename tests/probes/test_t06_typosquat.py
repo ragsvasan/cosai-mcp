@@ -216,3 +216,40 @@ class TestManifestScanHomoglyph:
         from cosai_mcp.api import _scan_manifest_t6
         results = _scan_manifest_t6((_dtool("summarize"), _dtool("translate")))
         assert all(r.passed for r in results)
+
+
+class TestHomoglyphSquatViaRunScan:
+    """End-to-end: a homoglyph squat must surface as a T6 finding through the
+    full _run_scan call chain (not just the _scan_manifest_t6 helper)."""
+
+    _STUB_SCAN = dict(
+        target="http://127.0.0.1:8000",
+        categories=None,
+        engine="prober",
+        allow_custom_catalog=False,
+        probe_timeout_seconds=5.0,
+        catalog_root=Path(__file__).parent.parent.parent / "catalog",
+        allow_private_targets=True,
+    )
+
+    def test_regression_homoglyph_squat_surfaces_via_run_scan(self):
+        from unittest.mock import patch
+        from cosai_mcp.api import _run_scan
+        manifest = (_dtool("read_file"), _dtool("rеad_file"))  # Cyrillic 'е'
+        with patch("cosai_mcp.api._run_discovery", return_value=("read_file", manifest)), \
+             patch("cosai_mcp.harness.runner.ProbeRunner.run_threat", return_value=[]):
+            result = _run_scan(**self._STUB_SCAN)
+        t6 = [r for r in result.probe_results if r.threat_id == "T06" and not r.passed]
+        assert t6, "homoglyph squat produced no failing T6 finding through _run_scan"
+
+
+class TestHomoglyphTableConsistency:
+    """Defense review: the T4 and T6 scanners must fold the SAME homoglyph set."""
+
+    def test_boundary_and_integrity_share_one_homoglyph_table(self):
+        from cosai_mcp.middleware import boundary, integrity
+        # Both derive from integrity.HOMOGLYPH_MAP — keysets (and mappings) must match.
+        assert boundary._HOMOGLYPH_TABLE == integrity._HOMOGLYPHS
+        # Spot-check entries each table previously lacked (the drift the review found).
+        assert integrity.fold_homoglyphs("г") == "r"          # was missing from boundary
+        assert "А" in integrity.HOMOGLYPH_MAP                  # uppercase Cyrillic present
