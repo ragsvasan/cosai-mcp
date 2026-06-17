@@ -1,4 +1,12 @@
-"""Tests for T8-003: 0.0.0.0 binding detection and BindAddressValidator."""
+"""Tests for T8-003 — operator-supplied bind-config validation + TLS inspection.
+
+Scope note (WG-89 item 12): ``BindAddressValidator`` validates the host:port the
+OPERATOR declares the server is bound to; it does not perform active shadow-
+server discovery (interface enumeration / port scanning), which is out of scope
+for this non-adversarial scanner. ``TransportSecurityInspector`` adds optional,
+best-effort TLS posture inspection (SAN / cipher / mTLS) of the connected
+transport — also observation, not discovery.
+"""
 from __future__ import annotations
 
 import socket
@@ -7,7 +15,12 @@ from pathlib import Path
 
 import pytest
 
-from cosai_mcp.middleware.network import BindAddressValidator, BindCheckResult
+from cosai_mcp.middleware.network import (
+    BindAddressValidator,
+    BindCheckResult,
+    TLSInspectionResult,
+    TransportSecurityInspector,
+)
 
 
 CATALOG_ROOT = Path(__file__).parent.parent.parent / "catalog"
@@ -117,3 +130,91 @@ class TestAllT08ProbesCatalogLoad:
         for name in ("T08-001.json", "T08-002.json", "T08-003.json"):
             t = catalog.load_file(Path(f"official/{name}"))
             assert t.category == "T8"
+
+
+# ===========================================================================
+# Scope-honesty: validator docstring is reframed as operator-supplied config
+# ===========================================================================
+
+class TestBindValidatorScopeIsHonest:
+
+    def test_docstring_disclaims_active_discovery(self):
+        """WG-89 item 12: the validator must not claim shadow-server discovery."""
+        doc = (BindAddressValidator.__doc__ or "").lower()
+        assert "operator" in doc
+        assert "out of scope" in doc or "no active discovery" in doc
+
+    def test_module_docstring_disclaims_interface_enumeration(self):
+        import cosai_mcp.middleware.network as net
+        doc = (net.__doc__ or "").lower()
+        assert "shadow-server discovery" in doc or "interface" in doc
+        assert "out of scope" in doc
+
+
+# ===========================================================================
+# TransportSecurityInspector — TLS posture inspection (optional)
+# ===========================================================================
+
+class TestSummarizeCertificate:
+    """Pure-function cert summary — no network."""
+
+    _CERT = {
+        "subject": ((("commonName", "mcp.example.com"),),),
+        "subjectAltName": (
+            ("DNS", "mcp.example.com"),
+            ("DNS", "api.example.com"),
+            ("IP Address", "127.0.0.1"),
+        ),
+        "notAfter": "Dec 31 23:59:59 2027 GMT",
+    }
+
+    def test_extracts_subject_cn(self):
+        out = TransportSecurityInspector.summarize_certificate(self._CERT)
+        assert out["subject_cn"] == "mcp.example.com"
+
+    def test_extracts_all_sans(self):
+        out = TransportSecurityInspector.summarize_certificate(self._CERT)
+        assert out["san"] == ("DNS:mcp.example.com", "DNS:api.example.com", "IP Address:127.0.0.1")
+
+    def test_extracts_not_after(self):
+        out = TransportSecurityInspector.summarize_certificate(self._CERT)
+        assert out["not_after"] == "Dec 31 23:59:59 2027 GMT"
+
+    def test_extracts_cipher_and_protocol(self):
+        out = TransportSecurityInspector.summarize_certificate(
+            self._CERT, cipher=("TLS_AES_256_GCM_SHA384", "TLSv1.3", 256)
+        )
+        assert out["cipher"] == "TLS_AES_256_GCM_SHA384"
+        assert out["protocol"] == "TLSv1.3"
+
+    def test_explicit_protocol_overrides_cipher_tuple(self):
+        out = TransportSecurityInspector.summarize_certificate(
+            self._CERT, cipher=("X", "TLSv1.2", 128), protocol="TLSv1.3"
+        )
+        assert out["protocol"] == "TLSv1.3"
+
+    def test_empty_cert_is_safe(self):
+        out = TransportSecurityInspector.summarize_certificate(None)
+        assert out["subject_cn"] is None
+        assert out["san"] == ()
+
+
+class TestTransportInspectErrorPath:
+    """inspect() must never raise — failures surface via .error."""
+
+    def test_connection_refused_returns_error_result(self):
+        inspector = TransportSecurityInspector()
+        # Port 9 (discard) on loopback is almost always closed → fast refusal.
+        result = inspector.inspect("127.0.0.1", 9, timeout=1.0)
+        assert isinstance(result, TLSInspectionResult)
+        assert result.tls is False
+        assert result.error is not None
+
+    def test_plaintext_endpoint_returns_error_not_exception(self):
+        """A non-TLS HTTP server triggers an SSLError, surfaced (not raised)."""
+        from cosai_mcp.harness.mock_server import MockMCPServer
+        with MockMCPServer() as server:
+            server.wait_ready()
+            result = TransportSecurityInspector().inspect("127.0.0.1", server.port, timeout=2.0)
+        assert result.tls is False
+        assert result.error is not None
