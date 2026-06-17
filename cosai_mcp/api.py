@@ -635,6 +635,17 @@ def _run_scan(
         if effective_categories is None or "T6" in effective_categories:
             probe_results.extend(_scan_manifest_t6(tuple(discovered_tools) if discovered_tools else ()))  # noqa: E501
 
+        # T11: passive supply-chain scan — discovered tools vs the operator
+        # allowlist (typosquat / unexpected-tool).  INCONCLUSIVE without an
+        # allowlist, so T11 never false-greens on the vacuous legacy probe.
+        if effective_categories is None or "T11" in effective_categories:
+            probe_results.extend(
+                _scan_manifest_t11(
+                    tuple(discovered_tools) if discovered_tools else (),
+                    config.tool_allowlist,
+                )
+            )
+
         # Profile: remap discovered tool name through tool_name_map if present.
         # This ensures probes use the real server tool name instead of the
         # catalog placeholder ("ping") when the server uses a different name.
@@ -968,6 +979,97 @@ def _scan_manifest_t5(
             passed=False,
             assertions=(),
             response={"_body": excerpt},
+        ))
+    return results
+
+
+def _scan_manifest_t11(
+    discovered_tools: tuple,
+    tool_allowlist: tuple[str, ...] | None,
+) -> list[ProbeResult]:
+    """Passive T11 supply-chain scan over the discovered tools/list manifest.
+
+    WG-89 reviewer item 3.  The legacy T11-001 black-box probe (ask for a
+    fictional tool name; treat -32601 as a pass) is vacuous — every conformant
+    server passes it.  The real black-box T11 surface an external scanner *can*
+    decide is the operator's approved-tool allowlist:
+
+      * A discovered tool within Levenshtein distance 1 of an allowlist entry but
+        not equal to it → TYPOSQUAT (a tool masquerading as an approved one).
+      * A discovered tool not on the allowlist and not a near-miss → UNEXPECTED
+        tool (a possible unauthorized / rug-pull addition).
+
+    Without an allowlist there is no approved set to compare against, so this
+    returns a single INCONCLUSIVE result (NOT a clean pass) and warns — so T11
+    never silently false-greens on the vacuous probe alone.  Mirrors the
+    T4/T6/T9 passive scans.  Called from ``_run_scan`` whenever T11 is in scope.
+    """
+    from cosai_mcp.middleware.integrity import levenshtein
+    from cosai_mcp.harness.result import make_probe_result
+
+    if not discovered_tools:
+        return []
+
+    if not tool_allowlist:
+        import warnings
+        warnings.warn(
+            "T11 supply-chain typosquat/unexpected-tool detection is INACTIVE: no "
+            "--tool-allowlist supplied. The discovered manifest cannot be checked "
+            "against an approved set, so T11 is reported INCONCLUSIVE, not clean.",
+            stacklevel=2,
+        )
+        return [make_probe_result(
+            probe_id="T11-manifest-no-allowlist",
+            threat_id="T11",
+            passed=False,
+            assertions=(),
+            inconclusive_reason=(
+                "No --tool-allowlist supplied; typosquat / unexpected-tool detection "
+                "could not run. Provide the operator's approved tool names to enable "
+                "T11 supply-chain checks. INCONCLUSIVE, not a finding."
+            ),
+        )]
+
+    allowset = frozenset(tool_allowlist)
+    results: list[ProbeResult] = []
+    idx = 0
+
+    def _finding(excerpt: str) -> ProbeResult:
+        nonlocal idx
+        idx += 1
+        return make_probe_result(
+            probe_id=f"T11-manifest-p{idx}",
+            threat_id="T11",
+            passed=False,
+            assertions=(),
+            response={"_body": excerpt},
+        )
+
+    for tool in discovered_tools:
+        name = tool.name
+        if name in allowset:
+            continue
+        near = sorted(e for e in allowset if levenshtein(name, e) == 1)
+        if near:
+            results.append(_finding(
+                f"Discovered tool {name!r} is within one edit of approved tool(s) "
+                f"{near} but is not itself on the allowlist — possible typosquat "
+                f"masquerading as an approved tool (T11 supply-chain)."
+            ))
+        else:
+            results.append(_finding(
+                f"Discovered tool {name!r} is not on the operator allowlist — "
+                f"an unexpected/unauthorized tool addition (T11 supply-chain). "
+                f"Confirm it is approved, or remove it from the server."
+            ))
+
+    if not results:
+        results.append(make_probe_result(
+            probe_id="T11-manifest-clean",
+            threat_id="T11",
+            passed=True,
+            assertions=(),
+            response={"_body": "All discovered tools are present on the operator allowlist."},
         ))
     return results
 
