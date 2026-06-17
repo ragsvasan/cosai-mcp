@@ -149,3 +149,29 @@ class TestScanManifestT11Wiring:
             r.inconclusive_reason and "allowlist" in r.inconclusive_reason.lower()
             for r in t11
         ), "T11 must be INCONCLUSIVE (not clean) without an allowlist"
+
+    def test_regression_t11_inconclusive_is_not_has_findings(self) -> None:
+        """An INCONCLUSIVE T11 result (no allowlist) must NOT set has_findings —
+        inconclusive != finding, consistent with exit-code/findings semantics."""
+        from cosai_mcp.api import Scanner
+        from cosai_mcp.config import ScanConfig
+        from cosai_mcp.harness.mock_server import MockMCPServer
+
+        tools = [{"name": "search", "description": "x", "inputSchema": {"type": "object"}}]
+        # Reject the unlisted-tool call so the legacy T11-001 probe PASSES,
+        # isolating the manifest INCONCLUSIVE as the only non-passing T11 result.
+        reject = {"jsonrpc": "2.0", "id": 0, "error": {"code": -32601, "message": "Method not found"}}
+        with MockMCPServer(tools=tools, tools_call_response=reject) as server:
+            cfg = ScanConfig(
+                target=f"http://127.0.0.1:{server.port}",
+                categories=["T11"],
+                allow_private_targets=True,
+                probe_timeout_seconds=15.0,
+            )
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                result = Scanner(cfg, engine="prober").run()
+
+        # T11 emitted an inconclusive result, but the scan has no real finding.
+        assert any(r.inconclusive_reason for r in result.probe_results)
+        assert result.has_findings is False

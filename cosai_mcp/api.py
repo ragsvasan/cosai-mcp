@@ -370,6 +370,7 @@ class ScanResult:
         # probe_results so report builders that iterate directly still list it.
         failed_probes = any(
             not r.passed and not r.suppressed
+            and r.inconclusive_reason is None  # inconclusive ≠ finding (see _findings)
             for r in self.probe_results
             if r.error is None
         )
