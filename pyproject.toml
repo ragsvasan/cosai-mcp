@@ -59,6 +59,9 @@ packages = ["cosai_mcp"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-p no:warnings"
+markers = [
+    "probes_live: probe tests parametrized over the LIVE discovered manifest of a configured --target-url. Opt-in — skipped (no fictional 'echo' fallback) unless --target-url is set. Run with: pytest -m probes_live --target-url=http://host:port",
+]
 
 [tool.ruff]
 target-version = "py311"

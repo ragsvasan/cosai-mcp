@@ -21,12 +21,68 @@ from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
 CATALOG_ROOT = Path(__file__).parent.parent.parent / "catalog"
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register --target-url for the live-probe suite (`-m probes_live`).
+
+    When set, the live-probe tests discover the target's real tools/list
+    manifest and parametrize over the discovered tools — replacing the
+    fictional ``tool_name=echo`` default that makes black-box probes
+    false-clean against a third-party server (WG-89 reviewer item 1).
+    """
+    parser.addoption(
+        "--target-url",
+        action="store",
+        default=None,
+        help="Live MCP server base URL to discover and probe (enables -m probes_live).",
+    )
+
+
 @pytest.fixture
 def probe_target() -> str:
     url = os.environ.get("MCP_TARGET_URL")
     if not url:
         pytest.skip("MCP_TARGET_URL not set — skipping probe integration test")
     return url
+
+
+@pytest.fixture
+def live_target(request: pytest.FixtureRequest) -> str:
+    """The configured --target-url, or skip when absent (opt-in live suite)."""
+    url = request.config.getoption("--target-url")
+    if not url:
+        pytest.skip("--target-url not set — skipping live probe (opt-in)")
+    return url
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    """Parametrize ``live_tool`` over the LIVE discovered manifest.
+
+    Discovery runs once at collection time against --target-url using the same
+    ``cosai_mcp.discovery.discover_tools`` path the production scanner uses
+    (api.py ``_run_discovery``).  With no target — the default in CI — a single
+    sentinel ``None`` param is emitted and the test skips, so the live suite is
+    strictly opt-in and never silently passes on a fictional tool.
+    """
+    if "live_tool" not in metafunc.fixturenames:
+        return
+
+    url = metafunc.config.getoption("--target-url")
+    discovered: tuple = ()
+    if url:
+        from cosai_mcp.config import ScanConfig
+        from cosai_mcp.discovery import discover_tools
+
+        cfg = ScanConfig(
+            target=url,
+            allow_private_targets=True,
+            probe_timeout_seconds=15.0,
+        )
+        discovered = discover_tools(url, cfg)
+
+    if discovered:
+        metafunc.parametrize("live_tool", list(discovered), ids=[t.name for t in discovered])
+    else:
+        metafunc.parametrize("live_tool", [None], ids=["no-live-target"])
 
 
 @pytest.fixture
