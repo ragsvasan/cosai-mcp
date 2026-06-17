@@ -73,6 +73,25 @@ class _AdvancedHelpCommand(click.Command):
             )
 
 
+def _parse_tool_allowlist(raw: str | None) -> tuple[str, ...] | None:
+    """Parse the comma-separated --tool-allowlist value into a tuple of names.
+
+    Returns None when no value is supplied (T11 then reports INCONCLUSIVE), or a
+    tuple of stripped, de-duplicated, non-empty names.  An all-whitespace value
+    is treated as 'not supplied' (None) rather than an empty approved set.
+    """
+    if raw is None:
+        return None
+    names = [n.strip() for n in raw.split(",") if n.strip()]
+    if not names:
+        return None
+    # De-dupe while preserving order.
+    seen: dict[str, None] = {}
+    for n in names:
+        seen.setdefault(n, None)
+    return tuple(seen)
+
+
 def _help_advanced_cb(ctx: click.Context, param: click.Parameter, value: bool):
     if not value or ctx.resilient_parsing:
         return
@@ -188,6 +207,10 @@ def main() -> None:
               help="Widen the T5 secret/PII manifest scan to the broad-PII tier "
                    "(SSN, IBAN, US phone, Luhn-validated PAN) on top of the always-on "
                    "anchored-credential tier. Off by default to keep scans fast.")
+@click.option("--tool-allowlist", default=None, hidden=True,
+              help="Comma-separated approved tool names for the T11 supply-chain scan. "
+                   "Discovered tools not on the list (or within one edit of an entry — "
+                   "typosquat) are flagged. Without it, T11 is reported INCONCLUSIVE.")
 @click.option("--profile", default=None,
               help="Server profile name (e.g. mnemo, fastmcp). Optional — omit for a "
                    "generic scan. Sets mcp_path, auth header format, tool name map, "
@@ -282,6 +305,7 @@ def scan(
     mcp_path: str,
     no_adaptive: bool,
     pii_strict: bool,
+    tool_allowlist: str | None,
     profile: str | None,
     allow_custom_profiles: bool,
     adversarial: bool,
@@ -405,6 +429,7 @@ def scan(
             probe_delay_seconds=probe_delay,
             baseline_path=Path(baseline_path) if baseline_path else None,
             pii_strict=pii_strict,
+            tool_allowlist=_parse_tool_allowlist(tool_allowlist),
         )
     except ValueError as exc:
         # Includes adversarial dual opt-in failures AND a malformed

@@ -509,6 +509,7 @@ def _run_scan(
     baseline_path: Path | None = None,
     pii_strict: bool = False,
     stateful_method_overrides: dict[str, str] | None = None,
+    tool_allowlist: tuple[str, ...] | None = None,
 ) -> ScanResult:
     """Orchestrate a complete scan and return a ``ScanResult``.
 
@@ -547,6 +548,7 @@ def _run_scan(
         probe_delay_seconds=probe_delay_seconds,
         pii_strict=pii_strict,
         stateful_method_overrides=stateful_method_overrides,
+        tool_allowlist=tool_allowlist,
     )
 
     # Generate a unique scan ID for this run (used for canary traceability)
@@ -634,6 +636,17 @@ def _run_scan(
         # that only asserted tools/list succeeds (audit COV-02).
         if effective_categories is None or "T6" in effective_categories:
             probe_results.extend(_scan_manifest_t6(tuple(discovered_tools) if discovered_tools else ()))
+
+        # T11: passive supply-chain scan — discovered tools vs the operator
+        # allowlist (typosquat / unexpected-tool).  INCONCLUSIVE without an
+        # allowlist, so T11 never false-greens on the vacuous legacy probe.
+        if effective_categories is None or "T11" in effective_categories:
+            probe_results.extend(
+                _scan_manifest_t11(
+                    tuple(discovered_tools) if discovered_tools else (),
+                    config.tool_allowlist,
+                )
+            )
 
         # Profile: remap discovered tool name through tool_name_map if present.
         # This ensures probes use the real server tool name instead of the
@@ -968,6 +981,105 @@ def _scan_manifest_t5(
     return results
 
 
+def _scan_manifest_t11(
+    discovered_tools: tuple,
+    tool_allowlist: tuple[str, ...] | None,
+) -> list[ProbeResult]:
+    """Passive T11 supply-chain scan over the discovered tools/list manifest.
+
+    WG-89 reviewer item 3.  The legacy T11-001 black-box probe (ask for a
+    fictional tool name; treat -32601 as a pass) is vacuous — every conformant
+    server passes it.  The real black-box T11 surface an external scanner *can*
+    decide is the operator's approved-tool allowlist:
+
+      * A discovered tool within Levenshtein distance 1 of an allowlist entry but
+        not equal to it → TYPOSQUAT (a tool masquerading as an approved one).
+      * A discovered tool not on the allowlist and not a near-miss → UNEXPECTED
+        tool (a possible unauthorized / rug-pull addition).
+
+    Without an allowlist there is no approved set to compare against, so this
+    returns a single INCONCLUSIVE result (NOT a clean pass) and warns — so T11
+    never silently false-greens on the vacuous probe alone.  Mirrors the
+    T4/T6/T9 passive scans.  Called from ``_run_scan`` whenever T11 is in scope.
+    """
+    from cosai_mcp.middleware.integrity import levenshtein
+    from cosai_mcp.harness.result import ProbeResult as _ProbeResult, make_probe_result
+
+    if not discovered_tools:
+        return []
+
+    if not tool_allowlist:
+        import warnings
+        warnings.warn(
+            "T11 supply-chain typosquat/unexpected-tool detection is INACTIVE: no "
+            "--tool-allowlist supplied. The discovered manifest cannot be checked "
+            "against an approved set, so T11 is reported INCONCLUSIVE, not clean.",
+            stacklevel=2,
+        )
+        return [make_probe_result(
+            probe_id="T11-manifest-no-allowlist",
+            threat_id="T11",
+            passed=False,
+            assertions=(),
+            inconclusive_reason=(
+                "No --tool-allowlist supplied; typosquat / unexpected-tool detection "
+                "could not run. Provide the operator's approved tool names to enable "
+                "T11 supply-chain checks. INCONCLUSIVE, not a finding."
+            ),
+        )]
+
+    allowset = frozenset(tool_allowlist)
+    results: list[ProbeResult] = []
+    idx = 0
+
+    def _finding(excerpt: str) -> ProbeResult:
+        nonlocal idx
+        idx += 1
+        # excerpt is built from scanner-controlled allowlist + validated tool
+        # names (tool names pass _SAFE_TOOL_NAME_RE at discovery), but route it
+        # through make_probe_result so all body content is HTML-escaped anyway.
+        return make_probe_result(
+            probe_id=f"T11-manifest-p{idx}",
+            threat_id="T11",
+            passed=False,
+            assertions=(),
+            response={"_body": excerpt},
+        )
+
+    for tool in discovered_tools:
+        name = tool.name
+        if name in allowset:
+            continue
+        near = sorted(e for e in allowset if levenshtein(name, e) == 1)
+        if near:
+            results.append(_finding(
+                f"Discovered tool {name!r} is within one edit of approved tool(s) "
+                f"{near} but is not itself on the allowlist — possible typosquat "
+                f"masquerading as an approved tool (T11 supply-chain)."
+            ))
+        else:
+            results.append(_finding(
+                f"Discovered tool {name!r} is not on the operator allowlist — "
+                f"an unexpected/unauthorized tool addition (T11 supply-chain). "
+                f"Confirm it is approved, or remove it from the server."
+            ))
+
+    if not results:
+        # Every discovered tool is approved → T11 ran and found nothing.
+        results.append(_ProbeResult(
+            probe_id="T11-manifest-clean",
+            threat_id="T11",
+            passed=True,
+            status_code=None,
+            response_body="All discovered tools are present on the operator allowlist.",
+            error=None,
+            assertions=(),
+            duration_seconds=0.0,
+            inconclusive_reason=None,
+        ))
+    return results
+
+
 def _scan_manifest_t6(discovered_tools: tuple) -> list[ProbeResult]:
     """Passive T6 integrity scan over the discovered tools/list manifest.
 
@@ -1139,6 +1251,7 @@ class Scanner:
         fail_on: str = "critical",
         pii_strict: bool = False,
         stateful_method_overrides: dict[str, str] | None = None,
+        tool_allowlist: tuple[str, ...] | None = None,
     ) -> None:
         # Accept either a full target URL string (original form) or a ScanConfig
         # (documented public form).  When a ScanConfig is passed, its fields
@@ -1163,6 +1276,7 @@ class Scanner:
             self.baseline_path = baseline_path
             self.pii_strict = cfg.pii_strict
             self.stateful_method_overrides = cfg.stateful_method_overrides
+            self.tool_allowlist = cfg.tool_allowlist
             return
 
         self.target = target
@@ -1182,6 +1296,7 @@ class Scanner:
         self.baseline_path = baseline_path
         self.pii_strict = pii_strict
         self.stateful_method_overrides = stateful_method_overrides
+        self.tool_allowlist = tool_allowlist
 
     def run(self, categories: list[str] | None = None) -> ScanResult:
         """Run a complete scan and return a :class:`ScanResult`.
@@ -1213,6 +1328,7 @@ class Scanner:
                 baseline_path=self.baseline_path,
                 pii_strict=self.pii_strict,
                 stateful_method_overrides=self.stateful_method_overrides,
+                tool_allowlist=self.tool_allowlist,
             )
         except (ValueError, TargetUnreachableError):
             raise  # let typed exceptions propagate as-is
