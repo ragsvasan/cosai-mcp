@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.1",
+  "id": "T03-004",
+  "category": "T3",
+  "severity": "critical",
+  "cosai_ref": "T3",
+  "owasp_ref": "MCP-Top10-A03",
+  "cwe": [
+    "CWE-89"
+  ],
+  "confidence": "high",
+  "probes": [
+    {
+      "id": "T03-004-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "id": "' OR '1'='1",
+          "query": "' OR '1'='1",
+          "filter": "' OR '1'='1"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "SQL syntax"
+        },
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "sqlite3."
+        },
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "psycopg2"
+        },
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "ORA-"
+        },
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "SQLSTATE"
+        }
+      ]
+    }
+  ],
+  "remediation": "Use parameterised queries or prepared statements for all database interactions. Never interpolate user-supplied values into SQL strings. Apply strict input validation using Pydantic/JSON Schema at the MCP tool boundary.",
+  "references": [
+    "https://cosai.org/T3",
+    "https://cwe.mitre.org/data/definitions/89.html",
+    "https://owasp.org/www-community/attacks/SQL_Injection"
+  ]
+}
