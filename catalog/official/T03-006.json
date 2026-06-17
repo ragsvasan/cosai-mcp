@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.1",
+  "id": "T03-006",
+  "category": "T3",
+  "severity": "critical",
+  "cosai_ref": "T3",
+  "owasp_ref": "MCP-Top10-A03",
+  "cwe": [
+    "CWE-611"
+  ],
+  "confidence": "high",
+  "probes": [
+    {
+      "id": "T03-006-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "input": "<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><root>&xxe;</root>",
+          "content": "<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><root>&xxe;</root>",
+          "xml": "<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><root>&xxe;</root>"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "root:x:0:0"
+        }
+      ],
+      "corroboration": [
+        {
+          "target": "response.body",
+          "operator": "contains",
+          "value": "root:x:0:0",
+          "description": "Positive evidence: the XXE payload resolved the file:///etc/passwd external entity and the canonical root account record appears in the response body."
+        }
+      ]
+    }
+  ],
+  "remediation": "Disable external entity processing in XML parsers (set FEATURE_EXTERNAL_GENERAL_ENTITIES and FEATURE_EXTERNAL_PARAMETER_ENTITIES to false, or use defusedxml). Never pass user-controlled strings to an XML parser that has external-entity resolution enabled.",
+  "references": [
+    "https://cosai.org/T3",
+    "https://cwe.mitre.org/data/definitions/611.html",
+    "https://owasp.org/www-community/vulnerabilities/XML_External_Entity_(XXE)_Processing"
+  ]
+}

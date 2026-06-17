@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.1",
+  "id": "T03-005",
+  "category": "T3",
+  "severity": "high",
+  "cosai_ref": "T3",
+  "owasp_ref": "MCP-Top10-A03",
+  "cwe": [
+    "CWE-943"
+  ],
+  "confidence": "high",
+  "probes": [
+    {
+      "id": "T03-005-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "filter": "{\"$ne\": null}",
+          "query": "{\"$ne\": null}",
+          "selector": "{\"$ne\": null}"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "$ne"
+        }
+      ]
+    }
+  ],
+  "remediation": "Reject or strictly allowlist all MongoDB query operator keys ($eq, $gt, $ne, etc.) in tool arguments. Deserialise user input as plain strings, not as BSON/JSON query objects. Use strict input schemas that disallow nested objects where a scalar is expected.",
+  "references": [
+    "https://cosai.org/T3",
+    "https://cwe.mitre.org/data/definitions/943.html",
+    "https://owasp.org/www-project-web-security-testing-guide/v42/4-Web_Application_Security_Testing/07-Input_Validation_Testing/05.6-Testing_for_NoSQL_Injection"
+  ]
+}
