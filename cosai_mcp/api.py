@@ -1095,13 +1095,16 @@ def _scan_manifest_t6(discovered_tools: tuple) -> list[ProbeResult]:
     nothing is flagged, one passing ProbeResult is emitted so a clean T6 grades
     PASS (the scan ran and found no integrity issue) rather than NOT_TESTED.
     """
-    from cosai_mcp.middleware.integrity import levenshtein
+    from cosai_mcp.middleware.integrity import fold_homoglyphs, levenshtein
     from cosai_mcp.harness.result import ProbeResult as _ProbeResult
 
     if not discovered_tools:
         return []
 
     names: list[str] = [t.name for t in discovered_tools]
+    # Homoglyph-folded, lower-cased view used for shadow/near-collision distance
+    # so a mixed-script squat (Cyrillic "rеad_file") is not invisible to the scan.
+    _folded: dict[str, str] = {n: fold_homoglyphs(n).lower() for n in set(names)}
     results: list[ProbeResult] = []
 
     def _finding(idx: int, excerpt: str) -> ProbeResult:
@@ -1133,9 +1136,9 @@ def _scan_manifest_t6(discovered_tools: tuple) -> list[ProbeResult]:
                 f"another (T6). Tool names must be unique within a server.",
             ))
 
-    # 2. Reserved-method shadowing (equal or Levenshtein ≤ 1).
+    # 2. Reserved-method shadowing (equal or Levenshtein ≤ 1), homoglyph-folded.
     for name in sorted(set(names)):
-        lname = name.lower()
+        lname = _folded[name]
         for method in _RESERVED_MCP_METHODS:
             d = levenshtein(lname, method)
             if d <= 1:
@@ -1161,18 +1164,27 @@ def _scan_manifest_t6(discovered_tools: tuple) -> list[ProbeResult]:
     unique = sorted(set(names))
     for i in range(len(unique)):
         for j in range(i + 1, len(unique)):
-            if (
-                levenshtein(unique[i].lower(), unique[j].lower()) == 1
-                and not _is_plural_variant(unique[i], unique[j])
-            ):
+            # Compare homoglyph-folded forms: distance 0 means the two distinct
+            # raw names are identical once look-alike characters are folded (a
+            # homoglyph clone — the strongest squat signal); distance 1 is a
+            # classic single-edit typosquat.
+            d = levenshtein(_folded[unique[i]], _folded[unique[j]])
+            if d <= 1 and not _is_plural_variant(unique[i], unique[j]):
                 finding_idx += 1
-                results.append(_finding(
-                    finding_idx,
-                    f"Tool names '{unique[i]}' and '{unique[j]}' differ by a "
-                    f"single edit (Levenshtein 1). One may be a typosquat or "
-                    f"shadow of the other (T6). Verify both are intentional and "
-                    f"distinct.",
-                ))
+                if d == 0:
+                    detail = (
+                        f"Tool names '{unique[i]}' and '{unique[j]}' are identical "
+                        f"after folding look-alike (homoglyph) characters. One "
+                        f"impersonates the other (T6 homoglyph squat)."
+                    )
+                else:
+                    detail = (
+                        f"Tool names '{unique[i]}' and '{unique[j]}' differ by a "
+                        f"single edit (Levenshtein 1). One may be a typosquat or "
+                        f"shadow of the other (T6). Verify both are intentional and "
+                        f"distinct."
+                    )
+                results.append(_finding(finding_idx, detail))
 
     if not results:
         # Manifest scanned, no integrity issue — emit a clean PASS marker so the
