@@ -123,6 +123,14 @@ class MockMCPServer:
         JSON-RPC error.  Calls with no Bearer token are not de-duplicated.
         Default False (vulnerable: a replayed token is accepted every time),
         which is exactly the condition T01-003 must detect.
+    call_budget:
+        If set, the server enforces a per-session ``tools/call`` budget: the
+        first ``call_budget`` calls are answered normally and every call beyond
+        it returns a JSON-RPC rate-limit error (-32029).  Once tripped it stays
+        tripped (all subsequent calls rejected), modelling a secure server that
+        bounds recursive/looping tool chains (T10 denial-of-wallet).  Default
+        None = unlimited (vulnerable). ``tools/list`` is never counted, so the
+        MCP handshake does not consume the budget.
     """
 
     def __init__(
@@ -137,6 +145,7 @@ class MockMCPServer:
         confirmation_bypasses_scope: bool = False,
         confirmation_gates_access: bool = False,
         reject_replayed_tokens: bool = False,
+        call_budget: int | None = None,
     ) -> None:
         self._tools = tools if tools is not None else list(_DEFAULT_TOOLS)
         self._tools_call_response = tools_call_response
@@ -155,6 +164,8 @@ class MockMCPServer:
         self._confirmation_gates_access = confirmation_gates_access
         self._reject_replayed_tokens = reject_replayed_tokens
         self._seen_token_ids: set[str] = set()  # JTI replay cache (guarded by _log_lock)
+        self._call_budget = call_budget
+        self._tools_call_count: int = 0
         self._last_request_headers: dict[str, str] = {}
 
     @property
@@ -233,6 +244,25 @@ class MockMCPServer:
         if method == "tools/call":
             params = request.get("params", {})
             name = params.get("name", "unknown")
+
+            # Per-session call budget (T10 denial-of-wallet).  Counted across
+            # the server's lifetime and applied before any other tool logic so
+            # the budget bounds every call regardless of tool.  Once the budget
+            # is exhausted it stays exhausted (every later call rejected),
+            # modelling a secure server that breaks a recursive/looping chain.
+            if self._call_budget is not None:
+                with self._log_lock:
+                    self._tools_call_count += 1
+                    over_budget = self._tools_call_count > self._call_budget
+                if over_budget:
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "error": {
+                            "code": -32029,
+                            "message": "Per-session call budget exceeded",
+                        },
+                    }
 
             # JTI replay cache (T1): reject the SECOND presentation of a token.
             if self._reject_replayed_tokens:

@@ -16,6 +16,7 @@ from cosai_mcp.stateful.harness import (
     StepAction,
     StepAssertion,
     StepResult,
+    _detect_unbounded_tool_loop,
     _evaluate_assertion,
     _resolve_path,
     _scenario_method_not_found,
@@ -26,6 +27,7 @@ from cosai_mcp.stateful.scenarios import (
     t6_tool_shadowing_mid_session,
     t7_session_revocation,
     t7_session_token_binding,
+    t10_recursive_tool_loop,
 )
 
 
@@ -787,3 +789,174 @@ class TestScenarioFactoryFields:
         assert s.id == "T7-SC-001"
         assert "T7" in s.threat_categories
         assert len(s.steps) >= 2
+
+    def test_t10_recursive_tool_loop_fields(self):
+        s = t10_recursive_tool_loop()
+        assert s.id == "T10-SC-001"
+        assert "T10" in s.threat_categories
+        assert s.loop_budget_check is True
+        assert len(s.steps) == 16  # default loop_calls
+        # Every step is a repeated tools/call to the same tool with no per-step
+        # assertion — the verdict comes from the harness call-budget check.
+        for step in s.steps:
+            assert step.action.method == "tools/call"
+            assert step.action.params["name"] == "echo"
+            assert step.assertions == ()
+
+    def test_t10_recursive_tool_loop_floor(self):
+        """loop_calls is floored at 2 — the loop check needs ≥2 calls."""
+        s = t10_recursive_tool_loop(loop_calls=1)
+        assert len(s.steps) == 2
+
+
+# ---------------------------------------------------------------------------
+# T10: Recursive tool-chain loop (denial-of-wallet)
+# ---------------------------------------------------------------------------
+
+class TestT10RecursiveToolLoop:
+    """E2E: the recursive-loop scenario against MockMCPServer with/without a
+    per-session call budget."""
+
+    def test_vulnerable_server_no_budget_fails_scenario(self):
+        """Server that answers the entire loop (no call budget) → scenario FAILS
+        with a synthetic denial-of-wallet step."""
+        with MockMCPServer() as server:  # call_budget=None → unlimited
+            server.wait_ready()
+            result = _harness().run_scenario(
+                t10_recursive_tool_loop(loop_calls=6), _target(server)
+            )
+
+        assert result.status == "complete"
+        assert result.passed is False
+        # 6 loop steps PLUS one synthetic call-budget/loop-check step.
+        assert len(result.step_results) == 7
+        # Each loop step is answered (no per-step assertion → passes).
+        for sr in result.step_results[:6]:
+            assert sr.passed is True
+        budget = result.step_results[6]
+        assert budget.passed is False
+        assert budget.description == "T10 call-budget / loop check"
+        assert "denial-of-wallet" in budget.failures[0].message.lower()
+
+    def test_secure_server_with_budget_passes_scenario(self):
+        """Server that exhausts its call budget mid-loop and keeps rejecting →
+        final call rejected → scenario PASSES (no synthetic failing step)."""
+        with MockMCPServer(call_budget=3) as server:
+            server.wait_ready()
+            result = _harness().run_scenario(
+                t10_recursive_tool_loop(loop_calls=8), _target(server)
+            )
+
+        assert result.status == "complete"
+        assert result.passed is True
+        # No synthetic budget-check step appended → just the 8 loop steps.
+        assert len(result.step_results) == 8
+        # First 3 calls answered, calls 4-8 rejected with -32029. The final
+        # call's response carries the JSON-RPC error.
+        final_resp = result.step_results[-1].response
+        assert final_resp is not None
+        assert final_resp.get("error", {}).get("code") == -32029
+
+    def test_budget_not_consumed_by_handshake_tools_list(self):
+        """The MCP handshake (initialize + tools/list) must not consume the
+        tools/call budget — a budget of 1 still answers the first loop call."""
+        with MockMCPServer(call_budget=1) as server:
+            server.wait_ready()
+            result = _harness().run_scenario(
+                t10_recursive_tool_loop(loop_calls=3), _target(server)
+            )
+
+        # Budget=1 → first loop call answered, calls 2-3 rejected. Final
+        # rejected → secure → passes.
+        assert result.status == "complete"
+        assert result.passed is True
+        first_resp = result.step_results[0].response
+        assert first_resp is not None
+        assert "error" not in first_resp or first_resp.get("error") is None
+
+
+class TestDetectUnboundedToolLoopHelper:
+    """Unit tests for the _detect_unbounded_tool_loop synthetic check."""
+
+    @staticmethod
+    def _scenario(n: int) -> Scenario:
+        return t10_recursive_tool_loop(loop_calls=n)
+
+    @staticmethod
+    def _call_step(idx: int, *, rejected: bool) -> StepResult:
+        if rejected:
+            resp = {"jsonrpc": "2.0", "id": idx,
+                    "error": {"code": -32029, "message": "budget"}}
+        else:
+            resp = {"jsonrpc": "2.0", "id": idx,
+                    "result": {"content": [], "isError": False}}
+        return StepResult(
+            step_index=idx, description="loop", passed=True,
+            response=resp, failures=(), error=None,
+        )
+
+    def test_all_success_returns_failing_step(self):
+        scenario = self._scenario(4)
+        results = [self._call_step(i, rejected=False) for i in range(4)]
+        loop = _detect_unbounded_tool_loop(scenario, results)
+        assert loop is not None
+        assert loop.passed is False
+        assert "denial-of-wallet" in loop.failures[0].message.lower()
+
+    def test_final_rejected_returns_none(self):
+        """Budget tripped and still rejecting at the end → bounded → no finding."""
+        scenario = self._scenario(4)
+        results = [
+            self._call_step(0, rejected=False),
+            self._call_step(1, rejected=False),
+            self._call_step(2, rejected=True),
+            self._call_step(3, rejected=True),
+        ]
+        assert _detect_unbounded_tool_loop(scenario, results) is None
+
+    def test_intermittent_rejection_but_final_success_is_finding(self):
+        """A server that rejected mid-loop but is answering again at the end is
+        NOT bounded — the final call succeeded, so it is still a finding.
+        The verdict keys off the FINAL call, not merely 'any rejection'."""
+        scenario = self._scenario(4)
+        results = [
+            self._call_step(0, rejected=False),
+            self._call_step(1, rejected=True),
+            self._call_step(2, rejected=False),
+            self._call_step(3, rejected=False),
+        ]
+        loop = _detect_unbounded_tool_loop(scenario, results)
+        assert loop is not None
+        assert loop.passed is False
+
+    def test_fewer_than_two_calls_returns_none(self):
+        """A single tools/call is not a loop — nothing to assert."""
+        # Build a one-step scenario manually (factory floors at 2).
+        scenario = Scenario(
+            id="X", name="x", threat_categories=("T10",),
+            loop_budget_check=True,
+            steps=(
+                ScenarioStep(
+                    description="one call",
+                    action=StepAction(method="tools/call",
+                                      params={"name": "echo"}),
+                    assertions=(),
+                ),
+            ),
+        )
+        results = [self._call_step(0, rejected=False)]
+        assert _detect_unbounded_tool_loop(scenario, results) is None
+
+    def test_content_layer_iserror_counts_as_rejection(self):
+        """A budget signalled via MCP content-layer isError (not a JSON-RPC
+        error) on the final call also counts as bounded."""
+        scenario = self._scenario(3)
+        ok = self._call_step(0, rejected=False)
+        ok2 = self._call_step(1, rejected=False)
+        iserror = StepResult(
+            step_index=2, description="loop", passed=True,
+            response={"jsonrpc": "2.0", "id": 2,
+                      "result": {"content": [], "isError": True}},
+            failures=(), error=None,
+        )
+        assert _detect_unbounded_tool_loop(scenario, [ok, ok2, iserror]) is None

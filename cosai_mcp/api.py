@@ -29,6 +29,7 @@ from cosai_mcp.stateful.scenarios import (
     t6_tool_shadowing_mid_session,
     t7_session_revocation,
     t7_session_token_binding,
+    t10_recursive_tool_loop,
 )
 
 # ---------------------------------------------------------------------------
@@ -45,7 +46,7 @@ COVERAGE_MATRIX: dict[str, str] = {
     "T7":  "stateful",
     "T8":  "black-box-prober",
     "T9":  "middleware-only+manifest",
-    "T10": "black-box-prober",
+    "T10": "black-box-prober+stateful",
     "T11": "black-box-partial",
     "T12": "middleware-only",
 }
@@ -735,6 +736,7 @@ def _run_scan(
             (frozenset({"T6"}), t6_tool_shadowing_mid_session),
             (frozenset({"T7"}), t7_session_token_binding),
             (frozenset({"T7"}), t7_session_revocation),
+            (frozenset({"T10"}), t10_recursive_tool_loop),
         ]
         profile_skip = profile.skip_categories if profile else frozenset()
         harness = StatefulHarness(
