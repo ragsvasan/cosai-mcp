@@ -3,8 +3,58 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
+import warnings
 from dataclasses import dataclass
 from typing import Any
+
+
+# Small reference allowlist of well-known MCP tool names drawn from the widely
+# deployed reference servers (filesystem, git, github, fetch, memory, sqlite,
+# time, …). When the operator supplies no allowlist, the detector falls back to
+# this set so it does not silently return nothing (the "false green" WG-89 item
+# 11 flagged). It is intentionally small and conservative — it exists to catch
+# squats of household-name tools, not to be an exhaustive registry.
+WELL_KNOWN_MCP_TOOLS: frozenset[str] = frozenset({
+    "read_file", "read_text_file", "read_media_file", "write_file", "edit_file",
+    "list_directory", "create_directory", "directory_tree", "move_file",
+    "search_files", "get_file_info", "list_allowed_directories",
+    "fetch", "search", "search_repositories", "create_issue", "create_pull_request",
+    "get_file_contents", "list_commits", "create_or_update_file",
+    "read_query", "write_query", "create_table", "list_tables", "describe_table",
+    "get_current_time", "convert_time", "sequentialthinking",
+})
+
+# Standard MCP JSON-RPC method names a tool name must never shadow (T6). A tool
+# whose name equals or is one edit away from one of these can intercept or
+# impersonate a protocol method. Kept in sync conceptually with the reserved
+# set used by the passive manifest scan in cosai_mcp.api.
+STANDARD_MCP_METHODS: frozenset[str] = frozenset({
+    "initialize", "ping", "tools/list", "tools/call",
+    "resources/list", "resources/read", "resources/templates/list",
+    "resources/subscribe", "resources/unsubscribe",
+    "prompts/list", "prompts/get", "completion/complete",
+    "logging/setlevel", "roots/list", "sampling/createmessage",
+    "notifications/initialized", "notifications/cancelled",
+})
+
+# Cyrillic/Greek homoglyphs → Latin look-alike. Tool names are folded through
+# this map before edit-distance comparison so a mixed-script squat such as
+# Cyrillic "rеad_file" (е = U+0435) collapses onto ASCII "read_file".
+_HOMOGLYPHS: dict[int, str] = {
+    ord(k): v for k, v in {
+        "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y",
+        "ѕ": "s", "і": "i", "ј": "j", "ԁ": "d", "ո": "n", "м": "m", "т": "t",
+        "к": "k", "в": "b", "н": "h", "г": "r",
+        # Greek
+        "ο": "o", "ρ": "p", "α": "a", "ε": "e", "ι": "i", "ν": "v", "τ": "t",
+    }.items()
+}
+
+
+def fold_homoglyphs(name: str) -> str:
+    """Fold common Cyrillic/Greek homoglyphs in *name* to their Latin look-alike."""
+    return name.translate(_HOMOGLYPHS)
 
 
 @dataclass(frozen=True)
@@ -49,10 +99,18 @@ def levenshtein(a: str, b: str) -> int:
 
 
 class TyposquatDetector:
-    """Detect tool names within edit-distance 2 of an allowlisted trusted name.
+    """Detect tool names within edit-distance 2 of a trusted name.
 
-    Only active when an allowlist is configured (empty allowlist → no findings).
-    Exact matches are never flagged.
+    Two trust anchors are checked (homoglyph-folded before comparison):
+
+    1. The operator-supplied ``allowlist``. When it is empty, the detector no
+       longer returns nothing silently (the WG-89 item-11 "false green"): it
+       emits a stderr warning and, unless ``use_reference_allowlist=False``,
+       falls back to :data:`WELL_KNOWN_MCP_TOOLS` so squats of household-name
+       tools are still caught.
+    2. The reserved MCP method names — see :meth:`check_shadowing`.
+
+    Exact matches against the active allowlist are never flagged.
     """
 
     def check_tools(
@@ -60,25 +118,45 @@ class TyposquatDetector:
         tools: list[dict[str, Any]],
         allowlist: list[str],
         max_distance: int = 2,
+        use_reference_allowlist: bool = True,
     ) -> list[TyposquatFinding]:
         """Return findings for tools whose names are suspiciously close to allowlisted names.
 
-        A tool whose name IS in the allowlist is an exact match — not flagged.
-        A tool with Levenshtein distance ≤ max_distance to any allowlisted name is flagged.
+        A tool whose name IS in the active allowlist is an exact match — not
+        flagged. A tool whose homoglyph-folded name is within Levenshtein
+        ``max_distance`` of any allowlisted name is flagged.
         """
-        if not allowlist:
-            return []
+        active = list(allowlist) if allowlist else []
+        if not active:
+            if use_reference_allowlist:
+                print(
+                    "cosai-mcp [T6]: no --tool-allowlist supplied; falling back to the "
+                    f"built-in reference allowlist ({len(WELL_KNOWN_MCP_TOOLS)} well-known "
+                    "MCP tool names). Pass an explicit allowlist for your server's tools "
+                    "to detect squats of your own tool names.",
+                    file=sys.stderr,
+                )
+                active = sorted(WELL_KNOWN_MCP_TOOLS)
+            else:
+                warnings.warn(
+                    "TyposquatDetector called with an empty allowlist and "
+                    "use_reference_allowlist=False — no typosquat detection will run.",
+                    stacklevel=2,
+                )
+                return []
 
+        allow_set = set(active)
         findings: list[TyposquatFinding] = []
         for tool in tools:
             tool_name = tool.get("name", "")
-            if tool_name in allowlist:
+            if tool_name in allow_set:
                 continue  # exact match — allowed
 
+            folded_name = fold_homoglyphs(tool_name)
             best_dist = max_distance + 1
             best_match = ""
-            for allowed in allowlist:
-                d = levenshtein(tool_name, allowed)
+            for allowed in active:
+                d = levenshtein(folded_name, fold_homoglyphs(allowed))
                 if d <= max_distance and d < best_dist:
                     best_dist = d
                     best_match = allowed
@@ -92,6 +170,38 @@ class TyposquatDetector:
                     severity=severity,
                 ))
 
+        return findings
+
+    def check_shadowing(
+        self,
+        tools: list[dict[str, Any]],
+        max_distance: int = 1,
+    ) -> list[TyposquatFinding]:
+        """Return findings for tool names that shadow a standard MCP method.
+
+        A tool whose homoglyph-folded, lower-cased name equals (distance 0) or is
+        within ``max_distance`` edits of a reserved MCP method name can intercept
+        or impersonate that protocol method (T6 shadowing). Reported as
+        TyposquatFinding with ``closest_match`` set to the shadowed method.
+        """
+        findings: list[TyposquatFinding] = []
+        for tool in tools:
+            name = tool.get("name", "")
+            folded = fold_homoglyphs(name).lower()
+            best_dist = max_distance + 1
+            best_match = ""
+            for method in STANDARD_MCP_METHODS:
+                d = levenshtein(folded, method)
+                if d <= max_distance and d < best_dist:
+                    best_dist = d
+                    best_match = method
+            if best_match:
+                findings.append(TyposquatFinding(
+                    tool_name=name,
+                    closest_match=best_match,
+                    distance=best_dist,
+                    severity="high",
+                ))
         return findings
 
 
