@@ -103,6 +103,32 @@ def _help_advanced_cb(ctx: click.Context, param: click.Parameter, value: bool):
     ctx.exit()
 
 
+def _parse_method_overrides(raw: str | None) -> dict[str, str] | None:
+    """Parse a ``placeholder=real`` comma-separated list into a mapping.
+
+    Mirrors the tolerant parsing used elsewhere in the CLI: each comma-separated
+    item is stripped; blank items are skipped; each item is split on the FIRST
+    ``=`` only (tool/method names may contain ``/``, e.g.
+    ``session/terminate=session/delete``); items with no ``=`` are ignored as
+    malformed. Later duplicate keys win. Returns ``None`` when nothing usable
+    remains so the scan path keeps its no-override default.
+    """
+    if not raw:
+        return None
+    out: dict[str, str] = {}
+    for item in raw.split(","):
+        item = item.strip()
+        if not item or "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key or not value:
+            continue
+        out[key] = value
+    return out or None
+
+
 @click.group()
 def main() -> None:
     """cosai-mcp: MCP security scanner for the CoSAI threat taxonomy.
@@ -283,6 +309,14 @@ def main() -> None:
               help="Enable experimental Tracks B/D (SIEM/OCSF telemetry "
                    "emission and IR containment). These are NOT part of the "
                    "default scan surface and may change or be removed.")
+@click.option("--method-overrides", default=None, hidden=True,
+              help="Comma-separated placeholder=real map for the stateful "
+                   "conformance harness, e.g. "
+                   "'admin_delete=purge,session/terminate=session/delete'. "
+                   "Remaps scenario tool/method names onto the equivalent tools "
+                   "this server actually exposes, so T2/T6/T7 scenarios run "
+                   "instead of reporting INCONCLUSIVE. Split on the first '=' "
+                   "only (names may contain '/'); malformed items are ignored.")
 def scan(
     target: str,
     categories: str,
@@ -322,6 +356,7 @@ def scan(
     scorecard_path: str | None,
     no_sign_scorecard: bool,
     experimental: bool,
+    method_overrides: str | None,
 ) -> None:
     """Scan a target MCP server for CoSAI threat categories T1–T12.
 
@@ -430,6 +465,7 @@ def scan(
             baseline_path=Path(baseline_path) if baseline_path else None,
             pii_strict=pii_strict,
             tool_allowlist=_parse_tool_allowlist(tool_allowlist),
+            stateful_method_overrides=_parse_method_overrides(method_overrides),
         )
     except ValueError as exc:
         # Includes adversarial dual opt-in failures AND a malformed

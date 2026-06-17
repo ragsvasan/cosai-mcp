@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, create_autospec, patch
 import pytest
 from click.testing import CliRunner
 
-from cosai_mcp.cli import main
+from cosai_mcp.cli import main, _parse_method_overrides
 from cosai_mcp.api import (
     COVERAGE_MATRIX,
     MIDDLEWARE_ONLY_CATEGORIES,
@@ -532,6 +532,43 @@ class TestPytestPlugin:
 # keep working unchanged — every hidden flag stays fully functional.
 # ---------------------------------------------------------------------------
 
+class TestParseMethodOverrides:
+    """Unit coverage for the placeholder=real override parser."""
+
+    def test_none_and_empty_return_none(self) -> None:
+        assert _parse_method_overrides(None) is None
+        assert _parse_method_overrides("") is None
+        assert _parse_method_overrides("   ") is None
+        assert _parse_method_overrides(",, ,") is None
+
+    def test_basic_pairs(self) -> None:
+        assert _parse_method_overrides("admin_delete=purge,read_file=cat_file") == {
+            "admin_delete": "purge",
+            "read_file": "cat_file",
+        }
+
+    def test_slash_in_names_splits_on_first_equals_only(self) -> None:
+        # Method names contain '/', and only '=' delimits key from value.
+        assert _parse_method_overrides("session/terminate=session/delete") == {
+            "session/terminate": "session/delete",
+        }
+
+    def test_value_may_contain_equals(self) -> None:
+        # Split on FIRST '=' — a '=' in the value is preserved.
+        assert _parse_method_overrides("a=b=c") == {"a": "b=c"}
+
+    def test_malformed_items_without_equals_skipped(self) -> None:
+        assert _parse_method_overrides("admin_delete=purge,garbage,=,x=") == {
+            "admin_delete": "purge",
+        }
+
+    def test_whitespace_stripped(self) -> None:
+        assert _parse_method_overrides("  a = b , c=d ") == {"a": "b", "c": "d"}
+
+    def test_duplicate_keys_last_wins(self) -> None:
+        assert _parse_method_overrides("a=b,a=c") == {"a": "c"}
+
+
 # The intended core (always-visible) functional flags.
 _CORE_FLAGS = {
     "--categories", "--engine", "--fail-on", "--baseline",
@@ -606,6 +643,22 @@ class TestHiddenFlagsStillFunctional:
         res, m = self._run(["--no-adaptive"])
         assert res.exit_code == 0, res.output
         assert m.call_args.kwargs["adaptive"] is False
+
+    def test_method_overrides_flows_dict_to_run_scan(self) -> None:
+        res, m = self._run([
+            "--method-overrides",
+            "admin_delete=purge,session/terminate=session/delete",
+        ])
+        assert res.exit_code == 0, res.output
+        assert m.call_args.kwargs["stateful_method_overrides"] == {
+            "admin_delete": "purge",
+            "session/terminate": "session/delete",
+        }
+
+    def test_method_overrides_absent_passes_none(self) -> None:
+        res, m = self._run([])
+        assert res.exit_code == 0, res.output
+        assert m.call_args.kwargs["stateful_method_overrides"] is None
 
     def test_block_private_targets_still_parsed(self) -> None:
         res, m = self._run(["--block-private-targets"])
