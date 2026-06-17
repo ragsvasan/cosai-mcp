@@ -1,9 +1,9 @@
 # cosai-mcp — Coverage Status
 
-**Date:** 2026-05-04
-**Build:** 1461/1461 tests passing
-**Catalog:** 37 signed threat definitions + 4 adversarial (Ed25519, signatures now enforced)
-**Status:** All phases P0–P13 complete. Codex P1/P2 findings resolved.
+**Date:** 2026-06-16
+**Build:** 1546/1546 tests passing
+**Catalog:** 39 signed threat definitions + 4 adversarial (Ed25519, signatures now enforced)
+**Status:** All phases P0–P13 complete. Codex P1/P2 findings resolved. WG-89 reviewer items 1–12 merged.
 
 ---
 
@@ -32,14 +32,14 @@ Full T4/T9/T12 coverage still requires middleware instrumentation inside the tar
 
 | # | Category | Engine | Catalog entries | Status |
 |---|----------|--------|----------------|--------|
-| T1 | Improper Authentication | Black-box prober | T01-001–004 | **Done** — missing auth, cross-session token, token replay (jti), DPoP binding |
+| T1 | Improper Authentication | Black-box prober | T01-001–006 | **Done** — missing auth, cross-session token, token replay (jti), DPoP binding, wrong-error-code-for-unknown-method (T01-005), real JTI-replay + distinct JWT-validation probes (`alg`/`iss`/`aud`/`exp`, T01-006) |
 | T2 | Missing Access Control | Black-box + stateful harness | T02-001, T02-003 | **Done** — privilege scope probe; destructive one-shot (T02-003); stateful privilege escalation chain + confused deputy |
 | T3 | Input Validation Failures | Black-box prober | T03-001–007 | **Done** — command/path injection, SQL injection (T03-004), NoSQL operator injection (T03-005), SSTI (T03-003), XXE (T03-006), CRLF/header injection (T03-007), null bytes, oversized payloads. Payloads bind to discovered tools via synthesis. |
-| T4 | Data/Control Boundary | Black-box prober (passive) + Middleware | — | **Done** — passive manifest scan wired into `_run_scan`; `ToolPoisoningDetector` + `ResponseBoundaryGuard` for full response-path coverage |
+| T4 | Data/Control Boundary | Black-box prober (passive) + Middleware | — | **Done** — passive manifest scan wired into `_run_scan`; `ToolPoisoningDetector` (with a Unicode/whitespace **normalization pre-pass** so homoglyph/zero-width-obfuscated injection can't evade the match) + `ResponseBoundaryGuard` for full response-path coverage |
 | T5 | Inadequate Data Protection | Black-box prober + passive manifest scan | T05-001, T05-002 + `_scan_manifest_t5` | **Done** — anchored credential set (AWS/GCP/Azure/GitHub/GitLab/Google/JWT) + context-leak (internal host, stack trace) in responses and manifest; strict tier `--pii-strict` (SSN, IBAN, phone, Luhn-PAN). Secrets redacted to `[REDACTED:<type>]`. |
-| T6 | Integrity/Verification | Passive manifest scan + stateful harness | `_scan_manifest_t6` | **Done** — passive manifest-integrity scan (name collision, reserved-method shadow, Levenshtein-1 typosquat); stateful mid-session manifest-drift diff enforced in `run_scenario` (rug pull) |
+| T6 | Integrity/Verification | Passive manifest scan + stateful harness | `_scan_manifest_t6` | **Done** — passive manifest-integrity scan (name collision, reserved-method shadow, Levenshtein-1 typosquat, **homoglyph** confusables, optional operator **reference allowlist** for known-good tool names); stateful mid-session manifest-drift diff enforced in `run_scenario` (rug pull) |
 | T7 | Session Security Failures | Stateful harness | — | **Done** — session fixation, token-in-URL, cross-session replay, explicit revocation (T7-SC-002) |
-| T8 | Network Binding Failures | Black-box prober | T08-001–009 | **Done** — SSRF: RFC1918/link-local/loopback, AWS IMDSv1 (T08-001) + IMDSv2 (T08-006), GCP (T08-004), Azure (T08-005), Alibaba (T08-007), `file://` (T08-008), IPv6 ULA/link-local (T08-009); protocol version; 0.0.0.0 binding detection |
+| T8 | Network Binding Failures | Black-box prober | T08-001–009 | **Done** — SSRF: RFC1918/link-local/loopback, AWS IMDSv1 (T08-001) + IMDSv2 (T08-006), GCP (T08-004), Azure (T08-005), Alibaba (T08-007), `file://` (T08-008), IPv6 ULA/link-local (T08-009); protocol version; honest bind-config scope (0.0.0.0 / wildcard-bind flagged against documented intent, not blindly) + optional TLS inspection |
 | T9 | Trust Boundary Failures | Middleware + passive manifest scan | — | **Done** — passive Totem manifest scan (destructive tools missing two-stage commit); full coverage via LLMOutputSanitizer + TrustBoundaryChecker (deploy middleware in target) |
 | T10 | Resource Management | Black-box prober + stateful harness | T10-001–005 | **Done** — oversized input (T10-001), rate-limit liveness (T10-002), recursive payload nesting (T10-003), HTTP-layer burst 429/503 (T10-004), JSON-RPC-layer per-session call budget -32029 (T10-005); **stateful** recursive/looping tool-chain → per-session call-budget enforcement (T10-SC-001). _Out of scope (documented):_ heartbeat / progress-notification timeout and concurrent-connection cap / slow-loris / gzip-bomb — see note below |
 | T11 | Supply Chain/Lifecycle | Passive manifest scan | `_scan_manifest_t11` (+ legacy T11-001) | **Done** — operator-allowlist scan (`--tool-allowlist`): Levenshtein-1 typosquat + unexpected/unauthorized tool. **INCONCLUSIVE (not clean) without an allowlist** — the legacy fictional-tool probe is a vacuous liveness check only. |
@@ -115,7 +115,7 @@ Requires `--adversarial --i-own-this-target`. Blocked against RFC1918 and loopba
 
 ## Test Suite
 
-**1461 tests passing** across:
+**1546 tests passing** across:
 
 | Module | What |
 |--------|------|

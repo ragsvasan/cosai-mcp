@@ -8,7 +8,7 @@ Reference for all 12 CoSAI threat categories, their attack patterns, what cosai-
 
 | Category | Name | Engine | Status |
 |----------|------|--------|--------|
-| T1 | Improper Authentication | Black-box prober | Done — 5 probes (missing auth, token replay, cross-session, DPoP, wrong error code T01-005) |
+| T1 | Improper Authentication | Black-box prober | Done — 6 probes (missing auth, token replay, cross-session, DPoP, wrong error code T01-005, real JTI-replay + JWT header validation T01-006) |
 | T2 | Missing Access Control | Black-box prober + stateful harness | Done — BB: privilege scope + destructive one-shot (T02-003) + tools/list enumeration (T02-004) + read-scope write bypass (T02-005); Stateful: privilege escalation chain + confused deputy |
 | T3 | Input Validation Failures | Black-box prober | Done — command/path/SQL injection, NoSQL operator injection, SSTI, XXE, CRLF/header injection, null bytes, oversized payloads (payloads bound to discovered tools via synthesis) |
 | T4 | Data/Control Boundary | Middleware instrumentation | Done — requires middleware in target server |
@@ -17,7 +17,7 @@ Reference for all 12 CoSAI threat categories, their attack patterns, what cosai-
 | T7 | Session Security Failures | Stateful harness + black-box prober | Done — Stateful: session fixation, token-in-URL, cross-session replay, revocation (T7-SC-002); BB: CORS wildcard (T07-001), MCP confirmation bypass (T07-002, critical), scope-before-confirmation (T07-003, high) |
 | T8 | Network Binding Failures | Black-box prober | Done — 0.0.0.0 binding, SSRF (RFC1918/link-local/loopback, AWS IMDSv1+IMDSv2, GCP/Azure/Alibaba metadata, `file://`, IPv6 ULA/link-local), shadow server detection |
 | T9 | Trust Boundary Failures | Middleware instrumentation | Done — requires middleware in target server |
-| T10 | Resource Management | Black-box prober | Done — rate limiting with probe_count (T10-004), response size limits, recursive depth, heartbeat |
+| T10 | Resource Management | Black-box prober + stateful harness | Done — oversized input (T10-001), recursive payload (T10-003), HTTP burst 429/503 (T10-004), JSON-RPC per-session call budget -32029 (T10-005), stateful recursive tool-loop / denial-of-wallet (T10-SC-001) |
 | T11 | Supply Chain/Lifecycle | Black-box prober (passive) | Done — operator-allowlist scan (`--tool-allowlist`): typosquat (Levenshtein 1) + unexpected/unauthorized tool; **INCONCLUSIVE without an allowlist** (legacy fictional-tool probe is a vacuous liveness check) |
 | T12 | Insufficient Logging | Middleware + black-box prober | Done — middleware: hash-chained audit log; BB: T12-002 tool description transparency |
 
@@ -46,6 +46,7 @@ Insufficient verification of identity across agent chains. MCP servers must vali
 - Token from a different session → accepted (FAIL) or rejected (PASS)
 - DPoP-bound token sent without DPoP proof header → accepted (FAIL) or rejected (PASS)
 - **T01-005:** Unknown JSON-RPC method returns wrong error code — `unknown/method` and `tools/doesNotExist` must return `-32601` (Method Not Found), not `-32603` (Internal Error) or a 500; an Internal Error on an unknown method may indicate the method reached execution logic (D-03)
+- **T01-006:** Real JTI-replay (same token presented twice in a session must be rejected) plus distinct JWT header-validation probes — `alg` confusion / `none`, missing/incorrect `iss`/`aud`, and expired `exp` tokens must be rejected (WG-89 item 9)
 
 ### Remediation
 - Validate token `jti` for replay prevention; reject tokens used more than once
@@ -310,10 +311,12 @@ Unbounded resource consumption by agentic workflows. Infinite reasoning loops, r
 - **Cost amplification:** each tool call triggers expensive LLM inference; attacker triggers thousands of calls
 
 ### What cosai-mcp tests
+- **T10-001:** Oversized tool-argument input (100 KB) must be rejected → accepted = no size limit (FAIL)
+- **T10-003:** Deeply-nested recursive payload; server must enforce a max nesting depth → accepted (FAIL)
 - **T10-004:** Rapid-fire requests (`probe_count: 30` for `tools/list`, `probe_count: 20` for `tools/call`); if all requests return HTTP 200, no rate limiting is enforced — at least one must return 429 or 503 (PASS) (H-03)
-- Tools/call that requests maximum response size; checks for size limits → no size limit (FAIL)
-- Recursive tool call chain simulation; checks for depth limits → no depth limit (FAIL)
-- Long-running SSE connection with no progress notification; checks for heartbeat → absent (FAIL)
+- **T10-005:** Per-session call-budget burst — 50 in-session `tools/call`; at least one must return the JSON-RPC rate-limit code `-32029` (exact match, so a generic content-layer error can't false-pass). Catches a JSON-RPC-layer budget that T10-004's HTTP-status check misses
+- **T10-SC-001 (stateful):** Recursive/looping tool-chain — a run of repeated `tools/call` in one session; the harness fails the target if it answers the whole loop without ever exhausting a per-session call budget (the core denial-of-wallet threat; verdict keys off the final call staying rejected)
+- _Out of scope (documented):_ heartbeat / progress-notification timeout (enforced by the `resources` middleware, not probed) and concurrent-connection / slow-loris / gzip-bomb (load/DoS-generation, outside a per-probe-isolated scanner)
 
 ### Remediation
 - Implement per-session rate limits on `tools/call`
