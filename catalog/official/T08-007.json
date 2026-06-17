@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "id": "T08-007",
+  "category": "T8",
+  "severity": "critical",
+  "cosai_ref": "T8",
+  "owasp_ref": "MCP-Top10-A08",
+  "cwe": [
+    "CWE-918"
+  ],
+  "probes": [
+    {
+      "id": "T08-007-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "url": "http://100.100.100.200/latest/meta-data/"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "instance-id"
+        }
+      ]
+    }
+  ],
+  "remediation": "Block requests to Alibaba Cloud ECS metadata endpoint (100.100.100.200). This address is outside the standard link-local range but must be explicitly blocked. Validate URL arguments against a blocklist that includes 100.100.100.200/32 in addition to RFC1918 and link-local ranges.",
+  "references": [
+    "https://cosai.org/T8",
+    "https://cwe.mitre.org/data/definitions/918.html",
+    "https://www.alibabacloud.com/help/en/ecs/user-guide/instance-metadata"
+  ]
+}

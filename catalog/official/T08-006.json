@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "id": "T08-006",
+  "category": "T8",
+  "severity": "critical",
+  "cosai_ref": "T8",
+  "owasp_ref": "MCP-Top10-A08",
+  "cwe": [
+    "CWE-918"
+  ],
+  "probes": [
+    {
+      "id": "T08-006-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "url": "http://169.254.169.254/latest/api/token"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "AQAEA"
+        }
+      ]
+    }
+  ],
+  "remediation": "Block requests to AWS IMDSv2 token endpoint (169.254.169.254/latest/api/token) at the HTTP client level. Unlike IMDSv1 (T08-001), IMDSv2 uses a PUT-based token exchange but the SSRF path remains the same link-local address. Validate URL arguments before any network call.",
+  "references": [
+    "https://cosai.org/T8",
+    "https://cwe.mitre.org/data/definitions/918.html",
+    "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-metadata-v2-how-it-works.html"
+  ]
+}

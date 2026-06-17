@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "id": "T08-008",
+  "category": "T8",
+  "severity": "critical",
+  "cosai_ref": "T8",
+  "owasp_ref": "MCP-Top10-A08",
+  "cwe": [
+    "CWE-918"
+  ],
+  "probes": [
+    {
+      "id": "T08-008-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "url": "file:///etc/passwd"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "root:x:0:0"
+        }
+      ]
+    }
+  ],
+  "remediation": "Restrict URL scheme allowlist to http and https only. Reject file://, ftp://, gopher://, and all non-HTTP schemes at the URL validation boundary before any fetch is attempted. A server that passes file:// URLs to an HTTP client library may leak local filesystem contents.",
+  "references": [
+    "https://cosai.org/T8",
+    "https://cwe.mitre.org/data/definitions/918.html",
+    "https://owasp.org/www-community/attacks/Server_Side_Request_Forgery"
+  ]
+}
