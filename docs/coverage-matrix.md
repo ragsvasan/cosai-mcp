@@ -15,7 +15,7 @@ Which engine covers which CoSAI threat category, and what is explicitly not cove
 | T9 | Trust Boundary Failures | **Middleware only** | Scanner self-protection: all MCP response content sanitised before re-use | Overreliance on LLM judgment requires LLM-in-the-loop (by design out of scope) |
 | T10 | Resource Management | Black-box prober | Rate limit absence with multi-probe (T10-004, probe_count: 30), unbounded response size, recursive depth, heartbeat enforcement | Per-tenant quota accounting (application-layer concern) |
 | T11 | Supply Chain/Lifecycle | Black-box prober (partial) | Typosquatted tool names, unsigned tool definitions, unexpected registry origin | Code-level dependency CVEs (use Snyk/SCA pre-deploy) |
-| T12 | Insufficient Logging | **Middleware only** | Hash-chained audit log, DAG execution trace, tamper detection via `cosai audit verify` | Prompt/LLM reasoning trace (outside MCP layer); `resources/read` logged as ⚠️ partial |
+| T12 | Insufficient Logging | **Middleware only** | Hash-chained audit log, DAG execution trace, tamper detection via `cosai audit verify`. The only black-box T12 artifact (`T12-002`, destructive-tool *description* transparency in `tests/probes/test_t12_description_transparency.py`) is a UX/transparency signal, **not** a logging test — audit logging is structurally unobservable from outside the call path. | Audit trail of tool invocations (internal to server, never exposed over JSON-RPC); prompt/LLM reasoning trace; `resources/read` logged as ⚠️ partial |
 
 ## Engine Key
 

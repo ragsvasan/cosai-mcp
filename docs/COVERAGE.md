@@ -41,7 +41,7 @@ Full T4/T9/T12 coverage still requires middleware instrumentation inside the tar
 | T9 | Trust Boundary Failures | Middleware + passive manifest scan | — | **Done** — passive Totem manifest scan (destructive tools missing two-stage commit); full coverage via LLMOutputSanitizer + TrustBoundaryChecker (deploy middleware in target) |
 | T10 | Resource Management | Black-box prober | T10-001–003 | **Done** — oversized input, rate limiting (429), recursive payload / DoW, heartbeat |
 | T11 | Supply Chain/Lifecycle | Black-box prober | T11-001 | **Done** — tool allowlist enforcement, typosquatting (Levenshtein ≤ 1), signature verification |
-| T12 | Insufficient Logging | Middleware only | — | **Middleware-only** — hash-chained DAG audit log via `cosai audit verify`. (The former black-box T12-002 transparency probe never ran in a real scan — T12 is middleware-skipped by the prober — so it was relocated out of the production catalog to `tests/fixtures/`; audit COV-05.) |
+| T12 | Insufficient Logging | Middleware only | — | **Middleware-only** — hash-chained DAG audit log via `cosai audit verify`. Audit logging is structurally unobservable from a black-box prober (the trail is internal to the server, never exposed over JSON-RPC). The former black-box `T12-002` probe tests destructive-tool *description* transparency (UX), not logging — it is honestly named `tests/probes/test_t12_description_transparency.py`; `tests/probes/test_t12_logging.py` is now a placeholder documenting that no black-box T12 logging probe is possible. The signed `T12-002` file was relocated out of the production catalog to `tests/fixtures/`; audit COV-05. |
 
 ---
 

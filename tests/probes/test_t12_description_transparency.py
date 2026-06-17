@@ -1,12 +1,20 @@
-"""Black-box probes for T12 — Insufficient Logging / Tool Description Transparency.
+"""T12-002 — destructive-tool DESCRIPTION TRANSPARENCY (not audit logging).
 
-T12-002: tools/list must be accessible and destructive tool descriptions must
-include explicit irreversibility disclosure.
+WG-89 reviewer item 4 (honest reframing): this probe regex-matches
+IRREVERSIBLE / "cannot be undone" / "permanently delete" against tool
+*descriptions* returned by ``tools/list``.  That is a **transparency / UX**
+signal — does the manifest disclose irreversibility to an operator? — and is
+NOT a test of T12 "Insufficient Logging", which concerns tamper-evident audit
+trails of tool *invocations*.
 
-NOTE (locked architecture): Full T12 coverage (hash-chained audit log,
-DAG causal chain) requires the middleware instrumentation engine. T12-002
-is the partial black-box component that checks observability surface and
-description transparency.
+Per the locked three-engine architecture, T12 audit logging is
+**middleware territory** (hash-chained append-only log + DAG causal trace,
+verified via ``cosai audit verify``); it is structurally unobservable from a
+black-box prober outside the call path.  See ``tests/probes/test_t12_logging.py``
+for that placeholder and ``docs/coverage-matrix.md`` for the engine mapping.
+
+The file is named for what it actually checks (description transparency); the
+threat id stays ``T12-002`` for catalog/remediation-registry continuity.
 """
 from __future__ import annotations
 
