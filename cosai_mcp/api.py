@@ -370,6 +370,7 @@ class ScanResult:
         # probe_results so report builders that iterate directly still list it.
         failed_probes = any(
             not r.passed and not r.suppressed
+            and r.inconclusive_reason is None  # inconclusive ≠ finding (see _findings)
             for r in self.probe_results
             if r.error is None
         )
@@ -509,6 +510,7 @@ def _run_scan(
     baseline_path: Path | None = None,
     pii_strict: bool = False,
     stateful_method_overrides: dict[str, str] | None = None,
+    tool_allowlist: tuple[str, ...] | None = None,
 ) -> ScanResult:
     """Orchestrate a complete scan and return a ``ScanResult``.
 
@@ -547,6 +549,7 @@ def _run_scan(
         probe_delay_seconds=probe_delay_seconds,
         pii_strict=pii_strict,
         stateful_method_overrides=stateful_method_overrides,
+        tool_allowlist=tool_allowlist,
     )
 
     # Generate a unique scan ID for this run (used for canary traceability)
@@ -1281,6 +1284,7 @@ class Scanner:
             self.baseline_path = baseline_path
             self.pii_strict = cfg.pii_strict
             self.stateful_method_overrides = cfg.stateful_method_overrides
+            self.tool_allowlist = cfg.tool_allowlist
             return
 
         self.target = target
@@ -1300,6 +1304,7 @@ class Scanner:
         self.baseline_path = baseline_path
         self.pii_strict = pii_strict
         self.stateful_method_overrides = stateful_method_overrides
+        self.tool_allowlist: tuple[str, ...] | None = None
 
     def run(self, categories: list[str] | None = None) -> ScanResult:
         """Run a complete scan and return a :class:`ScanResult`.
@@ -1331,6 +1336,7 @@ class Scanner:
                 baseline_path=self.baseline_path,
                 pii_strict=self.pii_strict,
                 stateful_method_overrides=self.stateful_method_overrides,
+                tool_allowlist=self.tool_allowlist,
             )
         except (ValueError, TargetUnreachableError):
             raise  # let typed exceptions propagate as-is

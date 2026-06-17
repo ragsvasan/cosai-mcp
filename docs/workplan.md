@@ -1,7 +1,7 @@
 # cosai-mcp — End-to-End Implementation Workplan
 
 **Date:** 2026-04-28
-**Status:** All phases complete — P0–P13 (1462 tests passing).
+**Status:** All phases complete — P0–P13 (1558 tests passing).
 **Full panel record:** [architecture-decisions.md](architecture-decisions.md)
 
 ### Panel Review Strategy (optimised 2026-04-27)
