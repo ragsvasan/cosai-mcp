@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "id": "T08-005",
+  "category": "T8",
+  "severity": "critical",
+  "cosai_ref": "T8",
+  "owasp_ref": "MCP-Top10-A08",
+  "cwe": [
+    "CWE-918"
+  ],
+  "probes": [
+    {
+      "id": "T08-005-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {
+          "url": "http://169.254.169.254/metadata/instance?api-version=2021-02-01"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "azEnvironment"
+        },
+        {
+          "target": "response.body",
+          "operator": "not_contains",
+          "value": "vmId"
+        }
+      ]
+    }
+  ],
+  "remediation": "Block requests to Azure IMDS endpoint (169.254.169.254) at the HTTP client level. Validate URL arguments against an allowlist that rejects link-local addresses and Azure IMDS paths before any network call is made.",
+  "references": [
+    "https://cosai.org/T8",
+    "https://cwe.mitre.org/data/definitions/918.html",
+    "https://learn.microsoft.com/en-us/azure/virtual-machines/instance-metadata-service"
+  ]
+}
