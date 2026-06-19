@@ -305,6 +305,11 @@ def main() -> None:
                    "this server actually exposes, so T2/T6/T7 scenarios run "
                    "instead of reporting INCONCLUSIVE. Split on the first '=' "
                    "only (names may contain '/'); malformed items are ignored.")
+@click.option("--tool-allowlist", "tool_allowlist", default=None,
+              help="Comma-separated list of operator-approved tool names for T11 "
+                   "supply-chain checks. When set, any discovered tool not on this "
+                   "list (unexpected) or within Levenshtein distance 1 (typosquat) "
+                   "is flagged. Without it, T11 reports INCONCLUSIVE.")
 def scan(
     target: str,
     categories: str,
@@ -344,6 +349,7 @@ def scan(
     no_sign_scorecard: bool,
     experimental: bool,
     method_overrides: str | None,
+    tool_allowlist: str | None,
 ) -> None:
     """Scan a target MCP server for CoSAI threat categories T1–T12.
 
@@ -452,6 +458,7 @@ def scan(
             baseline_path=Path(baseline_path) if baseline_path else None,
             pii_strict=pii_strict,
             stateful_method_overrides=_parse_method_overrides(method_overrides),
+            tool_allowlist=_parse_tool_allowlist(tool_allowlist),
         )
     except ValueError as exc:
         # Includes adversarial dual opt-in failures AND a malformed
