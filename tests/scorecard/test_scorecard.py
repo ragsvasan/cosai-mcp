@@ -32,6 +32,8 @@ def _make_scorecard(
     signed: bool = False,
 ) -> Scorecard:
     if categories is None:
+        from cosai_mcp.scorecard.compliance import CATEGORY_COMPLIANCE_MAP
+
         categories = [
             CategoryResult(
                 category=f"T{i}",
@@ -41,6 +43,7 @@ def _make_scorecard(
                 critical_count=0,
                 high_count=0,
                 coverage_engine="black_box_prober",
+                compliance_mapping=CATEGORY_COMPLIANCE_MAP.get(f"T{i}"),
             )
             for i in range(1, 13)
         ]
@@ -428,6 +431,262 @@ class TestScorecardCLI:
         runner = CliRunner()
         result = runner.invoke(main, ["scorecard", "show", str(p), "--verify"])
         assert result.exit_code == 0, result.output
+
+    # -------------------------------------------------------------------
+    # Adversary-pass EXPLOIT 2 (ENT-P0-1 review): a valid Ed25519 signature
+    # alone does not prove the reviewed catalog produced this scorecard — a
+    # signed scorecard from a DIFFERENT catalog than the one an operator
+    # pinned must not verify clean just because the signature checks out.
+    # -------------------------------------------------------------------
+
+    def test_scorecard_verify_matching_expected_catalog_hash_exits_0(
+        self, tmp_path: Path
+    ) -> None:
+        p = tmp_path / "scorecard.json"
+        self._write_scorecard(p, signed=True)  # catalog_hash="abc123"
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["scorecard", "verify", str(p), "--expected-catalog-hash", "abc123"]
+        )
+        assert result.exit_code == 0, result.output
+
+    def test_scorecard_verify_mismatched_expected_catalog_hash_exits_1(
+        self, tmp_path: Path
+    ) -> None:
+        """A validly-signed scorecard produced by a different catalog than
+        the one pinned must fail verify, not pass on signature alone."""
+        p = tmp_path / "scorecard.json"
+        self._write_scorecard(p, signed=True)  # catalog_hash="abc123"
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["scorecard", "verify", str(p), "--expected-catalog-hash", "different-hash"],
+        )
+        assert result.exit_code == 1
+        assert "[INVALID]" in result.output
+        assert "catalog" in result.output.lower()
+
+    def test_scorecard_show_verify_mismatched_expected_catalog_hash_exits_1(
+        self, tmp_path: Path
+    ) -> None:
+        p = tmp_path / "scorecard.json"
+        self._write_scorecard(p, signed=True)
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "scorecard", "show", str(p), "--verify",
+                "--expected-catalog-hash", "different-hash",
+            ],
+        )
+        assert result.exit_code == 1
+
+    # -------------------------------------------------------------------
+    # ENT-P0-3 — compliance mapping inside the signed scorecard, printed
+    # by verify (not just show).
+    # -------------------------------------------------------------------
+
+    def test_scorecard_verify_prints_compliance_mapping(self, tmp_path: Path) -> None:
+        p = tmp_path / "scorecard.json"
+        self._write_scorecard(p, signed=True)
+        runner = CliRunner()
+        result = runner.invoke(main, ["scorecard", "verify", str(p)])
+        assert result.exit_code == 0, result.output
+        assert "NIST" in result.output
+        assert "OWASP" in result.output or "A01" in result.output
+
+    def test_scorecard_show_prints_compliance_mapping(self, tmp_path: Path) -> None:
+        p = tmp_path / "scorecard.json"
+        self._write_scorecard(p, signed=True)
+        runner = CliRunner()
+        result = runner.invoke(main, ["scorecard", "show", str(p)])
+        assert result.exit_code == 0, result.output
+        assert "NIST" in result.output
+
+
+class TestComplianceMapping:
+    """ENT-P0-3 (docs/ENTERPRISE_REQUIREMENTS_2026-07-01.md) — each signed
+    category result carries its CoSAI + OWASP MCP Top 10 + NIST AI RMF
+    control mapping, sourced from docs/THREAT_MAPPING.md's cross-reference
+    table, so a GRC stakeholder gets a self-describing, tamper-evident
+    attestation instead of a prose claim in a doc plus an owasp_ref buried
+    in the unsigned SARIF (FABLE_AUDIT_2026-07-01 FIND 6/18).
+    """
+
+    def test_category_result_round_trips_compliance_mapping(self) -> None:
+        from cosai_mcp.scorecard.models import CategoryResult, ComplianceMapping
+
+        mapping = ComplianceMapping(
+            owasp_mcp_top10="A01: Broken Authentication",
+            nist_ai_rmf=("MANAGE 1.1 Risk Response", "GOVERN 6.2 Accountability"),
+        )
+        cr = CategoryResult(
+            category="T1", grade=Grade.PASS, probe_count=2, finding_count=0,
+            critical_count=0, high_count=0, coverage_engine="black_box_prober",
+            compliance_mapping=mapping,
+        )
+        rebuilt = CategoryResult.from_dict(cr.to_dict())
+        assert rebuilt.compliance_mapping == mapping
+
+    def test_category_result_compliance_mapping_defaults_to_none_for_old_json(self) -> None:
+        """Backward compatible: a scorecard JSON written before this
+        feature (no compliance_mapping key) must still parse."""
+        from cosai_mcp.scorecard.models import CategoryResult
+
+        old_dict = {
+            "category": "T1", "grade": "pass", "probe_count": 2,
+            "finding_count": 0, "critical_count": 0, "high_count": 0,
+            "coverage_engine": "black_box_prober",
+        }
+        cr = CategoryResult.from_dict(old_dict)
+        assert cr.compliance_mapping is None
+
+    def test_category_compliance_map_covers_all_twelve_categories(self) -> None:
+        from cosai_mcp.scorecard.compliance import CATEGORY_COMPLIANCE_MAP
+
+        assert set(CATEGORY_COMPLIANCE_MAP) == {f"T{i}" for i in range(1, 13)}
+        for cat, mapping in CATEGORY_COMPLIANCE_MAP.items():
+            assert mapping.nist_ai_rmf, f"{cat} has an empty NIST AI RMF mapping"
+            assert mapping.owasp_mcp_top10, f"{cat} has an empty OWASP mapping"
+
+    def test_compliance_map_matches_owasp_alignment_table(self) -> None:
+        """Panel finding (ENT-P0-3 review, Defense FIX 1 / Adversary EXPLOIT
+        1): docs/THREAT_MAPPING.md has TWO OWASP MCP Top 10 tables that used
+        to disagree with each other, and the code table silently copied one
+        of them. This test parses the "OWASP MCP Top 10 Alignment" table —
+        the one actually linked from SARIF `helpUri` (report/sarif.py) — and
+        asserts every OWASP item number it lists appears verbatim in
+        CATEGORY_COMPLIANCE_MAP for the category it names, so the signed
+        scorecard's compliance claim can never silently drift from the doc
+        this project points auditors to.
+        """
+        import re
+
+        from cosai_mcp.scorecard.compliance import CATEGORY_COMPLIANCE_MAP
+
+        doc = (
+            Path(__file__).resolve().parents[2] / "docs" / "THREAT_MAPPING.md"
+        ).read_text()
+        section = doc.split("## OWASP MCP Top 10 Alignment")[1].split("## OWASP Agentic")[0]
+        rows = re.findall(
+            r"^\| (A\d+) \| ([^|]+) \| (T\d+)", section, re.MULTILINE
+        )
+        assert rows, "could not parse any rows from the OWASP MCP Top 10 Alignment table"
+
+        for owasp_id, title, category in rows:
+            mapping = CATEGORY_COMPLIANCE_MAP.get(category.strip())
+            assert mapping is not None, f"{category} from the doc has no CATEGORY_COMPLIANCE_MAP entry"
+            assert f"{owasp_id}:" in mapping.owasp_mcp_top10, (
+                f"doc says {category} covers {owasp_id} ({title.strip()}), but "
+                f"CATEGORY_COMPLIANCE_MAP[{category!r}].owasp_mcp_top10 = "
+                f"{mapping.owasp_mcp_top10!r} does not mention {owasp_id}"
+            )
+
+    def test_every_category_gets_a_compliance_mapping_through_full_scan(
+        self, tmp_path: Path
+    ) -> None:
+        """Enters at the CLI (this file's established convention for
+        scorecard end-to-end tests) — proves the mapping reaches the
+        written artifact, not just the in-memory builder."""
+        from cosai_mcp.harness.mock_server import MockMCPServer
+
+        sc_file = tmp_path / "scorecard.json"
+        with MockMCPServer() as target:
+            target.wait_ready()
+            runner = CliRunner()
+            result = runner.invoke(
+                main,
+                [
+                    "scan", f"http://127.0.0.1:{target.port}",
+                    "--no-report", "--report-mode", "ci",
+                    "--scorecard", str(sc_file), "--no-sign-scorecard",
+                    "--skip-reachability",
+                ],
+            )
+        assert result.exit_code != 3, result.output
+        data = json.loads(sc_file.read_text())
+        assert len(data["categories"]) == 12
+        for cat in data["categories"]:
+            mapping = cat.get("compliance_mapping")
+            assert mapping is not None, f"{cat['category']} has no compliance_mapping"
+            assert mapping["nist_ai_rmf"], f"{cat['category']} has an empty NIST AI RMF mapping"
+            assert mapping["owasp_mcp_top10"]
+
+        t1 = next(c for c in data["categories"] if c["category"] == "T1")
+        assert "MANAGE 1.1" in " ".join(t1["compliance_mapping"]["nist_ai_rmf"])
+        assert "A01" in t1["compliance_mapping"]["owasp_mcp_top10"]
+
+    def test_compliance_mapping_from_dict_coerces_non_string_nist_elements(self) -> None:
+        """Adversary-pass EXPLOIT 2 (ENT-P0-3 review): every sibling
+        from_dict in this file coerces (str()/int()) — ComplianceMapping's
+        did not, so a scorecard file with non-string nist_ai_rmf elements
+        (e.g. from a different tool version or a hand-edited file) would
+        parse into a tuple of dicts/ints, then crash uncaught later when
+        ', '.join()-ed for printing.
+        """
+        from cosai_mcp.scorecard.models import ComplianceMapping
+
+        parsed = ComplianceMapping.from_dict({
+            "owasp_mcp_top10": "A01: Broken Authentication",
+            "nist_ai_rmf": ["MANAGE 1.1", 42, {"nested": "dict"}],
+        })
+        assert all(isinstance(x, str) for x in parsed.nist_ai_rmf)
+
+    def test_compliance_mapping_from_dict_tolerates_missing_owasp_key(self) -> None:
+        """A compliance_mapping dict missing owasp_mcp_top10 must not raise
+        KeyError inside CategoryResult.from_dict — that would reject an
+        otherwise signature-valid scorecard as 'unreadable' (exit 2)
+        instead of parsing it."""
+        from cosai_mcp.scorecard.models import ComplianceMapping
+
+        parsed = ComplianceMapping.from_dict({"nist_ai_rmf": ["MANAGE 1.1"]})
+        assert parsed.owasp_mcp_top10 == ""
+
+    def test_scorecard_show_survives_malformed_compliance_mapping(self, tmp_path: Path) -> None:
+        """cosai scorecard show on a file with non-string nist_ai_rmf
+        elements must fail cleanly (a normal Click error / non-crash exit),
+        never an uncaught TypeError traceback — the file is untrusted input
+        at the CLI boundary."""
+        sc = _make_scorecard(signed=False)
+        raw = sc.to_dict()
+        raw["categories"][0]["compliance_mapping"] = {
+            "owasp_mcp_top10": "A01: Broken Authentication",
+            "nist_ai_rmf": [1, {"bad": "data"}],
+        }
+        p = tmp_path / "malformed.json"
+        p.write_text(json.dumps(raw), encoding="utf-8")
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["scorecard", "show", str(p)], catch_exceptions=True)
+        assert result.exception is None or isinstance(result.exception, SystemExit), (
+            f"scorecard show crashed with an uncaught exception: {result.exception!r}"
+        )
+
+    def test_tampering_compliance_mapping_breaks_signature(self, tmp_path: Path) -> None:
+        """The mapping must live inside the signed payload, not be bolted
+        on after signing — editing it must invalidate verification."""
+        from cosai_mcp.harness.mock_server import MockMCPServer
+
+        sc_file = tmp_path / "scorecard.json"
+        with MockMCPServer() as target:
+            target.wait_ready()
+            runner = CliRunner()
+            runner.invoke(
+                main,
+                [
+                    "scan", f"http://127.0.0.1:{target.port}",
+                    "--no-report", "--report-mode", "ci",
+                    "--scorecard", str(sc_file),
+                    "--skip-reachability",
+                ],
+            )
+        raw = json.loads(sc_file.read_text())
+        raw["categories"][0]["compliance_mapping"]["nist_ai_rmf"] = ["FORGED CONTROL"]
+        sc_file.write_text(json.dumps(raw))
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["scorecard", "verify", str(sc_file)])
+        assert result.exit_code == 1, result.output
 
 
 # ---------------------------------------------------------------------------

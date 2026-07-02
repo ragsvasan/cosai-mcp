@@ -250,6 +250,25 @@ class TestStatedCountsParsing:
         assert _stated_counts(text) == {1558}
 
 
+class TestCosaiGateExpectedCatalogHash:
+    """Defense-pass FIX 1 (ENT-P0-1 review): --expected-catalog-hash was
+    reachable from the CLI and Python API but not from the reusable
+    cosai-gate.yml workflow — the actual documented CI use case ("a release
+    gate is deterministic ... between the PR run and the merge run")."""
+
+    def test_gate_yml_exposes_expected_catalog_hash_input(self) -> None:
+        data = yaml.safe_load(GATE_YML.read_text())
+        triggers = data.get(True, data.get("on", {}))
+        inputs = triggers["workflow_call"]["inputs"]
+        assert "expected_catalog_hash" in inputs
+        assert inputs["expected_catalog_hash"].get("required") is not True
+
+    def test_gate_yml_run_script_references_expected_catalog_hash_flag(self) -> None:
+        text = GATE_YML.read_text()
+        assert "--expected-catalog-hash" in text
+        assert "inputs.expected_catalog_hash" in text
+
+
 class TestDocsTestCountConsistency:
 
     def test_regression_docs_test_count_matches_collect(self):

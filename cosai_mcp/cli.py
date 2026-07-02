@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -310,6 +311,11 @@ def main() -> None:
                    "supply-chain checks. When set, any discovered tool not on this "
                    "list (unexpected) or within Levenshtein distance 1 (typosquat) "
                    "is flagged. Without it, T11 reports INCONCLUSIVE.")
+@click.option("--expected-catalog-hash", "expected_catalog_hash", default=None, hidden=True,
+              help="SHA-256 hex digest the loaded threat catalog must match (see "
+                   "'Catalog hash:' in scan output). Pins a release gate to an exact, "
+                   "reviewed catalog: a mismatch refuses to scan (exit 2) before any "
+                   "probe runs, instead of silently running against a changed ruleset.")
 def scan(
     target: str,
     categories: str,
@@ -350,6 +356,7 @@ def scan(
     experimental: bool,
     method_overrides: str | None,
     tool_allowlist: str | None,
+    expected_catalog_hash: str | None,
 ) -> None:
     """Scan a target MCP server for CoSAI threat categories T1–T12.
 
@@ -394,6 +401,19 @@ def scan(
 
     cat_list = [c.strip() for c in categories.split(",") if c.strip()] if categories != "all" else None  # noqa: E501
     effective_catalog_root = Path(catalog_root) if catalog_root else CATALOG_ROOT
+
+    # -- Validate --expected-catalog-hash before it ever reaches _run_scan --
+    # An empty string (e.g. an unset CI variable interpolated as "") must not
+    # fall through to the generic "expected ''" mismatch message — that's an
+    # operator/CI mistake, not a real pin, and deserves its own clear error.
+    if expected_catalog_hash is not None and expected_catalog_hash.strip() == "":
+        click.echo(
+            "[ERROR] --expected-catalog-hash was passed an empty value. "
+            "Omit the flag entirely to scan unpinned, or pass the real "
+            "64-character catalog hash to pin a release gate.",
+            err=True,
+        )
+        sys.exit(2)
 
     # -- Resolve server profile (exit 2 on unknown name or bad custom file) --
     resolved_profile: ServerProfile | None = None
@@ -459,10 +479,12 @@ def scan(
             pii_strict=pii_strict,
             stateful_method_overrides=_parse_method_overrides(method_overrides),
             tool_allowlist=_parse_tool_allowlist(tool_allowlist),
+            expected_catalog_hash=expected_catalog_hash,
         )
     except ValueError as exc:
-        # Includes adversarial dual opt-in failures AND a malformed
-        # .cosai-baseline (fail-closed: a broken baseline must not be ignored).
+        # Includes adversarial dual opt-in failures, a malformed
+        # .cosai-baseline, and a --expected-catalog-hash mismatch
+        # (fail-closed: none of these must be silently ignored).
         click.echo(f"[ERROR] {exc}", err=True)
         sys.exit(2)
     except TargetUnreachableError as exc:
@@ -585,14 +607,58 @@ def scorecard() -> None:
     """Verify and inspect signed conformance scorecards."""
 
 
+def _print_compliance_mapping(sc: Any) -> None:
+    """Print each category's CoSAI + OWASP MCP Top 10 + NIST AI RMF mapping.
+
+    ENT-P0-3: the mapping printed here is read from the SIGNED payload
+    (verified above, when called from `scorecard verify`) — not
+    re-derived from docs/THREAT_MAPPING.md — so what's on screen is what
+    was actually attested to.
+    """
+    click.echo("\n  Compliance mapping (CoSAI -> OWASP MCP Top 10 / NIST AI RMF):")
+    for cat in sc.categories:
+        mapping = cat.compliance_mapping
+        if mapping is None:
+            click.echo(f"    {cat.category:<5} (no compliance mapping in this scorecard)")
+            continue
+        nist = ", ".join(mapping.nist_ai_rmf)
+        click.echo(f"    {cat.category:<5} {mapping.owasp_mcp_top10:<32} NIST AI RMF: {nist}")
+
+
+def _check_scorecard_catalog_pin(sc: Any, expected_catalog_hash: str | None) -> None:
+    """Raise SystemExit(1) if *sc* wasn't produced by the pinned catalog.
+
+    Adversary-pass EXPLOIT 2 (ENT-P0-1 review): a valid Ed25519 signature
+    only proves the scorecard wasn't tampered with after signing — it says
+    nothing about which catalog produced it. A release gate that consumes a
+    signed-scorecard artifact (scan job -> separate verify job) must be able
+    to pin the same reproducibility guarantee ``cosai scan
+    --expected-catalog-hash`` gives a live scan.
+    """
+    if expected_catalog_hash is not None and sc.catalog_hash != expected_catalog_hash:
+        click.echo(
+            f"[INVALID] Catalog hash mismatch: scorecard was produced with "
+            f"catalog {sc.catalog_hash!r}, expected {expected_catalog_hash!r}. "
+            "A valid signature does not guarantee the pinned catalog ran.",
+            err=True,
+        )
+        sys.exit(1)
+
+
 @scorecard.command("verify")
 @click.argument("scorecard_file", type=click.Path(exists=True))
-def scorecard_verify(scorecard_file: str) -> None:
+@click.option("--expected-catalog-hash", "expected_catalog_hash", default=None,
+              help="SHA-256 hex digest the scorecard's catalog_hash must match. "
+                   "A valid signature alone does not prove the pinned, reviewed "
+                   "catalog produced this scorecard.")
+def scorecard_verify(scorecard_file: str, expected_catalog_hash: str | None) -> None:
     """Verify the Ed25519 signature on a scorecard JSON file.
 
     Exit codes:
-        0  Valid — signature verified against the trusted installation key.
-        1  Invalid — signature does not verify or public key mismatch.
+        0  Valid — signature verified against the trusted installation key
+           (and catalog_hash matches --expected-catalog-hash, if given).
+        1  Invalid — signature does not verify, public key mismatch, or
+           catalog_hash does not match --expected-catalog-hash.
         2  File cannot be read or is not a valid scorecard.
     """
     import json as _json
@@ -609,7 +675,9 @@ def scorecard_verify(scorecard_file: str) -> None:
 
     try:
         verify_scorecard(sc)
+        _check_scorecard_catalog_pin(sc, expected_catalog_hash)
         click.echo(f"[OK] Scorecard signature valid — conformance: {sc.conformance_level.value}")
+        _print_compliance_mapping(sc)
     except ScorecardVerificationError as exc:
         click.echo(f"[INVALID] {exc}", err=True)
         sys.exit(1)
@@ -619,7 +687,12 @@ def scorecard_verify(scorecard_file: str) -> None:
 @click.argument("scorecard_file", type=click.Path(exists=True))
 @click.option("--verify", "do_verify", is_flag=True, default=False,
               help="Verify signature before printing.")
-def scorecard_show(scorecard_file: str, do_verify: bool) -> None:
+@click.option("--expected-catalog-hash", "expected_catalog_hash", default=None,
+              help="SHA-256 hex digest the scorecard's catalog_hash must match "
+                   "(only checked when --verify is also set).")
+def scorecard_show(
+    scorecard_file: str, do_verify: bool, expected_catalog_hash: str | None
+) -> None:
     """Print a human-readable summary of a conformance scorecard.
 
     Exit codes:
@@ -645,6 +718,7 @@ def scorecard_show(scorecard_file: str, do_verify: bool) -> None:
         except ScorecardVerificationError as exc:
             click.echo(f"[INVALID] Signature verification failed: {exc}", err=True)
             sys.exit(1)
+        _check_scorecard_catalog_pin(sc, expected_catalog_hash)
 
     _GRADE_ICON = {
         Grade.PASS: "✓",
@@ -666,6 +740,7 @@ def scorecard_show(scorecard_file: str, do_verify: bool) -> None:
             f"  {cat.category:<6} {icon} {cat.grade.value:<4}  "
             f"{cat.finding_count:<10} {cat.critical_count:<10} {cat.coverage_engine}"
         )
+    _print_compliance_mapping(sc)
     click.echo()
 
 

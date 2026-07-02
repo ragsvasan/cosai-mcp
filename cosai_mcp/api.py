@@ -301,6 +301,11 @@ def _canonical_threat(t: ThreatDefinition) -> dict[str, Any]:
             "probe_token": p.probe_token,
             "probe_count": p.probe_count,
             "probe_headers": _plain(p.probe_headers) if p.probe_headers else None,
+            # Security-relevant (adversary-pass EXPLOIT 1, ENT-P0-1 review):
+            # flips whether a JSON-RPC protocol error scores as a secure
+            # PASS or is downgraded to INCONCLUSIVE — a catalog tampered to
+            # change only this field must not hash identically.
+            "protocol_error_is_expected": p.protocol_error_is_expected,
         }
 
     return {
@@ -511,6 +516,7 @@ def _run_scan(
     pii_strict: bool = False,
     stateful_method_overrides: dict[str, str] | None = None,
     tool_allowlist: tuple[str, ...] | None = None,
+    expected_catalog_hash: str | None = None,
 ) -> ScanResult:
     """Orchestrate a complete scan and return a ``ScanResult``.
 
@@ -600,6 +606,19 @@ def _run_scan(
 
     catalog_hash_ = _catalog_hash(threats)
     threat_severity = {t.id: t.severity for t in threats}
+
+    # ENT-P0-1: a release gate must be reproducible — refuse to scan with a
+    # catalog that has drifted from the pinned hash. Checked before any
+    # probe runs (fail-closed, same pattern as the malformed-baseline
+    # ValueError below: the CLI/Scanner map this to exit code 2), so a
+    # rejected catalog never spends a round-trip against the target.
+    if expected_catalog_hash is not None and catalog_hash_ != expected_catalog_hash:
+        raise ValueError(
+            f"Catalog hash mismatch: expected {expected_catalog_hash!r}, "
+            f"but the loaded catalog hashes to {catalog_hash_!r}. The threat "
+            "catalog changed since --expected-catalog-hash was pinned — "
+            "refusing to scan with an unverified ruleset."
+        )
 
     # --- Prober engine ---
     probe_results: list[ProbeResult] = []
@@ -1260,6 +1279,7 @@ class Scanner:
         fail_on: str = "critical",
         pii_strict: bool = False,
         stateful_method_overrides: dict[str, str] | None = None,
+        expected_catalog_hash: str | None = None,
     ) -> None:
         # Accept either a full target URL string (original form) or a ScanConfig
         # (documented public form).  When a ScanConfig is passed, its fields
@@ -1285,6 +1305,7 @@ class Scanner:
             self.pii_strict = cfg.pii_strict
             self.stateful_method_overrides = cfg.stateful_method_overrides
             self.tool_allowlist = cfg.tool_allowlist
+            self.expected_catalog_hash = expected_catalog_hash
             return
 
         self.target = target
@@ -1305,6 +1326,7 @@ class Scanner:
         self.pii_strict = pii_strict
         self.stateful_method_overrides = stateful_method_overrides
         self.tool_allowlist: tuple[str, ...] | None = None
+        self.expected_catalog_hash = expected_catalog_hash
 
     def run(self, categories: list[str] | None = None) -> ScanResult:
         """Run a complete scan and return a :class:`ScanResult`.
@@ -1337,6 +1359,7 @@ class Scanner:
                 pii_strict=self.pii_strict,
                 stateful_method_overrides=self.stateful_method_overrides,
                 tool_allowlist=self.tool_allowlist,
+                expected_catalog_hash=self.expected_catalog_hash,
             )
         except (ValueError, TargetUnreachableError):
             raise  # let typed exceptions propagate as-is

@@ -15,13 +15,13 @@ Use this table for compliance evidence, vendor questionnaires, and procurement a
 | **T3** | Input Validation Failures | GOVERN 1.2 Accountability, MEASURE 2.1 Assessment | Write + Execute classes | A03: Injection Attacks | CWE-78, CWE-22, CWE-89, CWE-943 | High: Traditional Amplified |
 | **T4** | Data/Control Boundary | GOVERN 1.2, MAP 1.1 System Context | All classes (data ingestion) | A04: Prompt Injection | CWE-74, CWE-77, CWE-116 | High: Novel Vector |
 | **T5** | Inadequate Data Protection | MAP 1.1, MEASURE 2.6 Data Quality | Read + Write classes | A05: Sensitive Data Exposure | CWE-200, CWE-312, CWE-311 | High: Traditional Amplified |
-| **T6** | Integrity/Verification | MAP 4.1 Third-party Risks, MANAGE 2.2 | All classes (manifest trust) | A06: Integrity Failures | CWE-345, CWE-494, CWE-1357 | Critical: Supply Chain |
-| **T7** | Session Security Failures | MAP 1.1 System Context, MANAGE 1.1 | All classes (session binding) | A07: Session Management | CWE-384, CWE-287, CWE-295 | Medium: Protocol Gap |
-| **T8** | Network Binding Failures | MEASURE 2.1 Security Assessment | Read class (network reach) | A08: Network Exposure | CWE-668, CWE-441, CWE-918 | High: Traditional Amplified |
-| **T9** | Trust Boundary Failures | GOVERN 1.2, MAP 1.1 | Execute-class (HITL gate) | A09: Overreliance on AI | CWE-602, CWE-807 | High: Novel Vector |
-| **T10** | Resource Management | MEASURE 2.1, MANAGE 2.4 | Execute-class (cost amplification) | A10: Resource Exhaustion | CWE-400, CWE-770, CWE-834 | High: Traditional Amplified |
+| **T6** | Integrity/Verification | MAP 4.1 Third-party Risks, MANAGE 2.2 | All classes (manifest trust) | A06: Security Misconfiguration / Integrity | CWE-345, CWE-494, CWE-1357 | Critical: Supply Chain |
+| **T7** | Session Security Failures | MAP 1.1 System Context, MANAGE 1.1 | All classes (session binding) | A07: Identification and Authentication Failures | CWE-384, CWE-287, CWE-295 | Medium: Protocol Gap |
+| **T8** | Network Binding Failures | MEASURE 2.1 Security Assessment | Read class (network reach) | A08: Software and Data Integrity; A10: Server-Side Request Forgery | CWE-668, CWE-441, CWE-918 | High: Traditional Amplified |
+| **T9** | Trust Boundary Failures | GOVERN 1.2, MAP 1.1 | Execute-class (HITL gate) | Not independently mapped (see NIST AI RMF) | CWE-602, CWE-807 | High: Novel Vector |
+| **T10** | Resource Management | MEASURE 2.1, MANAGE 2.4 | Execute-class (cost amplification) | Not independently mapped (see NIST AI RMF) | CWE-400, CWE-770, CWE-834 | High: Traditional Amplified |
 | **T11** | Supply Chain/Lifecycle | MAP 4.1 Third-party Risks | All classes (installation time) | A11: Supply Chain | CWE-494, CWE-1357, CWE-693 | Critical: Supply Chain |
-| **T12** | Insufficient Logging | MEASURE 1.1 Performance Monitoring | Execute-class (accountability) | A12: Insufficient Logging | CWE-778, CWE-223, CWE-532 | High: Visibility Gap |
+| **T12** | Insufficient Logging | MEASURE 1.1 Performance Monitoring | Execute-class (accountability) | A09: Security Logging and Monitoring; A12: Insufficient Logging | CWE-778, CWE-223, CWE-532 | High: Visibility Gap |
 
 ---
 

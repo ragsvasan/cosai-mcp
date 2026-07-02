@@ -657,6 +657,33 @@ class TestHiddenFlagsStillFunctional:
         assert res.exit_code == 0, res.output
         assert m.call_args.kwargs["stateful_method_overrides"] is None
 
+    def test_expected_catalog_hash_still_parsed(self) -> None:
+        res, m = self._run(["--expected-catalog-hash", "a" * 64])
+        assert res.exit_code == 0, res.output
+        assert m.call_args.kwargs["expected_catalog_hash"] == "a" * 64
+
+    def test_expected_catalog_hash_absent_passes_none(self) -> None:
+        res, m = self._run([])
+        assert res.exit_code == 0, res.output
+        assert m.call_args.kwargs["expected_catalog_hash"] is None
+
+    def test_expected_catalog_hash_empty_string_rejected_with_clear_error(self) -> None:
+        """Defense-pass finding: an empty string must not fall through to
+        the generic 'expected ''' mismatch message — it's an operator
+        mistake (e.g. an unset CI variable), not a real pin, and deserves a
+        distinct, actionable error."""
+        clean = _make_scan_result(exit_code=0)
+        with (
+            patch("cosai_mcp.cli.check_reachable"),
+            patch("cosai_mcp.cli._run_scan", return_value=clean) as m,
+        ):
+            res = _invoke([
+                "scan", "--expected-catalog-hash", "", "http://localhost:8000",
+            ])
+        assert res.exit_code == 2, res.output
+        assert not m.called, "an empty pin must be rejected before _run_scan, not passed through"
+        assert "empty" in res.output.lower() or "invalid" in res.output.lower()
+
     def test_block_private_targets_still_parsed(self) -> None:
         res, m = self._run(["--block-private-targets"])
         assert res.exit_code == 0, res.output

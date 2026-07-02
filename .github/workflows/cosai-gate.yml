@@ -22,6 +22,15 @@ on:
         required: false
         type: string
         default: "all"
+      expected_catalog_hash:
+        description: >-
+          SHA-256 hex digest the loaded threat catalog must match (see
+          "Catalog hash:" in scan output). Pins this gate to an exact,
+          reviewed catalog so a PR run and its merge run scan the identical
+          ruleset. Leave empty to scan unpinned.
+        required: false
+        type: string
+        default: ""
     outputs:
       sarif_path:
         description: "Path to the generated SARIF report"
@@ -52,14 +61,20 @@ jobs:
         id: scan
         env:
           COSAI_TARGET: ${{ inputs.target }}
+          COSAI_EXPECTED_CATALOG_HASH: ${{ inputs.expected_catalog_hash }}
         run: |
           set +e  # capture exit code without failing the step
+          HASH_ARGS=()
+          if [ -n "$COSAI_EXPECTED_CATALOG_HASH" ]; then
+            HASH_ARGS=(--expected-catalog-hash "$COSAI_EXPECTED_CATALOG_HASH")
+          fi
           cosai scan "$COSAI_TARGET" \
             --fail-on "${{ inputs.fail_on }}" \
             --engine "${{ inputs.engine }}" \
             --categories "${{ inputs.categories }}" \
             --report-sarif cosai-scan.sarif \
-            --report-html cosai-scan.html
+            --report-html cosai-scan.html \
+            "${HASH_ARGS[@]}"
           EXIT_CODE=$?
           echo "exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
           echo "sarif_path=cosai-scan.sarif" >> "$GITHUB_OUTPUT"
