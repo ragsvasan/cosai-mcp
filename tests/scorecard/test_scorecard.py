@@ -32,6 +32,8 @@ def _make_scorecard(
     signed: bool = False,
 ) -> Scorecard:
     if categories is None:
+        from cosai_mcp.scorecard.compliance import CATEGORY_COMPLIANCE_MAP
+
         categories = [
             CategoryResult(
                 category=f"T{i}",
@@ -41,6 +43,7 @@ def _make_scorecard(
                 critical_count=0,
                 high_count=0,
                 coverage_engine="black_box_prober",
+                compliance_mapping=CATEGORY_COMPLIANCE_MAP.get(f"T{i}"),
             )
             for i in range(1, 13)
         ]
@@ -429,6 +432,264 @@ class TestScorecardCLI:
         result = runner.invoke(main, ["scorecard", "show", str(p), "--verify"])
         assert result.exit_code == 0, result.output
 
+    # -------------------------------------------------------------------
+    # Adversary-pass EXPLOIT 2 (ENT-P0-1 review): a valid Ed25519 signature
+    # alone does not prove the reviewed catalog produced this scorecard — a
+    # signed scorecard from a DIFFERENT catalog than the one an operator
+    # pinned must not verify clean just because the signature checks out.
+    # -------------------------------------------------------------------
+
+    def test_scorecard_verify_matching_expected_catalog_hash_exits_0(
+        self, tmp_path: Path
+    ) -> None:
+        p = tmp_path / "scorecard.json"
+        self._write_scorecard(p, signed=True)  # catalog_hash="abc123"
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["scorecard", "verify", str(p), "--expected-catalog-hash", "abc123"]
+        )
+        assert result.exit_code == 0, result.output
+
+    def test_scorecard_verify_mismatched_expected_catalog_hash_exits_1(
+        self, tmp_path: Path
+    ) -> None:
+        """A validly-signed scorecard produced by a different catalog than
+        the one pinned must fail verify, not pass on signature alone."""
+        p = tmp_path / "scorecard.json"
+        self._write_scorecard(p, signed=True)  # catalog_hash="abc123"
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["scorecard", "verify", str(p), "--expected-catalog-hash", "different-hash"],
+        )
+        assert result.exit_code == 1
+        assert "[INVALID]" in result.output
+        assert "catalog" in result.output.lower()
+
+    def test_scorecard_show_verify_mismatched_expected_catalog_hash_exits_1(
+        self, tmp_path: Path
+    ) -> None:
+        p = tmp_path / "scorecard.json"
+        self._write_scorecard(p, signed=True)
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "scorecard", "show", str(p), "--verify",
+                "--expected-catalog-hash", "different-hash",
+            ],
+        )
+        assert result.exit_code == 1
+
+    # -------------------------------------------------------------------
+    # ENT-P0-3 — compliance mapping inside the signed scorecard, printed
+    # by verify (not just show).
+    # -------------------------------------------------------------------
+
+    def test_scorecard_verify_prints_compliance_mapping(self, tmp_path: Path) -> None:
+        p = tmp_path / "scorecard.json"
+        self._write_scorecard(p, signed=True)
+        runner = CliRunner()
+        result = runner.invoke(main, ["scorecard", "verify", str(p)])
+        assert result.exit_code == 0, result.output
+        assert "NIST" in result.output
+        assert "OWASP" in result.output or "A01" in result.output
+
+    def test_scorecard_show_prints_compliance_mapping(self, tmp_path: Path) -> None:
+        p = tmp_path / "scorecard.json"
+        self._write_scorecard(p, signed=True)
+        runner = CliRunner()
+        result = runner.invoke(main, ["scorecard", "show", str(p)])
+        assert result.exit_code == 0, result.output
+        assert "NIST" in result.output
+
+
+class TestComplianceMapping:
+    """ENT-P0-3 (docs/ENTERPRISE_REQUIREMENTS_2026-07-01.md) — each signed
+    category result carries its CoSAI + OWASP MCP Top 10 + NIST AI RMF
+    control mapping, sourced from docs/THREAT_MAPPING.md's cross-reference
+    table, so a GRC stakeholder gets a self-describing, tamper-evident
+    attestation instead of a prose claim in a doc plus an owasp_ref buried
+    in the unsigned SARIF (FABLE_AUDIT_2026-07-01 FIND 6/18).
+    """
+
+    def test_category_result_round_trips_compliance_mapping(self) -> None:
+        from cosai_mcp.scorecard.models import CategoryResult, ComplianceMapping
+
+        mapping = ComplianceMapping(
+            owasp_mcp_top10="A01: Broken Authentication",
+            nist_ai_rmf=("MANAGE 1.1 Risk Response", "GOVERN 6.2 Accountability"),
+        )
+        cr = CategoryResult(
+            category="T1", grade=Grade.PASS, probe_count=2, finding_count=0,
+            critical_count=0, high_count=0, coverage_engine="black_box_prober",
+            compliance_mapping=mapping,
+        )
+        rebuilt = CategoryResult.from_dict(cr.to_dict())
+        assert rebuilt.compliance_mapping == mapping
+
+    def test_category_result_compliance_mapping_defaults_to_none_for_old_json(self) -> None:
+        """Backward compatible: a scorecard JSON written before this
+        feature (no compliance_mapping key) must still parse."""
+        from cosai_mcp.scorecard.models import CategoryResult
+
+        old_dict = {
+            "category": "T1", "grade": "pass", "probe_count": 2,
+            "finding_count": 0, "critical_count": 0, "high_count": 0,
+            "coverage_engine": "black_box_prober",
+        }
+        cr = CategoryResult.from_dict(old_dict)
+        assert cr.compliance_mapping is None
+
+    def test_category_compliance_map_covers_all_twelve_categories(self) -> None:
+        from cosai_mcp.scorecard.compliance import CATEGORY_COMPLIANCE_MAP
+
+        assert set(CATEGORY_COMPLIANCE_MAP) == {f"T{i}" for i in range(1, 13)}
+        for cat, mapping in CATEGORY_COMPLIANCE_MAP.items():
+            assert mapping.nist_ai_rmf, f"{cat} has an empty NIST AI RMF mapping"
+            assert mapping.owasp_mcp_top10, f"{cat} has an empty OWASP mapping"
+
+    def test_compliance_map_matches_owasp_alignment_table(self) -> None:
+        """Panel finding (ENT-P0-3 review, Defense FIX 1 / Adversary EXPLOIT
+        1): docs/THREAT_MAPPING.md has TWO OWASP MCP Top 10 tables that used
+        to disagree with each other, and the code table silently copied one
+        of them. This test parses the "OWASP MCP Top 10 Alignment" table —
+        the one actually linked from SARIF `helpUri` (report/sarif.py) — and
+        asserts every OWASP item number it lists appears verbatim in
+        CATEGORY_COMPLIANCE_MAP for the category it names, so the signed
+        scorecard's compliance claim can never silently drift from the doc
+        this project points auditors to.
+        """
+        import re
+
+        from cosai_mcp.scorecard.compliance import CATEGORY_COMPLIANCE_MAP
+
+        doc = (
+            Path(__file__).resolve().parents[2] / "docs" / "THREAT_MAPPING.md"
+        ).read_text()
+        section = doc.split("## OWASP MCP Top 10 Alignment")[1].split("## OWASP Agentic")[0]
+        rows = re.findall(
+            r"^\| (A\d+) \| ([^|]+) \| (T\d+)", section, re.MULTILINE
+        )
+        assert rows, "could not parse any rows from the OWASP MCP Top 10 Alignment table"
+
+        for owasp_id, title, category in rows:
+            mapping = CATEGORY_COMPLIANCE_MAP.get(category.strip())
+            assert mapping is not None, (
+                f"{category} from the doc has no CATEGORY_COMPLIANCE_MAP entry"
+            )
+            assert f"{owasp_id}:" in mapping.owasp_mcp_top10, (
+                f"doc says {category} covers {owasp_id} ({title.strip()}), but "
+                f"CATEGORY_COMPLIANCE_MAP[{category!r}].owasp_mcp_top10 = "
+                f"{mapping.owasp_mcp_top10!r} does not mention {owasp_id}"
+            )
+
+    def test_every_category_gets_a_compliance_mapping_through_full_scan(
+        self, tmp_path: Path
+    ) -> None:
+        """Enters at the CLI (this file's established convention for
+        scorecard end-to-end tests) — proves the mapping reaches the
+        written artifact, not just the in-memory builder."""
+        from cosai_mcp.harness.mock_server import MockMCPServer
+
+        sc_file = tmp_path / "scorecard.json"
+        with MockMCPServer() as target:
+            target.wait_ready()
+            runner = CliRunner()
+            result = runner.invoke(
+                main,
+                [
+                    "scan", f"http://127.0.0.1:{target.port}",
+                    "--no-report", "--report-mode", "ci",
+                    "--scorecard", str(sc_file), "--no-sign-scorecard",
+                    "--skip-reachability",
+                ],
+            )
+        assert result.exit_code != 3, result.output
+        data = json.loads(sc_file.read_text())
+        assert len(data["categories"]) == 12
+        for cat in data["categories"]:
+            mapping = cat.get("compliance_mapping")
+            assert mapping is not None, f"{cat['category']} has no compliance_mapping"
+            assert mapping["nist_ai_rmf"], f"{cat['category']} has an empty NIST AI RMF mapping"
+            assert mapping["owasp_mcp_top10"]
+
+        t1 = next(c for c in data["categories"] if c["category"] == "T1")
+        assert "MANAGE 1.1" in " ".join(t1["compliance_mapping"]["nist_ai_rmf"])
+        assert "A01" in t1["compliance_mapping"]["owasp_mcp_top10"]
+
+    def test_compliance_mapping_from_dict_coerces_non_string_nist_elements(self) -> None:
+        """Adversary-pass EXPLOIT 2 (ENT-P0-3 review): every sibling
+        from_dict in this file coerces (str()/int()) — ComplianceMapping's
+        did not, so a scorecard file with non-string nist_ai_rmf elements
+        (e.g. from a different tool version or a hand-edited file) would
+        parse into a tuple of dicts/ints, then crash uncaught later when
+        ', '.join()-ed for printing.
+        """
+        from cosai_mcp.scorecard.models import ComplianceMapping
+
+        parsed = ComplianceMapping.from_dict({
+            "owasp_mcp_top10": "A01: Broken Authentication",
+            "nist_ai_rmf": ["MANAGE 1.1", 42, {"nested": "dict"}],
+        })
+        assert all(isinstance(x, str) for x in parsed.nist_ai_rmf)
+
+    def test_compliance_mapping_from_dict_tolerates_missing_owasp_key(self) -> None:
+        """A compliance_mapping dict missing owasp_mcp_top10 must not raise
+        KeyError inside CategoryResult.from_dict — that would reject an
+        otherwise signature-valid scorecard as 'unreadable' (exit 2)
+        instead of parsing it."""
+        from cosai_mcp.scorecard.models import ComplianceMapping
+
+        parsed = ComplianceMapping.from_dict({"nist_ai_rmf": ["MANAGE 1.1"]})
+        assert parsed.owasp_mcp_top10 == ""
+
+    def test_scorecard_show_survives_malformed_compliance_mapping(self, tmp_path: Path) -> None:
+        """cosai scorecard show on a file with non-string nist_ai_rmf
+        elements must fail cleanly (a normal Click error / non-crash exit),
+        never an uncaught TypeError traceback — the file is untrusted input
+        at the CLI boundary."""
+        sc = _make_scorecard(signed=False)
+        raw = sc.to_dict()
+        raw["categories"][0]["compliance_mapping"] = {
+            "owasp_mcp_top10": "A01: Broken Authentication",
+            "nist_ai_rmf": [1, {"bad": "data"}],
+        }
+        p = tmp_path / "malformed.json"
+        p.write_text(json.dumps(raw), encoding="utf-8")
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["scorecard", "show", str(p)], catch_exceptions=True)
+        assert result.exception is None or isinstance(result.exception, SystemExit), (
+            f"scorecard show crashed with an uncaught exception: {result.exception!r}"
+        )
+
+    def test_tampering_compliance_mapping_breaks_signature(self, tmp_path: Path) -> None:
+        """The mapping must live inside the signed payload, not be bolted
+        on after signing — editing it must invalidate verification."""
+        from cosai_mcp.harness.mock_server import MockMCPServer
+
+        sc_file = tmp_path / "scorecard.json"
+        with MockMCPServer() as target:
+            target.wait_ready()
+            runner = CliRunner()
+            runner.invoke(
+                main,
+                [
+                    "scan", f"http://127.0.0.1:{target.port}",
+                    "--no-report", "--report-mode", "ci",
+                    "--scorecard", str(sc_file),
+                    "--skip-reachability",
+                ],
+            )
+        raw = json.loads(sc_file.read_text())
+        raw["categories"][0]["compliance_mapping"]["nist_ai_rmf"] = ["FORGED CONTROL"]
+        sc_file.write_text(json.dumps(raw))
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["scorecard", "verify", str(sc_file)])
+        assert result.exit_code == 1, result.output
+
 
 # ---------------------------------------------------------------------------
 # CLI — cosai scan --scorecard integration
@@ -506,3 +767,365 @@ class TestScanScorecardWiring:
                 ],
             )
         assert result.exit_code == 2, result.output
+
+
+# ---------------------------------------------------------------------------
+# CLI — Sigstore keyless signing (ENT-P0-2)
+#
+# Signing requires a real ambient OIDC identity token that does not exist in
+# this test environment — sign_scorecard_sigstore / verify_scorecard_sigstore
+# are mocked at the module boundary throughout, proving cosai-mcp's own CLI
+# wiring (flag validation, file I/O, exit codes) rather than re-testing
+# sigstore-python's own protocol (see tests/scorecard/test_sigstore_signing.py
+# for the boundary-level unit tests of that module).
+# ---------------------------------------------------------------------------
+
+class TestSigstoreSignCLIWiring:
+    def test_sigstore_sign_without_scorecard_exits_2(self, tmp_path: Path) -> None:
+        from cosai_mcp.harness.mock_server import MockMCPServer
+
+        with MockMCPServer() as target:
+            target.wait_ready()
+            runner = CliRunner()
+            result = runner.invoke(
+                main,
+                [
+                    "scan", f"http://127.0.0.1:{target.port}",
+                    "--no-report", "--report-mode", "ci",
+                    "--sigstore-sign", "--skip-reachability",
+                ],
+            )
+        assert result.exit_code == 2, result.output
+        assert "--sigstore-sign requires --scorecard" in result.output
+
+    def test_sigstore_staging_without_sigstore_sign_exits_2(self, tmp_path: Path) -> None:
+        from cosai_mcp.harness.mock_server import MockMCPServer
+
+        sc_file = tmp_path / "scorecard.json"
+        with MockMCPServer() as target:
+            target.wait_ready()
+            runner = CliRunner()
+            result = runner.invoke(
+                main,
+                [
+                    "scan", f"http://127.0.0.1:{target.port}",
+                    "--no-report", "--report-mode", "ci",
+                    "--scorecard", str(sc_file),
+                    "--sigstore-staging", "--skip-reachability",
+                ],
+            )
+        assert result.exit_code == 2, result.output
+        assert "--sigstore-staging requires --sigstore-sign" in result.output
+
+    def test_sigstore_sign_writes_bundle_sidecar(self, tmp_path: Path) -> None:
+        from cosai_mcp.harness.mock_server import MockMCPServer
+
+        sc_file = tmp_path / "scorecard.json"
+        fake_bundle = {"mediaType": "fake", "signed": True}
+        with MockMCPServer() as target:
+            target.wait_ready()
+            runner = CliRunner()
+            with patch(
+                "cosai_mcp.scorecard.sigstore_signing.sign_scorecard_sigstore",
+                return_value=fake_bundle,
+            ) as mock_sign:
+                result = runner.invoke(
+                    main,
+                    [
+                        "scan", f"http://127.0.0.1:{target.port}",
+                        "--no-report", "--report-mode", "ci",
+                        "--scorecard", str(sc_file),
+                        "--sigstore-sign", "--skip-reachability",
+                    ],
+                )
+        assert result.exit_code != 3, result.output
+        assert "Sigstore bundle:" in result.output
+        bundle_path = tmp_path / "scorecard.json.sigstore.json"
+        assert bundle_path.exists()
+        assert json.loads(bundle_path.read_text()) == fake_bundle
+        mock_sign.assert_called_once()
+        assert mock_sign.call_args.kwargs.get("staging") is False
+
+    def test_sigstore_staging_flag_threads_through(self, tmp_path: Path) -> None:
+        from cosai_mcp.harness.mock_server import MockMCPServer
+
+        sc_file = tmp_path / "scorecard.json"
+        with MockMCPServer() as target:
+            target.wait_ready()
+            runner = CliRunner()
+            with patch(
+                "cosai_mcp.scorecard.sigstore_signing.sign_scorecard_sigstore",
+                return_value={},
+            ) as mock_sign:
+                result = runner.invoke(
+                    main,
+                    [
+                        "scan", f"http://127.0.0.1:{target.port}",
+                        "--no-report", "--report-mode", "ci",
+                        "--scorecard", str(sc_file),
+                        "--sigstore-sign", "--sigstore-staging",
+                        "--skip-reachability",
+                    ],
+                )
+        assert result.exit_code != 3, result.output
+        mock_sign.assert_called_once()
+        assert mock_sign.call_args.kwargs.get("staging") is True
+
+    def test_sigstore_signing_failure_exits_2_but_keeps_ed25519_scorecard(
+        self, tmp_path: Path
+    ) -> None:
+        """A Sigstore failure must not roll back the Ed25519 scorecard that
+        was already written — but must still exit 2, never silently
+        succeed as if the bundle had been produced."""
+        from cosai_mcp.harness.mock_server import MockMCPServer
+        from cosai_mcp.scorecard.sigstore_signing import SigstoreSigningError
+
+        sc_file = tmp_path / "scorecard.json"
+        with MockMCPServer() as target:
+            target.wait_ready()
+            runner = CliRunner()
+            with patch(
+                "cosai_mcp.scorecard.sigstore_signing.sign_scorecard_sigstore",
+                side_effect=SigstoreSigningError("no ambient identity"),
+            ):
+                result = runner.invoke(
+                    main,
+                    [
+                        "scan", f"http://127.0.0.1:{target.port}",
+                        "--no-report", "--report-mode", "ci",
+                        "--scorecard", str(sc_file),
+                        "--sigstore-sign", "--skip-reachability",
+                    ],
+                )
+        assert result.exit_code == 2, result.output
+        assert "Sigstore signing failed" in result.output
+        assert sc_file.exists()
+        assert not (tmp_path / "scorecard.json.sigstore.json").exists()
+
+    def test_regression_sigstore_unavailable_at_scan_time_exits_2(
+        self, tmp_path: Path
+    ) -> None:
+        """Defense-pass finding (ENT-P0-2 review): SigstoreUnavailableError
+        (the optional 'sigstore' package not installed) must exit 2 at
+        SCAN-sign time too, not just at verify time — same '[ERROR]
+        Sigstore signing failed' path as any other signing failure."""
+        from cosai_mcp.harness.mock_server import MockMCPServer
+        from cosai_mcp.scorecard.sigstore_signing import SigstoreUnavailableError
+
+        sc_file = tmp_path / "scorecard.json"
+        with MockMCPServer() as target:
+            target.wait_ready()
+            runner = CliRunner()
+            with patch(
+                "cosai_mcp.scorecard.sigstore_signing.sign_scorecard_sigstore",
+                side_effect=SigstoreUnavailableError(
+                    "pip install cosai-mcp[sigstore]"
+                ),
+            ):
+                result = runner.invoke(
+                    main,
+                    [
+                        "scan", f"http://127.0.0.1:{target.port}",
+                        "--no-report", "--report-mode", "ci",
+                        "--scorecard", str(sc_file),
+                        "--sigstore-sign", "--skip-reachability",
+                    ],
+                )
+        assert result.exit_code == 2, result.output
+        assert "Sigstore signing failed" in result.output
+        assert sc_file.exists()
+        assert not (tmp_path / "scorecard.json.sigstore.json").exists()
+
+
+class TestSigstoreVerifyCLIWiring:
+    def _write_scorecard(self, path: Path) -> None:
+        sc = _make_scorecard(signed=True)
+        path.write_text(json.dumps(sc.to_dict()), encoding="utf-8")
+
+    def test_sigstore_bundle_without_trusted_identity_exits_2(self, tmp_path: Path) -> None:
+        sc_file = tmp_path / "scorecard.json"
+        self._write_scorecard(sc_file)
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text("{}", encoding="utf-8")
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["scorecard", "verify", str(sc_file), "--sigstore-bundle", str(bundle_file)],
+        )
+        assert result.exit_code == 2, result.output
+        assert "--trusted-identity" in result.output
+
+    def test_sigstore_bundle_valid_identity_exits_0(self, tmp_path: Path) -> None:
+        sc_file = tmp_path / "scorecard.json"
+        self._write_scorecard(sc_file)
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps({"fake": "bundle"}), encoding="utf-8")
+        runner = CliRunner()
+        with patch(
+            "cosai_mcp.scorecard.sigstore_signing.verify_scorecard_sigstore",
+            return_value=None,
+        ) as mock_verify:
+            result = runner.invoke(
+                main,
+                [
+                    "scorecard", "verify", str(sc_file),
+                    "--sigstore-bundle", str(bundle_file),
+                    "--trusted-identity", "ci@github-actions.example",
+                    "--trusted-issuer", "https://token.actions.githubusercontent.com",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        assert "[OK] Sigstore signature valid" in result.output
+        mock_verify.assert_called_once()
+        assert mock_verify.call_args.kwargs["identity"] == "ci@github-actions.example"
+        assert (
+            mock_verify.call_args.kwargs["issuer"]
+            == "https://token.actions.githubusercontent.com"
+        )
+
+    def test_sigstore_bundle_verification_failure_exits_1(self, tmp_path: Path) -> None:
+        from cosai_mcp.scorecard.sigstore_signing import SigstoreVerificationError
+
+        sc_file = tmp_path / "scorecard.json"
+        self._write_scorecard(sc_file)
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps({"fake": "bundle"}), encoding="utf-8")
+        runner = CliRunner()
+        with patch(
+            "cosai_mcp.scorecard.sigstore_signing.verify_scorecard_sigstore",
+            side_effect=SigstoreVerificationError("identity mismatch"),
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "scorecard", "verify", str(sc_file),
+                    "--sigstore-bundle", str(bundle_file),
+                    "--trusted-identity", "attacker@evil.example",
+                ],
+            )
+        assert result.exit_code == 1, result.output
+        assert "[INVALID]" in result.output
+
+    def test_sigstore_bundle_unavailable_package_exits_2(self, tmp_path: Path) -> None:
+        from cosai_mcp.scorecard.sigstore_signing import SigstoreUnavailableError
+
+        sc_file = tmp_path / "scorecard.json"
+        self._write_scorecard(sc_file)
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps({"fake": "bundle"}), encoding="utf-8")
+        runner = CliRunner()
+        with patch(
+            "cosai_mcp.scorecard.sigstore_signing.verify_scorecard_sigstore",
+            side_effect=SigstoreUnavailableError("pip install cosai-mcp[sigstore]"),
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "scorecard", "verify", str(sc_file),
+                    "--sigstore-bundle", str(bundle_file),
+                    "--trusted-identity", "x",
+                ],
+            )
+        # Package-not-installed is a tooling/environment error, not a
+        # verification verdict — must not be conflated with exit 1 (which
+        # means "checked and found invalid").
+        assert result.exit_code == 2, result.output
+
+    def test_malformed_sigstore_bundle_file_exits_2(self, tmp_path: Path) -> None:
+        sc_file = tmp_path / "scorecard.json"
+        self._write_scorecard(sc_file)
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text("{not valid json", encoding="utf-8")
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "scorecard", "verify", str(sc_file),
+                "--sigstore-bundle", str(bundle_file),
+                "--trusted-identity", "x",
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        assert "Cannot read Sigstore bundle" in result.output
+
+    def test_scorecard_show_sigstore_bundle_triggers_without_verify_flag(
+        self, tmp_path: Path
+    ) -> None:
+        """--sigstore-bundle on `show` is self-triggering — it does not
+        require --verify (which only governs the separate Ed25519 check).
+        An explicit ask must not be silently skipped."""
+        sc_file = tmp_path / "scorecard.json"
+        self._write_scorecard(sc_file)
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps({"fake": "bundle"}), encoding="utf-8")
+        runner = CliRunner()
+        with patch(
+            "cosai_mcp.scorecard.sigstore_signing.verify_scorecard_sigstore",
+            return_value=None,
+        ) as mock_verify:
+            result = runner.invoke(
+                main,
+                [
+                    "scorecard", "show", str(sc_file),
+                    "--sigstore-bundle", str(bundle_file),
+                    "--trusted-identity", "ci@example.com",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        assert "[OK] Sigstore signature valid" in result.output
+        mock_verify.assert_called_once()
+
+    def test_scorecard_show_sigstore_bundle_verification_failure_exits_1(
+        self, tmp_path: Path
+    ) -> None:
+        from cosai_mcp.scorecard.sigstore_signing import SigstoreVerificationError
+
+        sc_file = tmp_path / "scorecard.json"
+        self._write_scorecard(sc_file)
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps({"fake": "bundle"}), encoding="utf-8")
+        runner = CliRunner()
+        with patch(
+            "cosai_mcp.scorecard.sigstore_signing.verify_scorecard_sigstore",
+            side_effect=SigstoreVerificationError("bad identity"),
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "scorecard", "show", str(sc_file),
+                    "--sigstore-bundle", str(bundle_file),
+                    "--trusted-identity", "attacker@evil.example",
+                ],
+            )
+        assert result.exit_code == 1, result.output
+
+    def test_regression_verify_never_prints_ok_when_sigstore_step_fails(
+        self, tmp_path: Path
+    ) -> None:
+        """Adversary-pass EXPLOIT 1 (ENT-P0-2 review): `scorecard verify`
+        must not print the Ed25519 "[OK] Scorecard signature valid" line
+        unless the Sigstore check (when requested) also passed. Printing
+        it first meant a subsequent Sigstore failure left a misleading
+        "[OK]" line on stdout above the real (failing) verdict — a
+        log-scraper keying only on "[OK]" would be fooled."""
+        from cosai_mcp.scorecard.sigstore_signing import SigstoreVerificationError
+
+        sc_file = tmp_path / "scorecard.json"
+        self._write_scorecard(sc_file)
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps({"fake": "bundle"}), encoding="utf-8")
+        runner = CliRunner()
+        with patch(
+            "cosai_mcp.scorecard.sigstore_signing.verify_scorecard_sigstore",
+            side_effect=SigstoreVerificationError("infrastructure error: TUF refresh failed"),
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "scorecard", "verify", str(sc_file),
+                    "--sigstore-bundle", str(bundle_file),
+                    "--trusted-identity", "ci@github-actions.example",
+                ],
+            )
+        assert result.exit_code == 1, result.output
+        assert "[OK] Scorecard signature valid" not in result.output

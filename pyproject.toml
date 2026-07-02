@@ -36,6 +36,16 @@ pytest = [
     "pytest-asyncio>=0.23",
     "pyyaml>=6.0",
 ]
+sigstore = [
+    # Keyless Ed25519-alternative signer identity for signed scorecards
+    # (ENT-P0-2). Deliberately optional, not a core dependency: pulls in a
+    # newer `cryptography` floor than some sibling CoSAI-ecosystem tools
+    # pin (verified: conflicts with mcp-armor's cryptography<46 pin in a
+    # shared environment) — forcing every cosai-mcp install through that
+    # would break the zero-config local-scan path for users who never
+    # touch Sigstore signing.
+    "sigstore>=3.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -44,6 +54,7 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.10",
     "types-jsonschema>=4.22",
+    "sigstore>=3.0",
 ]
 
 [project.scripts]

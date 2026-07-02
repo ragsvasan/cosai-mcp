@@ -1,9 +1,9 @@
 # cosai-mcp — Coverage Status
 
-**Date:** 2026-05-04
-**Build:** 1558/1558 tests passing
-**Catalog:** 26 signed threat definitions + 4 adversarial (Ed25519, signatures now enforced)
-**Status:** All phases P0–P13 complete. Codex P1/P2 findings resolved.
+**Date:** 2026-07-02
+**Build:** 1581/1581 tests passing
+**Catalog:** 27 signed threat definitions + 4 adversarial (Ed25519, signatures now enforced)
+**Status:** All phases P0–P13 complete. Codex P1/P2 findings resolved. ENT-P0-1/P0-3/P0-4 (catalog-hash pin, signed compliance mapping, fleet scanning) shipped — see [docs/ENTERPRISE_REQUIREMENTS_2026-07-01.md](ENTERPRISE_REQUIREMENTS_2026-07-01.md).
 
 ---
 
@@ -81,7 +81,7 @@ Requires `--adversarial --i-own-this-target`. Blocked against RFC1918 and loopba
 
 ## Test Suite
 
-**1558 tests passing** across:
+**1581 tests passing** across:
 
 | Module | What |
 |--------|------|
@@ -92,9 +92,11 @@ Requires `--adversarial --i-own-this-target`. Blocked against RFC1918 and loopba
 | `tests/adversarial/` | Adversarial mode, canary detection, enforcer |
 | `tests/discovery/`, `tests/synthesis/` | Adaptive probe synthesis |
 | `tests/profiles/` | Server profiles (5 built-ins) |
-| `tests/report/` | HTML, SARIF, CSV, remediation, adversarial report |
+| `tests/report/` | HTML, SARIF (incl. multi-run merged-document validation), CSV, remediation, adversarial report |
 | `tests/transport/` | Transport layer, Mnemo scan regressions |
 | `tests/api/`, `tests/ci/`, `tests/cli/` | Python API, GitHub Action, CLI |
+| `tests/scorecard/` | Signed scorecard model, builder, Ed25519 signing/verification, Sigstore/Fulcio keyless signing/verification, compliance mapping |
+| `tests/fleet/` | Fleet/multi-target scanning: bounded concurrency, per-target isolation, SARIF/scorecard merging, hang timeout |
 
 ---
 

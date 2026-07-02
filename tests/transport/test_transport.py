@@ -5,6 +5,7 @@ Run:  pytest tests/transport/ -v
 from __future__ import annotations
 
 import asyncio
+import json
 import socket
 import warnings
 from typing import Any
@@ -250,6 +251,154 @@ class TestStreamableHTTPTransport:
 
         _, kwargs = mock_client_cls.call_args
         assert kwargs.get("follow_redirects") is False
+
+    # -----------------------------------------------------------------------
+    # FABLE_AUDIT_2026-07-01 FIND 1 — session id dropped on the SSE branch,
+    # and a same-origin trailing-slash redirect (FastMCP >=3 vs older
+    # Starlette-Mount servers disagree on the convention) was surfaced as
+    # SuspiciousRedirectError instead of being canonicalized once.
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_regression_streamable_http_captures_session_id_over_sse(self):
+        """Mcp-Session-Id must be captured from the response headers even when
+        the initialize response is framed as text/event-stream — the framing
+        FastMCP and other spec-compliant servers use for the handshake. Before
+        the fix, session capture only ran on the non-SSE branch, so an SSE
+        initialize left _session_id None and every following request was
+        rejected -32600 'Missing session ID'.
+        """
+        config = _private_config(host="localhost", port=8080)
+        transport = StreamableHTTPTransport("http://localhost:8080/mcp", config)
+
+        init_body = {"jsonrpc": "2.0", "id": "1", "result": {"protocolVersion": "2025-03-26"}}
+
+        class _SSEInitResponse:
+            status_code = 200
+            headers = httpx.Headers({
+                "content-type": "text/event-stream",
+                "Mcp-Session-Id": "sess-abc123",
+            })
+
+            async def aiter_lines(self):
+                yield f"data: {json.dumps(init_body)}"
+                yield ""
+
+        list_body = {"jsonrpc": "2.0", "id": "2", "result": {"tools": []}}
+        tools_response = MagicMock(
+            status_code=200, headers=httpx.Headers({"content-type": "application/json"})
+        )
+        tools_response.json.return_value = list_body
+
+        transport._client = AsyncMock()
+        transport._client.post = AsyncMock(side_effect=[_SSEInitResponse(), tools_response])
+
+        await transport.send("initialize", {})
+        assert transport._session_id == "sess-abc123"
+
+        await transport.send("tools/list", {})
+        second_call_headers = transport._client.post.call_args_list[1].kwargs["headers"]
+        assert second_call_headers["Mcp-Session-Id"] == "sess-abc123"
+
+    @staticmethod
+    def _fake_http_response(status_code, headers=None, json_body=None):
+        """A REAL httpx.Response, not a Mock — these tests route through a
+        genuine httpx.AsyncClient (to exercise _PinnedAsyncTransport for
+        real), and httpx's own send pipeline touches response internals
+        (e.g. .stream) that a Mock/autospec Response does not realistically
+        provide, raising AttributeError deep inside httpx before the test
+        ever gets to make an assertion.
+        """
+        if json_body is not None:
+            return httpx.Response(status_code, headers=headers, json=json_body)
+        return httpx.Response(status_code, headers=headers or {})
+
+    @pytest.mark.asyncio
+    async def test_regression_streamable_http_canonicalizes_trailing_slash_redirect(self):
+        """FastMCP >=3 redirects '/mcp/' -> '/mcp' (older ASGI Mount-style
+        servers redirect the opposite way). follow_redirects=False is a
+        locked, non-overridable security control, so this same-origin,
+        trailing-slash-only redirect must be silently canonicalized once at
+        the start of the session rather than surfaced as
+        SuspiciousRedirectError on the very first probe.
+
+        This drives the REAL _PinnedAsyncTransport (only the innermost
+        httpx.AsyncBaseTransport is faked) — check_redirect() lives inside
+        _PinnedAsyncTransport.handle_async_request and fires before a
+        response ever reaches StreamableHTTPTransport.send(), so a test that
+        replaces transport._client wholesale would never exercise the code
+        path that actually raises in production (caught in panel review).
+        """
+        config = _private_config(host="localhost", port=8080)
+        transport = StreamableHTTPTransport("http://localhost:8080", config)
+        assert transport._endpoint == "http://localhost:8080/mcp/"
+
+        redirect = self._fake_http_response(307, {"location": "http://localhost:8080/mcp"})
+        ok_body = {"jsonrpc": "2.0", "id": "1", "result": {"protocolVersion": "2025-03-26"}}
+        ok_response = self._fake_http_response(200, json_body=ok_body)
+
+        mock_inner = create_autospec(httpx.AsyncHTTPTransport, instance=True)
+        mock_inner.handle_async_request = AsyncMock(side_effect=[redirect, ok_response])
+        pinned = _PinnedAsyncTransport("127.0.0.1", config, inner=mock_inner)
+
+        transport._pinned_ip = "127.0.0.1"
+        transport._pinned_transport = pinned
+        transport._client = httpx.AsyncClient(
+            transport=pinned, follow_redirects=False, trust_env=False
+        )
+
+        with patch("cosai_mcp.transport.streamable_http.socket.getaddrinfo",
+                   _fake_getaddrinfo("127.0.0.1")):
+            result = await transport.send("initialize", {})
+
+        assert result["result"] == {"protocolVersion": "2025-03-26"}
+        assert transport._endpoint == "http://localhost:8080/mcp"
+        assert mock_inner.handle_async_request.call_count == 2
+        second_request = mock_inner.handle_async_request.call_args_list[1].args[0]
+        assert second_request.url.path == "/mcp"
+
+        # A second redirect later in the session (e.g. a mid-scan server
+        # restart) is no longer auto-canonicalized — the one-shot latch
+        # lives on the pinned transport, not on a per-call check, so it
+        # stays surfaced as suspicious rather than silently retried forever.
+        mock_inner.handle_async_request = AsyncMock(
+            return_value=self._fake_http_response(
+                307, {"location": "http://localhost:8080/mcp"}
+            )
+        )
+        pinned._inner = mock_inner
+        with patch("cosai_mcp.transport.streamable_http.socket.getaddrinfo",
+                   _fake_getaddrinfo("127.0.0.1")):
+            with pytest.raises(SuspiciousRedirectError):
+                await transport.send("tools/list", {})
+
+    @pytest.mark.asyncio
+    async def test_regression_streamable_http_rejects_cross_origin_redirect(self):
+        """A redirect to a materially different path or host must still
+        raise SuspiciousRedirectError — the trailing-slash canonicalization
+        must not widen redirect-following beyond that one narrow case.
+        Drives the real _PinnedAsyncTransport, same rationale as above.
+        """
+        config = _private_config(host="localhost", port=8080)
+        transport = StreamableHTTPTransport("http://localhost:8080/mcp", config)
+
+        redirect = self._fake_http_response(307, {"location": "http://evil.example.com/steal"})
+        mock_inner = create_autospec(httpx.AsyncHTTPTransport, instance=True)
+        mock_inner.handle_async_request = AsyncMock(return_value=redirect)
+        pinned = _PinnedAsyncTransport("127.0.0.1", config, inner=mock_inner)
+
+        transport._pinned_ip = "127.0.0.1"
+        transport._pinned_transport = pinned
+        transport._client = httpx.AsyncClient(
+            transport=pinned, follow_redirects=False, trust_env=False
+        )
+
+        with patch("cosai_mcp.transport.streamable_http.socket.getaddrinfo",
+                   _fake_getaddrinfo("127.0.0.1")):
+            with pytest.raises(SuspiciousRedirectError):
+                await transport.send("initialize", {})
+
+        assert mock_inner.handle_async_request.call_count == 1
 
 
 # ===========================================================================

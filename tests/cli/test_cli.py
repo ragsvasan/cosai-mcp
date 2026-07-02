@@ -1,6 +1,7 @@
 """CLI tests — exit codes, env scrub, coverage matrix, audit verify."""
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -18,6 +19,7 @@ from cosai_mcp.api import (
 )
 from cosai_mcp.cli import _parse_method_overrides, main
 from cosai_mcp.exceptions import TargetUnreachableError
+from cosai_mcp.fleet import FleetResult
 
 # ---------------------------------------------------------------------------
 # Helpers — build ScanResult without hitting the network
@@ -657,6 +659,33 @@ class TestHiddenFlagsStillFunctional:
         assert res.exit_code == 0, res.output
         assert m.call_args.kwargs["stateful_method_overrides"] is None
 
+    def test_expected_catalog_hash_still_parsed(self) -> None:
+        res, m = self._run(["--expected-catalog-hash", "a" * 64])
+        assert res.exit_code == 0, res.output
+        assert m.call_args.kwargs["expected_catalog_hash"] == "a" * 64
+
+    def test_expected_catalog_hash_absent_passes_none(self) -> None:
+        res, m = self._run([])
+        assert res.exit_code == 0, res.output
+        assert m.call_args.kwargs["expected_catalog_hash"] is None
+
+    def test_expected_catalog_hash_empty_string_rejected_with_clear_error(self) -> None:
+        """Defense-pass finding: an empty string must not fall through to
+        the generic 'expected ''' mismatch message — it's an operator
+        mistake (e.g. an unset CI variable), not a real pin, and deserves a
+        distinct, actionable error."""
+        clean = _make_scan_result(exit_code=0)
+        with (
+            patch("cosai_mcp.cli.check_reachable"),
+            patch("cosai_mcp.cli._run_scan", return_value=clean) as m,
+        ):
+            res = _invoke([
+                "scan", "--expected-catalog-hash", "", "http://localhost:8000",
+            ])
+        assert res.exit_code == 2, res.output
+        assert not m.called, "an empty pin must be rejected before _run_scan, not passed through"
+        assert "empty" in res.output.lower() or "invalid" in res.output.lower()
+
     def test_block_private_targets_still_parsed(self) -> None:
         res, m = self._run(["--block-private-targets"])
         assert res.exit_code == 0, res.output
@@ -837,3 +866,220 @@ class TestExperimentalGate:
     def test_experimental_in_help_advanced(self) -> None:
         out = _invoke(["scan", "--help-advanced"]).output
         assert "--experimental" in out
+
+
+# ---------------------------------------------------------------------------
+# ENT-P0-4 — fleet/multi-target scan (docs/ENTERPRISE_REQUIREMENTS_2026-07-01.md)
+# ---------------------------------------------------------------------------
+
+class TestFleetScanCLIWiring:
+    # -----------------------------------------------------------------------
+    # Panel-review findings (ENT-P0-4): flags with per-server semantics
+    # were silently dropped in fleet mode instead of failing loudly — an
+    # operator passing --auth-token got every target scanned
+    # unauthenticated with no warning (a false-green on an auth-gated
+    # server). Reject instead of guessing.
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.parametrize("flag,value", [
+        ("--profile", "fastmcp"),
+        ("--adversarial", None),
+        ("--i-own-this-target", "example.com"),
+        ("--allow-stateful-adversarial", None),
+        ("--method-overrides", "a=b"),
+    ])
+    def test_unsupported_flag_rejected_in_fleet_mode(
+        self, tmp_path: Path, flag: str, value: str | None
+    ) -> None:
+        targets_file = tmp_path / "targets.txt"
+        targets_file.write_text("http://host1:8000\n")
+        args = ["scan", "--targets", str(targets_file), flag]
+        if value is not None:
+            args.append(value)
+        if flag == "--adversarial":
+            args += ["--i-own-this-target", "host1"]
+        res = _invoke(args)
+        assert res.exit_code == 2, res.output
+        assert flag in res.output
+        assert "not supported with --targets" in res.output
+
+    def test_baseline_rejected_in_fleet_mode(self, tmp_path: Path) -> None:
+        targets_file = tmp_path / "targets.txt"
+        targets_file.write_text("http://host1:8000\n")
+        baseline = tmp_path / ".cosai-baseline"
+        baseline.write_text("{}")
+        res = _invoke(["scan", "--targets", str(targets_file), "--baseline", str(baseline)])
+        assert res.exit_code == 2, res.output
+        assert "--baseline" in res.output
+
+    def test_auth_token_is_threaded_through_not_dropped(self, tmp_path: Path) -> None:
+        targets_file = tmp_path / "targets.txt"
+        targets_file.write_text("http://host1:8000\n")
+        with patch("cosai_mcp.fleet.run_fleet_scan") as m:
+            m.return_value = FleetResult(targets=(), exit_code=0)
+            _invoke(["scan", "--targets", str(targets_file), "--auth-token", "SECRET"])
+        assert m.call_args.kwargs["auth_token"] == "SECRET"
+
+    def test_skip_reachability_is_threaded_through(self, tmp_path: Path) -> None:
+        targets_file = tmp_path / "targets.txt"
+        targets_file.write_text("http://host1:8000\n")
+        with patch("cosai_mcp.fleet.run_fleet_scan") as m:
+            m.return_value = FleetResult(targets=(), exit_code=0)
+            _invoke(["scan", "--targets", str(targets_file), "--skip-reachability"])
+        assert m.call_args.kwargs["skip_reachability"] is True
+
+    def test_fleet_concurrency_zero_is_rejected(self, tmp_path: Path) -> None:
+        targets_file = tmp_path / "targets.txt"
+        targets_file.write_text("http://host1:8000\n")
+        res = _invoke(["scan", "--targets", str(targets_file), "--fleet-concurrency", "0"])
+        assert res.exit_code == 2, res.output
+        assert "--fleet-concurrency" in res.output
+
+    def test_sigstore_sign_rejected_in_fleet_mode(self, tmp_path: Path) -> None:
+        """ENT-P0-2: --sigstore-sign signs a single Scorecard object; the
+        aggregated fleet scorecard has no defined Sigstore signing
+        semantics yet — must fail loudly, not silently sign nothing."""
+        targets_file = tmp_path / "targets.txt"
+        targets_file.write_text("http://host1:8000\n")
+        sc_path = tmp_path / "scorecard.json"
+        res = _invoke(
+            [
+                "scan", "--targets", str(targets_file),
+                "--scorecard", str(sc_path), "--sigstore-sign",
+            ]
+        )
+        assert res.exit_code == 2, res.output
+        assert "--sigstore-sign" in res.output
+        assert "not yet supported with --targets" in res.output
+
+    def test_fleet_concurrency_negative_is_rejected(self, tmp_path: Path) -> None:
+        targets_file = tmp_path / "targets.txt"
+        targets_file.write_text("http://host1:8000\n")
+        res = _invoke(["scan", "--targets", str(targets_file), "--fleet-concurrency", "-1"])
+        assert res.exit_code == 2, res.output
+
+    def test_targets_flag_routes_to_fleet_mode(self, tmp_path: Path) -> None:
+        targets_file = tmp_path / "targets.txt"
+        targets_file.write_text("http://host1:8000\nhttp://host2:8000\n")
+        with patch("cosai_mcp.cli._run_fleet_scan_and_exit") as m:
+            m.side_effect = SystemExit(0)
+            res = _invoke(["scan", "--targets", str(targets_file)])
+        assert res.exit_code == 0
+        assert m.call_args.kwargs["targets_path"] == targets_file
+        assert m.call_args.kwargs["max_concurrency"] == 5
+
+    def test_fleet_concurrency_flag_is_threaded_through(self, tmp_path: Path) -> None:
+        targets_file = tmp_path / "targets.txt"
+        targets_file.write_text("http://host1:8000\n")
+        with patch("cosai_mcp.cli._run_fleet_scan_and_exit") as m:
+            m.side_effect = SystemExit(0)
+            _invoke(["scan", "--targets", str(targets_file), "--fleet-concurrency", "10"])
+        assert m.call_args.kwargs["max_concurrency"] == 10
+
+    def test_single_target_mode_unaffected_when_targets_absent(self) -> None:
+        """TARGET-only invocations must not be routed into fleet mode."""
+        clean = _make_scan_result(exit_code=0)
+        with (
+            patch("cosai_mcp.cli.check_reachable"),
+            patch("cosai_mcp.cli._run_scan", return_value=clean) as m,
+            patch("cosai_mcp.cli._run_fleet_scan_and_exit") as fleet_m,
+        ):
+            res = _invoke(["scan", "http://localhost:8000"])
+        assert res.exit_code == 0, res.output
+        assert m.called
+        assert not fleet_m.called
+
+    def test_target_and_targets_together_is_an_error(self, tmp_path: Path) -> None:
+        targets_file = tmp_path / "targets.txt"
+        targets_file.write_text("http://host1:8000\n")
+        res = _invoke(["scan", "--targets", str(targets_file), "http://alsohost:8000"])
+        assert res.exit_code == 2
+        assert "not both" in res.output
+
+    def test_missing_target_and_targets_is_an_error(self) -> None:
+        res = _invoke(["scan"])
+        assert res.exit_code == 2
+        assert "TARGET" in res.output
+
+    def test_targets_flag_hidden_from_plain_help(self) -> None:
+        out = _invoke(["scan", "--help"]).output
+        assert "--targets" not in out
+
+    def test_targets_flag_in_help_advanced(self) -> None:
+        out = _invoke(["scan", "--help-advanced"]).output
+        assert "--targets" in out
+
+
+class TestFleetScanEndToEnd:
+    """Enters at the CLI with real MockMCPServer instances — the acceptance
+    criterion verbatim: "a 3-target file yields one aggregated scorecard, a
+    merged SARIF that renders in GitHub, and an exit code that is the max
+    severity across targets; one unreachable target degrades to exit 3 for
+    that host without masking findings on the others."
+    """
+
+    def test_fleet_scan_merges_sarif_and_scorecard_across_targets(
+        self, tmp_path: Path
+    ) -> None:
+        from cosai_mcp.harness.mock_server import MockMCPServer
+
+        with MockMCPServer() as server1, MockMCPServer() as server2:
+            server1.wait_ready()
+            server2.wait_ready()
+            targets_file = tmp_path / "targets.txt"
+            targets_file.write_text(
+                f"http://127.0.0.1:{server1.port}\nhttp://127.0.0.1:{server2.port}\n"
+            )
+            sarif_path = tmp_path / "merged.sarif"
+            scorecard_path = tmp_path / "fleet-scorecard.json"
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main,
+                [
+                    "scan", "--targets", str(targets_file),
+                    "--categories", "T1",
+                    "--no-report",
+                    "--report-sarif", str(sarif_path),
+                    "--scorecard", str(scorecard_path),
+                    "--no-sign-scorecard",
+                ],
+            )
+
+        assert result.exit_code in (0, 1), result.output
+
+        sarif_doc = json.loads(sarif_path.read_text())
+        assert sarif_doc["version"] == "2.1.0"
+        assert len(sarif_doc["runs"]) == 2
+
+        scorecard_doc = json.loads(scorecard_path.read_text())
+        assert scorecard_doc["target_count"] == 2
+        assert len(scorecard_doc["targets"]) == 2
+        assert all(t["scorecard"] is not None for t in scorecard_doc["targets"])
+
+    def test_fleet_scan_isolates_one_unreachable_target(self, tmp_path: Path) -> None:
+        from cosai_mcp.harness.mock_server import MockMCPServer
+
+        with MockMCPServer() as server:
+            server.wait_ready()
+            targets_file = tmp_path / "targets.txt"
+            # port 1: nothing listens there, so the TCP connect is refused
+            # immediately — a fast, reliable "unreachable" target with no
+            # dependency on real DNS/internet.
+            targets_file.write_text(
+                f"http://127.0.0.1:{server.port}\nhttp://127.0.0.1:1\n"
+            )
+            runner = CliRunner()
+            result = runner.invoke(
+                main,
+                [
+                    "scan", "--targets", str(targets_file),
+                    "--categories", "T1", "--no-report",
+                ],
+            )
+        # the reachable target's real outcome (0 or 1) must win the
+        # aggregate — never silently downgraded to exit 3 because a
+        # DIFFERENT target was unreachable.
+        assert result.exit_code in (0, 1), result.output
+        assert "UNREACHABLE" in result.output
+        assert "127.0.0.1:1" in result.output

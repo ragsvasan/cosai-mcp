@@ -242,7 +242,7 @@ Partial scans (exit 2 or 3) set `invocation.executionSuccessful: false` in SARIF
 The scanner's own supply chain is hardened against the attacks it tests for:
 
 - **Ed25519 public key** hardcoded as bytes literal in `cosai_mcp/keys.py` — not loaded from disk, cannot be replaced by a catalog substitution attack
-- **PyPI attestation** via Sigstore/PEP 740 — verifiable at install time
+- **PyPI attestation** via Sigstore/PEP 740 — verifiable at install time (this is about *installing cosai-mcp itself*; not to be confused with `scorecard/sigstore_signing.py`, which uses Sigstore to sign *scan output* — see Module Map below)
 - **GitHub Action** examples reference commit SHA, not mutable version tags
 - **Reproducible builds** + SLSA L3 provenance (Phase 9)
 - **Runtime environment** scrubbed at process start: `*_TOKEN`, `*_KEY`, cloud credential env vars stripped before any subprocess runs
@@ -259,6 +259,9 @@ cosai_mcp/
   session.py           MCPSession: handshake, tools/list, probe dispatch
   api.py               Scanner class (Python API)
   cli.py               cosai scan + cosai audit commands
+  fleet.py             Fleet/multi-target scanning: bounded-concurrency
+                        orchestration, per-target failure isolation,
+                        SARIF/scorecard merging (ENT-P0-4)
   pytest_plugin.py     --cosai-target, --cosai-severity fixtures
 
   transport/
@@ -302,10 +305,28 @@ cosai_mcp/
     (RFC 8693 token exchange + RFC 9449 DPoP reference impl)
 
   report/
-    sarif.py           SARIF 2.1.0 structured builder
+    sarif.py           SARIF 2.1.0 structured builder (multi-run aware —
+                        every run in a merged document is validated, not
+                        just the first, for fleet mode's merged SARIF)
     html.py            HTML report (CSP hardened)
     sign.py            Per-installation report signing (keyring)
     verify.py          Report + audit chain verification
+
+  scorecard/
+    models.py          Scorecard, CategoryResult, ComplianceMapping
+                        frozen dataclasses
+    builder.py          build_scorecard(): per-category grading from a
+                        ScanResult, attaches the compliance mapping
+    compliance.py       CATEGORY_COMPLIANCE_MAP: CoSAI + OWASP MCP Top 10 +
+                        NIST AI RMF per category (ENT-P0-3) — kept in sync
+                        with docs/THREAT_MAPPING.md by a cross-check test
+    signing.py          Ed25519 sign/verify (trust-anchor-before-signature)
+    sigstore_signing.py Sigstore/Fulcio keyless sign/verify (ENT-P0-2) — an
+                        ADDITIONAL signature bound to an OIDC identity, never
+                        a replacement for the Ed25519 signature above.
+                        Optional `sigstore` extra; identity/issuer pinning is
+                        the security boundary (fail-closed, mirrors the
+                        Ed25519 trust-anchor contract)
 
   scanner/
     (static tool definition analyzer — offline, no target needed)

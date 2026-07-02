@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -143,7 +145,24 @@ def main() -> None:
     callback=_help_advanced_cb,
     help="Show every option (advanced reporting, adversarial, IR/SIEM, tuning).",
 )
-@click.argument("target")
+@click.argument("target", required=False, default=None)
+@click.option("--targets", "targets_path", type=click.Path(exists=True, dir_okay=False),
+              default=None, hidden=True,
+              help="Path to a plain-text target list (one MCP server URL per line; "
+                   "blank lines and '#' comments ignored) — scan every target with "
+                   "bounded concurrency and emit one aggregated exit code, one "
+                   "merged SARIF report, and one roll-up scorecard. Mutually "
+                   "exclusive with TARGET. Only the core scan options (categories, "
+                   "engine, fail-on, catalog-root, allow-private-targets, "
+                   "probe-timeout, pii-strict, expected-catalog-hash) apply in "
+                   "fleet mode.")
+@click.option("--fleet-concurrency", type=int, default=5, show_default=True, hidden=True,
+              help="Max targets scanned in parallel in fleet mode (--targets).")
+@click.option("--fleet-target-timeout", type=float, default=600.0, show_default=True,
+              hidden=True,
+              help="Max seconds to wait on any single target in fleet mode before "
+                   "recording it as timed out and moving on — bounds the whole "
+                   "fleet run against one hung/hostile target.")
 @click.option(
     "--categories",
     default="all",
@@ -293,6 +312,18 @@ def main() -> None:
               help="Write a signed conformance scorecard JSON to this path.")
 @click.option("--no-sign-scorecard", is_flag=True, default=False, hidden=True,
               help="Produce an unsigned scorecard (skip Ed25519 signing).")
+@click.option("--sigstore-sign", is_flag=True, default=False, hidden=True,
+              help="Additionally sign the scorecard with Sigstore keyless signing "
+                   "(ENT-P0-2), writing a <scorecard>.sigstore.json sidecar bundle. "
+                   "Requires the optional 'sigstore' package (pip install "
+                   "cosai-mcp[sigstore]) and a real ambient OIDC identity (GitHub "
+                   "Actions with permissions: id-token: write, GitLab CI, or an "
+                   "interactive OIDC login) — fails loudly (exit 2) if either is "
+                   "missing, never silently skips. Does not replace the existing "
+                   "Ed25519 signature; both are written.")
+@click.option("--sigstore-staging", is_flag=True, default=False, hidden=True,
+              help="Use Sigstore's public staging instance instead of production "
+                   "(testing only) — applies to --sigstore-sign.")
 @click.option("--experimental", is_flag=True, default=False, hidden=True,
               help="Enable experimental Tracks B/D (SIEM/OCSF telemetry "
                    "emission and IR containment). These are NOT part of the "
@@ -305,8 +336,21 @@ def main() -> None:
                    "this server actually exposes, so T2/T6/T7 scenarios run "
                    "instead of reporting INCONCLUSIVE. Split on the first '=' "
                    "only (names may contain '/'); malformed items are ignored.")
+@click.option("--tool-allowlist", "tool_allowlist", default=None, hidden=True,
+              help="Comma-separated list of operator-approved tool names for T11 "
+                   "supply-chain checks. When set, any discovered tool not on this "
+                   "list (unexpected) or within Levenshtein distance 1 (typosquat) "
+                   "is flagged. Without it, T11 reports INCONCLUSIVE.")
+@click.option("--expected-catalog-hash", "expected_catalog_hash", default=None, hidden=True,
+              help="SHA-256 hex digest the loaded threat catalog must match (see "
+                   "'Catalog hash:' in scan output). Pins a release gate to an exact, "
+                   "reviewed catalog: a mismatch refuses to scan (exit 2) before any "
+                   "probe runs, instead of silently running against a changed ruleset.")
 def scan(
-    target: str,
+    target: str | None,
+    targets_path: str | None,
+    fleet_concurrency: int,
+    fleet_target_timeout: float,
     categories: str,
     engine: str,
     fail_on: str,
@@ -342,8 +386,12 @@ def scan(
     critical_burst_threshold: int,
     scorecard_path: str | None,
     no_sign_scorecard: bool,
+    sigstore_sign: bool,
+    sigstore_staging: bool,
     experimental: bool,
     method_overrides: str | None,
+    tool_allowlist: str | None,
+    expected_catalog_hash: str | None,
 ) -> None:
     """Scan a target MCP server for CoSAI threat categories T1–T12.
 
@@ -388,6 +436,118 @@ def scan(
 
     cat_list = [c.strip() for c in categories.split(",") if c.strip()] if categories != "all" else None  # noqa: E501
     effective_catalog_root = Path(catalog_root) if catalog_root else CATALOG_ROOT
+
+    # -- Validate --expected-catalog-hash before it ever reaches _run_scan --
+    # An empty string (e.g. an unset CI variable interpolated as "") must not
+    # fall through to the generic "expected ''" mismatch message — that's an
+    # operator/CI mistake, not a real pin, and deserves its own clear error.
+    if expected_catalog_hash is not None and expected_catalog_hash.strip() == "":
+        click.echo(
+            "[ERROR] --expected-catalog-hash was passed an empty value. "
+            "Omit the flag entirely to scan unpinned, or pass the real "
+            "64-character catalog hash to pin a release gate.",
+            err=True,
+        )
+        sys.exit(2)
+
+    # -- ENT-P0-2: --sigstore-sign / --sigstore-staging only make sense
+    # bound to a scorecard artifact — signing "nothing" silently is not an
+    # option this project offers. --
+    if sigstore_sign and not scorecard_path:
+        click.echo(
+            "[ERROR] --sigstore-sign requires --scorecard <path> — there is "
+            "no scorecard artifact to sign otherwise.",
+            err=True,
+        )
+        sys.exit(2)
+    if sigstore_staging and not sigstore_sign:
+        click.echo(
+            "[ERROR] --sigstore-staging requires --sigstore-sign.",
+            err=True,
+        )
+        sys.exit(2)
+
+    # -- ENT-P0-4: fleet mode branches off before any single-target-only
+    # logic (profiles, adversarial mode, the single-target reachability
+    # check) — each target gets its own reachability check inside
+    # run_fleet_scan, isolated per-target. --
+    if targets_path:
+        if target:
+            click.echo(
+                "[ERROR] Pass either TARGET or --targets <file>, not both.", err=True
+            )
+            sys.exit(2)
+        # Panel-review finding (ENT-P0-4): these flags have per-server
+        # semantics that don't generalize across a fleet of DIFFERENT
+        # targets (a profile/baseline/method-override tuned for one server,
+        # an ownership declaration naming one hostname) — silently dropping
+        # them produced a false-green (e.g. --auth-token ignored, every
+        # target scanned unauthenticated with no warning). Fail loudly
+        # instead of guessing what the operator meant.
+        _fleet_unsupported = [
+            name for name, used in (
+                ("--profile", bool(profile)),
+                ("--adversarial", adversarial),
+                ("--i-own-this-target", bool(i_own_this_target)),
+                ("--allow-stateful-adversarial", allow_stateful_adversarial),
+                ("--baseline", bool(baseline_path)),
+                ("--method-overrides", bool(method_overrides)),
+            ) if used
+        ]
+        if _fleet_unsupported:
+            click.echo(
+                "[ERROR] " + ", ".join(_fleet_unsupported) + " are not supported "
+                "with --targets (fleet mode) — these options have per-server "
+                "semantics that don't generalize across a fleet of different "
+                "targets. Scan each such target individually instead.",
+                err=True,
+            )
+            sys.exit(2)
+        # --sigstore-sign signs a single Scorecard object (see
+        # scorecard/sigstore_signing.py); the aggregated fleet scorecard
+        # (build_fleet_scorecard) wraps N per-target scorecards in a
+        # different shape and has no defined Sigstore signing semantics yet
+        # — reject rather than silently sign nothing, or invent behavior.
+        if sigstore_sign:
+            click.echo(
+                "[ERROR] --sigstore-sign is not yet supported with --targets "
+                "(fleet mode) — Sigstore signing applies to a single "
+                "scorecard artifact. Scan each target individually instead.",
+                err=True,
+            )
+            sys.exit(2)
+        _run_fleet_scan_and_exit(
+            targets_path=Path(targets_path),
+            max_concurrency=fleet_concurrency,
+            per_target_timeout=fleet_target_timeout,
+            categories=cat_list,
+            engine=engine,
+            allow_custom_catalog=allow_custom_catalog,
+            probe_timeout_seconds=probe_timeout,
+            catalog_root=effective_catalog_root,
+            fail_on=fail_on,
+            allow_private_targets=allow_private_targets,
+            pii_strict=pii_strict,
+            expected_catalog_hash=expected_catalog_hash,
+            auth_token=auth_token,
+            read_token=read_token,
+            mcp_path=mcp_path,
+            probe_delay_seconds=probe_delay,
+            adaptive=not no_adaptive,
+            tool_allowlist=_parse_tool_allowlist(tool_allowlist),
+            skip_reachability=skip_reachability,
+            report_sarif=report_sarif,
+            scorecard_path=scorecard_path,
+            no_sign_scorecard=no_sign_scorecard,
+        )
+        return
+
+    if not target:
+        click.echo(
+            "[ERROR] Missing argument TARGET (or pass --targets <file> for a fleet scan).",
+            err=True,
+        )
+        sys.exit(2)
 
     # -- Resolve server profile (exit 2 on unknown name or bad custom file) --
     resolved_profile: ServerProfile | None = None
@@ -452,10 +612,13 @@ def scan(
             baseline_path=Path(baseline_path) if baseline_path else None,
             pii_strict=pii_strict,
             stateful_method_overrides=_parse_method_overrides(method_overrides),
+            tool_allowlist=_parse_tool_allowlist(tool_allowlist),
+            expected_catalog_hash=expected_catalog_hash,
         )
     except ValueError as exc:
-        # Includes adversarial dual opt-in failures AND a malformed
-        # .cosai-baseline (fail-closed: a broken baseline must not be ignored).
+        # Includes adversarial dual opt-in failures, a malformed
+        # .cosai-baseline, and a --expected-catalog-hash mismatch
+        # (fail-closed: none of these must be silently ignored).
         click.echo(f"[ERROR] {exc}", err=True)
         sys.exit(2)
     except TargetUnreachableError as exc:
@@ -562,6 +725,25 @@ def scan(
                 f"Scorecard{signed_tag}: {scorecard.conformance_level.value} "
                 f"→ {scorecard_path}"
             )
+
+            # -- ENT-P0-2: Sigstore keyless signing — an ADDITIONAL bundle
+            # alongside the Ed25519 signature above, never a replacement.
+            # Must fail loudly (exit 2), matching the Ed25519 write-failure
+            # path immediately above: a user who passed --sigstore-sign and
+            # got no bundle would otherwise wrongly believe it was signed. --
+            if sigstore_sign:
+                from cosai_mcp.scorecard.sigstore_signing import sign_scorecard_sigstore
+
+                try:
+                    bundle = sign_scorecard_sigstore(scorecard, staging=sigstore_staging)
+                except Exception as exc:  # noqa: BLE001
+                    click.echo(f"[ERROR] Sigstore signing failed: {exc}", err=True)
+                    sys.exit(2)
+                sigstore_bundle_path = f"{scorecard_path}.sigstore.json"
+                Path(sigstore_bundle_path).write_text(
+                    __import__("json").dumps(bundle, indent=2), encoding="utf-8"
+                )
+                click.echo(f"Sigstore bundle: {sigstore_bundle_path}")
         except Exception as exc:  # noqa: BLE001
             click.echo(f"[ERROR] Failed to write scorecard: {exc}", err=True)
             sys.exit(2)
@@ -578,15 +760,170 @@ def scorecard() -> None:
     """Verify and inspect signed conformance scorecards."""
 
 
+def _print_compliance_mapping(sc: Any) -> None:
+    """Print each category's CoSAI + OWASP MCP Top 10 + NIST AI RMF mapping.
+
+    ENT-P0-3: the mapping printed here is read from the SIGNED payload
+    (verified above, when called from `scorecard verify`) — not
+    re-derived from docs/THREAT_MAPPING.md — so what's on screen is what
+    was actually attested to.
+    """
+    click.echo("\n  Compliance mapping (CoSAI -> OWASP MCP Top 10 / NIST AI RMF):")
+    for cat in sc.categories:
+        mapping = cat.compliance_mapping
+        if mapping is None:
+            click.echo(f"    {cat.category:<5} (no compliance mapping in this scorecard)")
+            continue
+        nist = ", ".join(mapping.nist_ai_rmf)
+        click.echo(f"    {cat.category:<5} {mapping.owasp_mcp_top10:<32} NIST AI RMF: {nist}")
+
+
+def _check_scorecard_catalog_pin(sc: Any, expected_catalog_hash: str | None) -> None:
+    """Raise SystemExit(1) if *sc* wasn't produced by the pinned catalog.
+
+    Adversary-pass EXPLOIT 2 (ENT-P0-1 review): a valid Ed25519 signature
+    only proves the scorecard wasn't tampered with after signing — it says
+    nothing about which catalog produced it. A release gate that consumes a
+    signed-scorecard artifact (scan job -> separate verify job) must be able
+    to pin the same reproducibility guarantee ``cosai scan
+    --expected-catalog-hash`` gives a live scan.
+    """
+    if expected_catalog_hash is not None and sc.catalog_hash != expected_catalog_hash:
+        click.echo(
+            f"[INVALID] Catalog hash mismatch: scorecard was produced with "
+            f"catalog {sc.catalog_hash!r}, expected {expected_catalog_hash!r}. "
+            "A valid signature does not guarantee the pinned catalog ran.",
+            err=True,
+        )
+        sys.exit(1)
+
+
+def _verify_sigstore_bundle_or_exit(
+    sc: Any,
+    sigstore_bundle: str | None,
+    trusted_identity: str | None,
+    trusted_issuer: str | None,
+    sigstore_staging: bool,
+) -> None:
+    """Verify *sc* against a Sigstore bundle file (ENT-P0-2), if one was given.
+
+    Triggered by --sigstore-bundle's own presence — not gated behind
+    --verify — because passing a bundle path is itself an explicit request
+    to check it; silently skipping an explicit ask is worse than the
+    (redundant) extra work.
+
+    Fail-closed: --sigstore-bundle without --trusted-identity is rejected.
+    A Sigstore signature proves someone with *a* Fulcio-issued certificate
+    signed the payload — without pinning the expected identity, that is
+    "signed by anyone," which authenticates nothing (the same reasoning
+    that makes Ed25519 verify_scorecard() refuse a bare signature check
+    with no trusted public key).
+    """
+    if not sigstore_bundle:
+        return
+    if not trusted_identity:
+        click.echo(
+            "[ERROR] --sigstore-bundle requires --trusted-identity — a "
+            "Sigstore signature from an unspecified identity proves nothing "
+            "about who signed it.",
+            err=True,
+        )
+        sys.exit(2)
+
+    import json as _json
+
+    from cosai_mcp.scorecard.sigstore_signing import (
+        SigstoreUnavailableError,
+        SigstoreVerificationError,
+        verify_scorecard_sigstore,
+    )
+
+    try:
+        bundle_dict = _json.loads(Path(sigstore_bundle).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        click.echo(f"[ERROR] Cannot read Sigstore bundle: {exc}", err=True)
+        sys.exit(2)
+
+    try:
+        verify_scorecard_sigstore(
+            sc, bundle_dict,
+            identity=trusted_identity, issuer=trusted_issuer, staging=sigstore_staging,
+        )
+    except SigstoreUnavailableError as exc:
+        click.echo(f"[ERROR] {exc}", err=True)
+        sys.exit(2)
+    except SigstoreVerificationError as exc:
+        click.echo(f"[INVALID] Sigstore verification failed: {exc}", err=True)
+        sys.exit(1)
+
+    click.echo(f"[OK] Sigstore signature valid — identity: {trusted_identity}")
+
+
+_SIGSTORE_VERIFY_OPTIONS = [
+    click.option(
+        "--sigstore-bundle", "sigstore_bundle",
+        type=click.Path(exists=True, dir_okay=False), default=None,
+        help="Path to a Sigstore bundle JSON (written alongside the scorecard "
+             "by `cosai scan --sigstore-sign`, as <scorecard>.sigstore.json). "
+             "Verifies an ADDITIONAL signature bound to an organizational "
+             "OIDC identity, on top of the Ed25519 signature. Requires "
+             "--trusted-identity.",
+    ),
+    click.option(
+        "--trusted-identity", "trusted_identity", default=None,
+        help="Expected Sigstore signer identity (e.g. the GitHub Actions "
+             "workflow identity URI that ran the scan). Required with "
+             "--sigstore-bundle.",
+    ),
+    click.option(
+        "--trusted-issuer", "trusted_issuer", default=None,
+        help="Expected OIDC issuer URL for the Sigstore identity (e.g. "
+             "https://token.actions.githubusercontent.com). Optional "
+             "additional pin alongside --trusted-identity.",
+    ),
+    click.option(
+        "--sigstore-staging", "sigstore_staging", is_flag=True, default=False,
+        help="Verify against Sigstore's public staging instance instead of "
+             "production (testing only).",
+    ),
+]
+
+
+def _apply_options(
+    options: Sequence[Callable[[Callable[..., Any]], Callable[..., Any]]],
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+        for opt in reversed(options):
+            fn = opt(fn)
+        return fn
+    return decorator
+
+
 @scorecard.command("verify")
 @click.argument("scorecard_file", type=click.Path(exists=True))
-def scorecard_verify(scorecard_file: str) -> None:
+@click.option("--expected-catalog-hash", "expected_catalog_hash", default=None,
+              help="SHA-256 hex digest the scorecard's catalog_hash must match. "
+                   "A valid signature alone does not prove the pinned, reviewed "
+                   "catalog produced this scorecard.")
+@_apply_options(_SIGSTORE_VERIFY_OPTIONS)
+def scorecard_verify(
+    scorecard_file: str,
+    expected_catalog_hash: str | None,
+    sigstore_bundle: str | None,
+    trusted_identity: str | None,
+    trusted_issuer: str | None,
+    sigstore_staging: bool,
+) -> None:
     """Verify the Ed25519 signature on a scorecard JSON file.
 
     Exit codes:
-        0  Valid — signature verified against the trusted installation key.
-        1  Invalid — signature does not verify or public key mismatch.
-        2  File cannot be read or is not a valid scorecard.
+        0  Valid — signature verified against the trusted installation key
+           (and catalog_hash matches --expected-catalog-hash, and the
+           Sigstore bundle matches --trusted-identity, if given).
+        1  Invalid — signature does not verify, public key mismatch,
+           catalog_hash mismatch, or Sigstore identity mismatch.
+        2  File/bundle cannot be read, not a valid scorecard, or
+           --sigstore-bundle given without --trusted-identity.
     """
     import json as _json
 
@@ -600,25 +937,52 @@ def scorecard_verify(scorecard_file: str) -> None:
         click.echo(f"[ERROR] Cannot read scorecard: {exc}", err=True)
         sys.exit(2)
 
+    # Adversary-pass EXPLOIT 1 (ENT-P0-2 review): the Sigstore check must run
+    # and pass BEFORE any "valid" output is printed. Printing the Ed25519
+    # [OK] line first meant a subsequent Sigstore failure left a misleading
+    # "[OK] ... valid" line on stdout above the real (possibly crashing)
+    # verdict — a log-scraper that only checks for "[OK]" would be fooled.
     try:
         verify_scorecard(sc)
-        click.echo(f"[OK] Scorecard signature valid — conformance: {sc.conformance_level.value}")
+        _check_scorecard_catalog_pin(sc, expected_catalog_hash)
     except ScorecardVerificationError as exc:
         click.echo(f"[INVALID] {exc}", err=True)
         sys.exit(1)
+
+    _verify_sigstore_bundle_or_exit(
+        sc, sigstore_bundle, trusted_identity, trusted_issuer, sigstore_staging
+    )
+
+    click.echo(f"[OK] Scorecard signature valid — conformance: {sc.conformance_level.value}")
+    _print_compliance_mapping(sc)
 
 
 @scorecard.command("show")
 @click.argument("scorecard_file", type=click.Path(exists=True))
 @click.option("--verify", "do_verify", is_flag=True, default=False,
               help="Verify signature before printing.")
-def scorecard_show(scorecard_file: str, do_verify: bool) -> None:
+@click.option("--expected-catalog-hash", "expected_catalog_hash", default=None,
+              help="SHA-256 hex digest the scorecard's catalog_hash must match "
+                   "(only checked when --verify is also set).")
+@_apply_options(_SIGSTORE_VERIFY_OPTIONS)
+def scorecard_show(
+    scorecard_file: str,
+    do_verify: bool,
+    expected_catalog_hash: str | None,
+    sigstore_bundle: str | None,
+    trusted_identity: str | None,
+    trusted_issuer: str | None,
+    sigstore_staging: bool,
+) -> None:
     """Print a human-readable summary of a conformance scorecard.
 
     Exit codes:
-        0  Scorecard printed (and verified if --verify was set).
-        1  Signature verification failed (only with --verify).
-        2  Invalid or unreadable scorecard file.
+        0  Scorecard printed (and verified if --verify or --sigstore-bundle
+           was set).
+        1  Signature verification failed (--verify) or Sigstore identity
+           mismatch (--sigstore-bundle).
+        2  Invalid/unreadable scorecard or bundle file, or --sigstore-bundle
+           given without --trusted-identity.
     """
     import json as _json
 
@@ -638,6 +1002,11 @@ def scorecard_show(scorecard_file: str, do_verify: bool) -> None:
         except ScorecardVerificationError as exc:
             click.echo(f"[INVALID] Signature verification failed: {exc}", err=True)
             sys.exit(1)
+        _check_scorecard_catalog_pin(sc, expected_catalog_hash)
+
+    _verify_sigstore_bundle_or_exit(
+        sc, sigstore_bundle, trusted_identity, trusted_issuer, sigstore_staging
+    )
 
     _GRADE_ICON = {
         Grade.PASS: "✓",
@@ -659,6 +1028,7 @@ def scorecard_show(scorecard_file: str, do_verify: bool) -> None:
             f"  {cat.category:<6} {icon} {cat.grade.value:<4}  "
             f"{cat.finding_count:<10} {cat.critical_count:<10} {cat.coverage_engine}"
         )
+    _print_compliance_mapping(sc)
     click.echo()
 
 
@@ -1452,7 +1822,14 @@ def _make_manifest_stubs() -> tuple[dict, dict]:
 _MANIFEST_STUBS_SARIF, _MANIFEST_STUBS_HTML = _make_manifest_stubs()
 
 
-def _write_sarif_report(result: ScanResult, path: Path) -> None:
+def _build_sarif_dict(result: ScanResult) -> dict[str, Any]:
+    """Build the SARIF 2.1.0 document dict for one ScanResult (single run).
+
+    Extracted from _write_sarif_report so fleet mode (ENT-P0-4) can build
+    one dict per target and merge their "runs" arrays into one document,
+    reusing the same rule/result population logic — never a second,
+    parallel implementation of it.
+    """
     from cosai_mcp.report.sarif import SarifBuilder, ScanContext
 
     ctx = ScanContext(
@@ -1499,7 +1876,125 @@ def _write_sarif_report(result: ScanResult, path: Path) -> None:
             else "medium",
         )
 
-    sarif_json = builder.build_json()
+    return builder.build()
+
+
+def _run_fleet_scan_and_exit(
+    *,
+    targets_path: Path,
+    max_concurrency: int,
+    per_target_timeout: float,
+    categories: list[str] | None,
+    engine: str,
+    allow_custom_catalog: bool,
+    probe_timeout_seconds: float,
+    catalog_root: Path,
+    fail_on: str,
+    allow_private_targets: bool,
+    pii_strict: bool,
+    expected_catalog_hash: str | None,
+    auth_token: str | None,
+    read_token: str | None,
+    mcp_path: str,
+    probe_delay_seconds: float,
+    adaptive: bool,
+    tool_allowlist: tuple[str, ...] | None,
+    skip_reachability: bool,
+    report_sarif: str | None,
+    scorecard_path: str | None,
+    no_sign_scorecard: bool,
+) -> None:
+    """ENT-P0-4: run a fleet scan, write the merged SARIF / aggregated
+    scorecard, and exit with the aggregate exit code. Never returns."""
+    from cosai_mcp.fleet import (
+        build_fleet_scorecard,
+        merge_sarif,
+        parse_targets_file,
+        run_fleet_scan,
+    )
+    from cosai_mcp.report.sarif import _validate_sarif_structure
+
+    try:
+        targets = parse_targets_file(targets_path)
+    except ValueError as exc:
+        click.echo(f"[ERROR] {exc}", err=True)
+        sys.exit(2)
+
+    # Panel-review finding (ENT-P0-4): ThreadPoolExecutor silently clamps
+    # max_workers<1 to 1 without any signal — a banner printing the
+    # requested value would lie about what's actually in effect. Reject
+    # instead, matching this project's fail-closed convention for other
+    # malformed operator input (e.g. --expected-catalog-hash "").
+    if max_concurrency < 1:
+        click.echo(
+            f"[ERROR] --fleet-concurrency must be >= 1 (got {max_concurrency}).",
+            err=True,
+        )
+        sys.exit(2)
+
+    click.echo(f"Fleet scan: {len(targets)} target(s), max concurrency {max_concurrency}")
+
+    fleet_result = run_fleet_scan(
+        targets,
+        max_concurrency=max_concurrency,
+        per_target_timeout=per_target_timeout,
+        categories=categories,
+        engine=engine,
+        allow_custom_catalog=allow_custom_catalog,
+        probe_timeout_seconds=probe_timeout_seconds,
+        catalog_root=catalog_root,
+        fail_on=fail_on,
+        allow_private_targets=allow_private_targets,
+        pii_strict=pii_strict,
+        expected_catalog_hash=expected_catalog_hash,
+        auth_token=auth_token,
+        read_token=read_token,
+        mcp_path=mcp_path,
+        probe_delay_seconds=probe_delay_seconds,
+        adaptive=adaptive,
+        tool_allowlist=tool_allowlist,
+        skip_reachability=skip_reachability,
+    )
+
+    _STATUS_LABEL = {0: "CLEAN", 1: "FINDINGS", 2: "ERROR", 3: "UNREACHABLE"}
+    for outcome in fleet_result.targets:
+        status = _STATUS_LABEL.get(outcome.exit_code, "?")
+        detail = f" — {outcome.error}" if outcome.error else ""
+        click.echo(f"  [{status:<11}] {outcome.target_url}{detail}")
+
+    if report_sarif:
+        sarif_docs = [
+            _build_sarif_dict(outcome.result)
+            for outcome in fleet_result.targets
+            if outcome.result is not None
+        ]
+        if sarif_docs:
+            merged = merge_sarif(sarif_docs)
+            _validate_sarif_structure(merged)
+            Path(report_sarif).write_text(
+                json.dumps(merged, indent=2, ensure_ascii=True), encoding="utf-8"
+            )
+            click.echo(f"Merged SARIF report written to {report_sarif}")
+        else:
+            click.echo(
+                "[WARN] No target completed a scan — no SARIF report written.", err=True
+            )
+
+    if scorecard_path:
+        fleet_scorecard = build_fleet_scorecard(fleet_result, signed=not no_sign_scorecard)
+        Path(scorecard_path).write_text(json.dumps(fleet_scorecard, indent=2), encoding="utf-8")
+        click.echo(f"Aggregated scorecard written to {scorecard_path}")
+
+    click.echo(f"\nFleet exit code: {fleet_result.exit_code}")
+    sys.exit(fleet_result.exit_code)
+
+
+def _write_sarif_report(result: ScanResult, path: Path) -> None:
+    from cosai_mcp.report.sarif import _validate_sarif_structure
+
+    doc = _build_sarif_dict(result)
+    _validate_sarif_structure(doc)
+    sarif_json = json.dumps(doc, indent=2, ensure_ascii=True)
     path.write_text(sarif_json, encoding="utf-8")
 
     # Attempt to sign the report (best-effort; failure is a warning not an error)

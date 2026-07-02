@@ -52,10 +52,10 @@ After the 0.1.0 PyPI release (not yet published), `pip install cosai-mcp` and
 cosai scan http://localhost:8000
 
 # Scan with SARIF report (for GitHub Security tab)
-cosai scan http://localhost:8000 --report sarif --output results.sarif
+cosai scan http://localhost:8000 --report-sarif results.sarif
 
 # Scan with HTML report
-cosai scan http://localhost:8000 --report html --output results.html
+cosai scan http://localhost:8000 --report-html results.html
 
 # Fail only on critical findings
 cosai scan http://localhost:8000 --fail-on critical
@@ -76,6 +76,43 @@ cosai scan http://localhost:8000 --tool-allowlist search,read_file,deploy
 # Show coverage matrix (which engine covers which category)
 cosai scan http://localhost:8000 --report-coverage
 ```
+
+---
+
+## Scanning a Fleet of Servers
+
+For more than one MCP server, `--targets` scans them all with bounded
+concurrency and emits **one** aggregated result instead of N separate
+invocations you'd otherwise have to hand-merge:
+
+```bash
+# fleet-targets.txt — one URL per line, blank lines and '#' comments ignored
+cat > fleet-targets.txt <<EOF
+http://server1.internal:8000
+http://server2.internal:8000
+http://server3.internal:8000
+EOF
+
+cosai scan --targets fleet-targets.txt \
+  --report-sarif fleet.sarif \
+  --scorecard fleet-scorecard.json \
+  --fleet-concurrency 10
+```
+
+This produces one merged SARIF report (one run per target — GitHub renders
+multi-run SARIF natively), one aggregated scorecard JSON listing every
+target's outcome and signed per-target scorecard, and a single process exit
+code that is the *worst* outcome across the fleet (a scanner error on any
+target outranks a real finding, which outranks one target simply being
+unreachable — so a proven vulnerability on server B is never masked just
+because server A was down). A target that hangs is recorded as timed out
+(`--fleet-target-timeout`, default 600s) rather than blocking the whole run.
+
+Flags with per-server semantics (`--profile`, `--adversarial`, `--baseline`,
+`--method-overrides`) aren't supported with `--targets` — scan those targets
+individually. Flags that apply uniformly across a fleet (`--auth-token`,
+`--read-token`, `--mcp-path`, `--tool-allowlist`, `--pii-strict`,
+`--expected-catalog-hash`, etc.) work as expected.
 
 ---
 
@@ -193,6 +230,21 @@ jobs:
 ```
 
 Use a commit SHA for the Action, not a tag. Tags are mutable.
+
+**Pinning the catalog for a reproducible gate.** A release gate whose
+ruleset can drift between the PR run and the merge run isn't a control.
+Pin it with `--expected-catalog-hash`:
+
+```bash
+# Once: capture the hash of the catalog you're reviewing/shipping
+cosai scan http://localhost:8000 --no-report | grep "Catalog hash"
+
+# In CI: refuse to scan (exit 2) if the loaded catalog has changed
+cosai scan http://localhost:8000 --expected-catalog-hash "$COSAI_CATALOG_SHA"
+```
+
+The reusable `cosai-gate.yml` workflow (`.github/workflows/cosai-gate.yml`)
+exposes this as an `expected_catalog_hash` input.
 
 ---
 
@@ -394,6 +446,50 @@ Output:
   Signed: 2026-04-26T14:32:01Z
   Public key fingerprint: ed25519:abc123...
 ```
+
+### Sigstore/Fulcio keyless signer identity
+
+The default scorecard signature (Ed25519) is verified against a trust anchor
+baked into the release — it proves the scorecard wasn't tampered with, but
+not *which organization* produced it. Sigstore signing adds an **additional**
+signature bound to an OIDC identity, so a verifier can pin "this exact CI
+workflow, this exact repo" instead of trusting any holder of the signing key.
+
+Requires the optional `sigstore` extra and a real ambient OIDC identity token
+— it only works from an environment that provides one (GitHub Actions with
+`permissions: id-token: write`, GitLab CI, or an interactive OIDC login):
+
+```bash
+pip install cosai-mcp[sigstore]
+
+cosai scan http://localhost:8000 \
+  --scorecard scorecard.json \
+  --sigstore-sign
+# → writes scorecard.json (Ed25519-signed, as before) and
+#   scorecard.json.sigstore.json (the Sigstore bundle)
+```
+
+Verify against the identity you expect signed it — `--trusted-identity` is
+required; a bundle without a pinned identity proves nothing about who signed
+it, so this is rejected rather than silently skipped:
+
+```bash
+cosai scorecard verify scorecard.json \
+  --sigstore-bundle scorecard.json.sigstore.json \
+  --trusted-identity "https://github.com/org/repo/.github/workflows/ci.yml@refs/heads/main" \
+  --trusted-issuer "https://token.actions.githubusercontent.com"
+```
+
+`--sigstore-bundle`/`--trusted-identity`/`--trusted-issuer` also work on
+`cosai scorecard show`, independent of `--verify` (which governs only the
+Ed25519 check). Use `--sigstore-staging` on either side to test against
+Sigstore's public staging instance instead of production. Not yet supported
+in fleet mode (`--targets`) — sign each target's scorecard individually.
+
+Key rotation is not applicable — this is a keyless mechanism, so there's no
+long-lived private key to rotate. The operational equivalent is *trust-policy*
+rotation: update which `--trusted-identity`/`--trusted-issuer` a verifier
+accepts (e.g. when a CI workflow moves to a new repository).
 
 ---
 

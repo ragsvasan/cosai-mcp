@@ -7,7 +7,12 @@ import pytest
 
 from cosai_mcp.catalog.models import Severity
 from cosai_mcp.harness.result import AssertionResult, make_probe_result
-from cosai_mcp.report.sarif import SarifBuilder, ScanContext, _sanitize_message
+from cosai_mcp.report.sarif import (
+    SarifBuilder,
+    ScanContext,
+    _sanitize_message,
+    _validate_sarif_structure,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -279,6 +284,79 @@ class TestSarifValidation:
         b = SarifBuilder(_context())
         sarif_json = b.build_json()
         json.loads(sarif_json)  # must not raise
+
+
+class TestValidateSarifStructureMultiRun:
+    """Panel-review finding (ENT-P0-4 review): the per-result validation
+    loop (ruleId format, suppressions/partialFingerprints ban) was a
+    SIBLING statement to the per-run presence-check loop, not nested
+    inside it. Python's loop-variable leak meant `run` after the first
+    loop exited was bound to the LAST run only — every run except the
+    last silently skipped result-level validation. A fleet-mode merged
+    SARIF document carries one run per target; a hostile/buggy result in
+    any non-last run must still be caught.
+    """
+
+    @staticmethod
+    def _run(rule_id: str = "T01-001", extra_result_fields: dict | None = None) -> dict:
+        result: dict = {"ruleId": rule_id, "level": "error", "message": {"text": "x"}}
+        if extra_result_fields:
+            result.update(extra_result_fields)
+        return {
+            "tool": {"driver": {"name": "cosai-mcp", "rules": []}},
+            "results": [result],
+            "invocations": [{"executionSuccessful": True}],
+        }
+
+    def test_invalid_rule_id_in_first_of_two_runs_is_caught(self) -> None:
+        doc = {
+            "version": "2.1.0",
+            "runs": [self._run(rule_id="'; DROP TABLE"), self._run(rule_id="T02-001")],
+        }
+        with pytest.raises(ValueError, match=r"run\[0\]"):
+            _validate_sarif_structure(doc)
+
+    def test_suppressions_in_first_of_two_runs_is_caught(self) -> None:
+        doc = {
+            "version": "2.1.0",
+            "runs": [
+                self._run(extra_result_fields={"suppressions": [{}]}),
+                self._run(),
+            ],
+        }
+        with pytest.raises(ValueError, match="suppressions"):
+            _validate_sarif_structure(doc)
+
+    def test_partial_fingerprints_in_first_of_two_runs_is_caught(self) -> None:
+        doc = {
+            "version": "2.1.0",
+            "runs": [
+                self._run(extra_result_fields={"partialFingerprints": {"x": "y"}}),
+                self._run(),
+            ],
+        }
+        with pytest.raises(ValueError, match="partialFingerprints"):
+            _validate_sarif_structure(doc)
+
+    def test_defect_in_middle_run_of_three_is_caught(self) -> None:
+        """Not just first-vs-last — a defect anywhere in the middle."""
+        doc = {
+            "version": "2.1.0",
+            "runs": [self._run(), self._run(rule_id="bad id"), self._run()],
+        }
+        with pytest.raises(ValueError, match=r"run\[1\]"):
+            _validate_sarif_structure(doc)
+
+    def test_valid_three_run_document_passes(self) -> None:
+        doc = {
+            "version": "2.1.0",
+            "runs": [
+                self._run(rule_id="T01-001"),
+                self._run(rule_id="T02-001"),
+                self._run(rule_id="T03-001"),
+            ],
+        }
+        _validate_sarif_structure(doc)  # must not raise
 
 
 # ---------------------------------------------------------------------------

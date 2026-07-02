@@ -23,6 +23,36 @@ from cosai_mcp.transport.base import (
 # IP-pinning HTTPX transport
 # ---------------------------------------------------------------------------
 
+def _same_origin_trailing_slash_variant(
+    current: httpx.URL, location: str | None
+) -> httpx.URL | None:
+    """If *location* is exactly *current* with a trailing slash added or
+    removed — and nothing else — return the canonical redirected-to URL.
+
+    MCP server frameworks disagree on the mount convention: an ASGI
+    ``Mount('/mcp')`` 307s ``/mcp`` -> ``/mcp/``, while FastMCP 3.x 307s the
+    opposite way (``/mcp/`` -> ``/mcp``). Rather than guess, the transport
+    adopts whichever variant the server redirects to on the first request of
+    the session. Anything other than a same-origin, same-query, same-fragment
+    trailing-slash toggle returns None so the normal redirect-suspicion check
+    still applies there — this never widens redirect-following beyond that
+    one narrow case.
+    """
+    if not location:
+        return None
+    try:
+        target = current.join(location)
+    except Exception:
+        return None
+    if (target.scheme, target.host, target.port) != (current.scheme, current.host, current.port):
+        return None
+    if target.query != current.query or target.fragment != current.fragment:
+        return None
+    if target.path == current.path or target.path.rstrip("/") != current.path.rstrip("/"):
+        return None
+    return target
+
+
 class _PinnedAsyncTransport(httpx.AsyncBaseTransport):
     """Custom HTTPX transport that enforces the pinned IP on every request.
 
@@ -42,6 +72,11 @@ class _PinnedAsyncTransport(httpx.AsyncBaseTransport):
         self._pinned_ip = pinned_ip
         self._config = config
         self._inner = inner or httpx.AsyncHTTPTransport()
+        self._redirect_canonicalized = False
+        # Set once, if a same-origin trailing-slash redirect is transparently
+        # resolved, so the owning StreamableHTTPTransport can update its
+        # endpoint and stop hitting the wrong path on every later request.
+        self.canonicalized_url: str | None = None
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         host = request.url.host
@@ -71,6 +106,33 @@ class _PinnedAsyncTransport(httpx.AsyncBaseTransport):
             extensions={**request.extensions, "sni_hostname": host.encode()},
         )
         response = await self._inner.handle_async_request(pinned_request)
+
+        # A same-origin, trailing-slash-only redirect is resolved here, once,
+        # BEFORE check_redirect runs — this is the layer that actually sees
+        # the 3xx first; StreamableHTTPTransport.send() never gets a response
+        # object back once check_redirect raises, so canonicalization cannot
+        # live downstream of it. The retry reuses the already-verified pinned
+        # IP directly (no second DNS lookup — no new rebinding window) and is
+        # bounded to exactly one extra round-trip per transport instance,
+        # ever, via the one-shot latch.
+        if not self._redirect_canonicalized:
+            self._redirect_canonicalized = True
+            if 300 <= response.status_code < 400:
+                canonical = _same_origin_trailing_slash_variant(
+                    request.url, response.headers.get("location")
+                )
+                if canonical is not None:
+                    self.canonicalized_url = str(canonical)
+                    retry_url = pinned_url.copy_with(path=canonical.path)
+                    retry_request = httpx.Request(
+                        method=request.method,
+                        url=retry_url,
+                        headers=request.headers,
+                        stream=request.stream,
+                        extensions={**request.extensions, "sni_hostname": host.encode()},
+                    )
+                    response = await self._inner.handle_async_request(retry_request)
+
         check_redirect(response.status_code)
         return response
 
@@ -97,6 +159,7 @@ class StreamableHTTPTransport(Transport):
         self._config = config
         self._pinned_ip: str | None = None
         self._session_id: str | None = None
+        self._pinned_transport: _PinnedAsyncTransport | None = None
         self._client: httpx.AsyncClient | None = None
         self._recv_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=64)
 
@@ -157,6 +220,7 @@ class StreamableHTTPTransport(Transport):
         self._pinned_ip = resolve_and_pin(host, self._config)
 
         pinned_transport = _PinnedAsyncTransport(self._pinned_ip, self._config)
+        self._pinned_transport = pinned_transport
         self._client = httpx.AsyncClient(
             transport=pinned_transport,
             follow_redirects=False,   # hard-coded, non-overridable
@@ -201,14 +265,26 @@ class StreamableHTTPTransport(Transport):
 
         check_redirect(response.status_code)
 
+        # If _PinnedAsyncTransport transparently resolved a same-origin
+        # trailing-slash redirect on this (or an earlier) call, adopt the
+        # corrected endpoint so every later request goes straight to the
+        # right path instead of redirect-dancing every time.
+        if self._pinned_transport is not None and self._pinned_transport.canonicalized_url:
+            self._endpoint = self._pinned_transport.canonicalized_url
+
         content_type = response.headers.get("content-type", "")
+
+        # The session id lives on the HTTP response headers regardless of
+        # body framing — capture it before branching on content-type so an
+        # SSE-framed initialize (FastMCP and other spec-compliant servers)
+        # doesn't leave _session_id unset.
+        if sid := response.headers.get("Mcp-Session-Id"):
+            self._session_id = sid
 
         if "text/event-stream" in content_type:
             data = await self._consume_sse_response(response)
         else:
             data = response.json()
-            if sid := response.headers.get("Mcp-Session-Id"):
-                self._session_id = sid
         # Inject HTTP metadata for response.status_code and response.header.* assertions
         if isinstance(data, dict):
             data["_status_code"] = response.status_code

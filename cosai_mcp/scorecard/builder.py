@@ -5,6 +5,7 @@ import re
 from typing import TYPE_CHECKING
 
 from cosai_mcp.report.sign import OrgSigningKeyError
+from cosai_mcp.scorecard.compliance import CATEGORY_COMPLIANCE_MAP
 from cosai_mcp.scorecard.models import (
     _ENGINE_COVERAGE,
     CategoryResult,
@@ -149,6 +150,7 @@ def build_scorecard(
             high_count=stats["high_count"],
             coverage_engine=_ENGINE_COVERAGE.get(cat, "unknown"),
             inconclusive_count=stats.get("inconclusive_count", 0),
+            compliance_mapping=CATEGORY_COMPLIANCE_MAP.get(cat),
         ))
 
     conformance = _determine_conformance(cat_results)
