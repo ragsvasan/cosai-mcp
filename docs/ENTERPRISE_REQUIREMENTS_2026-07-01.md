@@ -20,7 +20,7 @@ signs off on this blocking a production release?*
 
 ## P0 — Blocks a release-gate deployment at all
 
-### ENT-P0-1 · Reproducible, pinned, offline scans *(extends EFF-06)*
+### ✅ ENT-P0-1 · Reproducible, pinned, offline scans *(extends EFF-06)* — SHIPPED 2026-07-02
 **As** SEC, **I need** `--expected-catalog-hash <sha>` (exit 2 on mismatch) plus
 a fully offline mode that loads a vendored, signed catalog with no network
 except to the target, **so that** a release gate is deterministic and cannot be
@@ -31,8 +31,23 @@ silently altered by a catalog change between the PR run and the merge run.
 - **Acceptance:** two runs of the same target + same `--expected-catalog-hash`
   in an air-gapped container (no egress except target) produce byte-identical
   scorecard `catalog_hash`; a changed catalog exits 2 with a clear message.
+- **Shipped:** `--expected-catalog-hash` on `cosai scan` (`cosai_mcp/cli.py`,
+  `cosai_mcp/api.py::_run_scan`) and on `cosai scorecard verify`/`show`
+  (a valid signature alone doesn't prove which catalog produced the
+  artifact — the pin is also enforced on the signed-scorecard-consumption
+  path, not just the live-scan path). Exposed as an input on the reusable
+  `cosai-gate.yml` workflow. "Offline mode" was already true structurally
+  (catalog loads from local disk only, no remote fetch exists) — verified
+  by the adversary panel, not built as a new toggle. Panel review (Defense +
+  Adversary + security-review) caught and fixed two real gaps before this
+  shipped: `_canonical_threat`'s hash view omitted
+  `Probe.protocol_error_is_expected` (a catalog tamper changing only that
+  field passed the pin unnoticed — see FABLE_AUDIT-style regression test
+  `test_protocol_error_is_expected_binds_catalog_hash`), and an empty
+  `--expected-catalog-hash ""` produced a confusing error instead of a
+  clear validation message.
 
-### ENT-P0-2 · Signer identity you can actually verify *(extends EFF-10; ties to AUDIT FIND 3)*
+### 🔶 ENT-P0-2 · Signer identity you can actually verify *(extends EFF-10; ties to AUDIT FIND 3)* — DIRECTION DECIDED, NOT YET BUILT
 **As** GRC, **I need** the signed scorecard to be verifiable against an
 *organizational* identity — an X.509 cert chain or Sigstore/Fulcio OIDC identity —
 **not** a keypair whose private seed ships in the repo, **so that** a conformance
@@ -46,8 +61,13 @@ could have."
   `sub`) on a machine that never had the private key; a scorecard signed by the
   dev seed is rejected by a released build; key-rotation is a documented, tested
   procedure.
+- **Status (2026-07-02):** direction decided — Sigstore/Fulcio + PEP 740
+  (keyless, OIDC-bound, composes with the PyPI Trusted Publishing already
+  planned for EFF-01) over X.509/managed PKI. Logged to the project decision
+  ledger; not deferred. This is the largest single P0 item (L-effort) and
+  was sequenced last among the four; implementation has not started.
 
-### ENT-P0-3 · Compliance mapping *inside* the signed artifact *(extends EFF-02; ties to FIND 6/18)*
+### ✅ ENT-P0-3 · Compliance mapping *inside* the signed artifact *(extends EFF-02; ties to FIND 6/18)* — SHIPPED 2026-07-02
 **As** GRC, **I need** each category result in the *signed* scorecard to carry
 its CoSAI + OWASP MCP Top 10 + NIST AI RMF control mapping, **so that** the
 attestation I file with an auditor is self-describing and tamper-evident — not a
@@ -58,8 +78,22 @@ prose claim in a doc and an `owasp_ref` buried in an unsigned SARIF.
 - **Acceptance:** `cosai scorecard verify` prints, per category, the mapped
   controls from the signed payload; the mapping is covered by the signature
   (edit → verify fails); NIST AI RMF is populated, not just referenced in prose.
+- **Shipped:** `ComplianceMapping` on `CategoryResult` (`cosai_mcp/scorecard/
+  models.py`) + a static `CATEGORY_COMPLIANCE_MAP` (`cosai_mcp/scorecard/
+  compliance.py`, new module) attached by the builder. Because
+  `_signable_dict()` signs the whole `scorecard.to_dict()` tree, the mapping
+  is inside the Ed25519-signed payload with no separate signing-path change.
+  Printed by both `cosai scorecard verify` and `show`. Panel review caught
+  that `docs/THREAT_MAPPING.md` carried two internally-contradictory OWASP
+  MCP Top 10 tables and the code copied the wrong one for T6–T10/T12 — the
+  signed attestation would have contradicted the tool's own SARIF output.
+  Both doc tables were reconciled to the one SARIF's `helpUri` references;
+  T9/T10 have no clean 1:1 OWASP MCP Top 10 item, so they're left honestly
+  unmapped rather than assigned an invented title. A test now parses the doc
+  table and cross-checks it against the code table so the two can't drift
+  again silently.
 
-### ENT-P0-4 · Fleet / multi-target gate with one verdict *(extends EFF-09)*
+### ✅ ENT-P0-4 · Fleet / multi-target gate with one verdict *(extends EFF-09)* — SHIPPED 2026-07-02
 **As** SEC, **I need** `cosai scan --targets targets.yaml` with bounded per-host
 concurrency, aggregating N servers into one exit code + one merged SARIF + one
 roll-up scorecard, **so that** an org with 40 MCP servers can gate a release on
@@ -71,6 +105,34 @@ the *fleet*, not script 40 invocations and hand-merge results.
   that renders in GitHub, and an exit code that is the max severity across
   targets; one unreachable target degrades to exit 3 for that host without
   masking findings on the others.
+- **Shipped:** `--targets <file>` on `cosai scan` (`cosai_mcp/fleet.py`, new
+  module: `run_fleet_scan`, `merge_sarif`, `build_fleet_scorecard`).
+  Bounded-concurrency `ThreadPoolExecutor` (`--fleet-concurrency`, default
+  5) — safe because probes within one target's scan already run strictly
+  sequentially (one `multiprocessing.Process` at a time), so fleet-level
+  concurrency doesn't multiply subprocess counts. Targets file is plain
+  text (one URL per line, `#` comments), not YAML — adding `pyyaml` as a new
+  core runtime dependency would have extended the locked minimal-dependency
+  list in CLAUDE.md, which wasn't this feature's call to make unilaterally.
+  Panel review (Defense + Adversary + security-review) found and fixed five
+  real issues before this shipped: (1) a loop-variable-leak bug in
+  `_validate_sarif_structure` meant only the *last* run in a merged
+  multi-run document got its results validated — every run before it
+  silently skipped the `ruleId`/`suppressions`/`partialFingerprints` checks;
+  (2) `TargetOutcome.error` (exception text from scanning a target server)
+  reached the fleet scorecard JSON unsanitized, violating this project's own
+  ingestion-time HTML-escaping rule for target-influenced content; (3)
+  `--auth-token`/`--read-token`/`--tool-allowlist`/etc. were silently
+  dropped in fleet mode — every target got scanned unauthenticated with no
+  warning, a false-green on auth-gated servers (now threaded through for
+  flags with fleet-wide semantics; flags with per-server semantics like
+  `--profile`/`--adversarial`/`--baseline` now fail loudly with `--targets`
+  instead of being silently ignored); (4) `--skip-reachability` was
+  similarly dropped, force-failing any target that doesn't accept a bare TCP
+  connect; (5) `ThreadPoolExecutor`'s default shutdown blocks until every
+  submitted future completes, so one hung target blocked the *entire* fleet
+  run indefinitely — a `--fleet-target-timeout` (default 600s) now bounds
+  this.
 
 ---
 
@@ -219,13 +281,19 @@ in a report nobody re-reads.
 
 ## Dependency & sequencing note
 
-- **ENT-P0-2 (signer identity)** and **ENT-P0-3 (signed mapping)** are the spine
-  of the whole attestation value proposition and should land before any hosted
-  component (ENT-P1-1) leans on them.
+- **Status as of 2026-07-02:** ENT-P0-1, ENT-P0-3, and ENT-P0-4 are shipped.
+  ENT-P0-2 (signer identity) is the only open P0 item — direction decided
+  (Sigstore/Fulcio + PEP 740), implementation not started. P1/P2 are all
+  still open.
+- **ENT-P0-2 (signer identity)** and **ENT-P0-3 (signed mapping, shipped)** are
+  the spine of the whole attestation value proposition and should land before
+  any hosted component (ENT-P1-1) leans on them — ENT-P0-2 is now the sole
+  remaining blocker on that spine.
 - **ENT-P2-1 (TS IPIS)** presupposes the audit's FIND 5 is resolved — i.e. the
   Python MC-INPATH engine is turned from an unwired library into a real, wired
   in-path engine first; otherwise there is no reference implementation to port.
 - **ENT-P1-1 (SSO)** must precede **ENT-P2-4 (multi-tenancy)** — build auth before
   isolation, not after.
 - Nothing here matters until the mainstream **scan actually runs** (FABLE_AUDIT
-  FIND 1); the transport fix is the true P-1 that gates this entire list.
+  FIND 1); the transport fix is the true P-1 that gates this entire list —
+  fixed 2026-07-02, live-verified against a real FastMCP 3.4.2 server.

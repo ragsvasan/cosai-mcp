@@ -52,10 +52,10 @@ After the 0.1.0 PyPI release (not yet published), `pip install cosai-mcp` and
 cosai scan http://localhost:8000
 
 # Scan with SARIF report (for GitHub Security tab)
-cosai scan http://localhost:8000 --report sarif --output results.sarif
+cosai scan http://localhost:8000 --report-sarif results.sarif
 
 # Scan with HTML report
-cosai scan http://localhost:8000 --report html --output results.html
+cosai scan http://localhost:8000 --report-html results.html
 
 # Fail only on critical findings
 cosai scan http://localhost:8000 --fail-on critical
@@ -66,6 +66,43 @@ cosai scan http://localhost:8000 --categories T1,T3,T7
 # Show coverage matrix (which engine covers which category)
 cosai scan http://localhost:8000 --report-coverage
 ```
+
+---
+
+## Scanning a Fleet of Servers
+
+For more than one MCP server, `--targets` scans them all with bounded
+concurrency and emits **one** aggregated result instead of N separate
+invocations you'd otherwise have to hand-merge:
+
+```bash
+# fleet-targets.txt — one URL per line, blank lines and '#' comments ignored
+cat > fleet-targets.txt <<EOF
+http://server1.internal:8000
+http://server2.internal:8000
+http://server3.internal:8000
+EOF
+
+cosai scan --targets fleet-targets.txt \
+  --report-sarif fleet.sarif \
+  --scorecard fleet-scorecard.json \
+  --fleet-concurrency 10
+```
+
+This produces one merged SARIF report (one run per target — GitHub renders
+multi-run SARIF natively), one aggregated scorecard JSON listing every
+target's outcome and signed per-target scorecard, and a single process exit
+code that is the *worst* outcome across the fleet (a scanner error on any
+target outranks a real finding, which outranks one target simply being
+unreachable — so a proven vulnerability on server B is never masked just
+because server A was down). A target that hangs is recorded as timed out
+(`--fleet-target-timeout`, default 600s) rather than blocking the whole run.
+
+Flags with per-server semantics (`--profile`, `--adversarial`, `--baseline`,
+`--method-overrides`) aren't supported with `--targets` — scan those targets
+individually. Flags that apply uniformly across a fleet (`--auth-token`,
+`--read-token`, `--mcp-path`, `--tool-allowlist`, `--pii-strict`,
+`--expected-catalog-hash`, etc.) work as expected.
 
 ---
 
@@ -183,6 +220,21 @@ jobs:
 ```
 
 Use a commit SHA for the Action, not a tag. Tags are mutable.
+
+**Pinning the catalog for a reproducible gate.** A release gate whose
+ruleset can drift between the PR run and the merge run isn't a control.
+Pin it with `--expected-catalog-hash`:
+
+```bash
+# Once: capture the hash of the catalog you're reviewing/shipping
+cosai scan http://localhost:8000 --no-report | grep "Catalog hash"
+
+# In CI: refuse to scan (exit 2) if the loaded catalog has changed
+cosai scan http://localhost:8000 --expected-catalog-hash "$COSAI_CATALOG_SHA"
+```
+
+The reusable `cosai-gate.yml` workflow (`.github/workflows/cosai-gate.yml`)
+exposes this as an `expected_catalog_hash` input.
 
 ---
 

@@ -236,6 +236,11 @@ def _validate_sarif_structure(doc: dict[str, Any]) -> None:
 
     Raises ValueError on any violation that would indicate attacker-controlled
     content leaked into scanner-controlled fields.
+
+    Validates EVERY run in `runs`, not just the first — a fleet-mode merged
+    document (ENT-P0-4) carries one run per target, and a structural defect
+    in run 2..N must not sail through validation unnoticed just because
+    run 0 was well-formed.
     """
     if doc.get("version") != _SARIF_VERSION:
         raise ValueError(f"SARIF version must be {_SARIF_VERSION!r}")
@@ -244,27 +249,33 @@ def _validate_sarif_structure(doc: dict[str, Any]) -> None:
     if not isinstance(runs, list) or not runs:
         raise ValueError("SARIF must have at least one run")
 
-    run = runs[0]
-    if "tool" not in run or "driver" not in run.get("tool", {}):
-        raise ValueError("SARIF run must have tool.driver")
-    if "results" not in run:
-        raise ValueError("SARIF run must have results array")
-    if "invocations" not in run:
-        raise ValueError("SARIF run must have invocations array")
+    for i, run in enumerate(runs):
+        if "tool" not in run or "driver" not in run.get("tool", {}):
+            raise ValueError(f"SARIF run[{i}] must have tool.driver")
+        if "results" not in run:
+            raise ValueError(f"SARIF run[{i}] must have results array")
+        if "invocations" not in run:
+            raise ValueError(f"SARIF run[{i}] must have invocations array")
 
-    for result in run["results"]:
-        rule_id = result.get("ruleId", "")
-        if not _RULE_ID_RE.match(rule_id):
-            raise ValueError(
-                f"SARIF result ruleId {rule_id!r} is not a valid catalog threat ID"
-            )
-        if "suppressions" in result:
-            raise ValueError(
-                "SARIF result must not contain suppressions field "
-                "(must be scanner-generated only, never from response content)"
-            )
-        if "partialFingerprints" in result:
-            raise ValueError(
-                "SARIF result must not contain partialFingerprints field "
-                "(must be scanner-generated only, never from response content)"
-            )
+        # Nested inside the run loop (panel-review finding, ENT-P0-4: these
+        # checks were a sibling statement to the loop above, not nested in
+        # it — Python's loop-variable leak meant `run` after the first loop
+        # exited was bound to the LAST run only, so every run except the
+        # last silently skipped ruleId/suppressions/partialFingerprints
+        # validation in a merged multi-run fleet document).
+        for result in run["results"]:
+            rule_id = result.get("ruleId", "")
+            if not _RULE_ID_RE.match(rule_id):
+                raise ValueError(
+                    f"SARIF run[{i}] result ruleId {rule_id!r} is not a valid catalog threat ID"
+                )
+            if "suppressions" in result:
+                raise ValueError(
+                    f"SARIF run[{i}] result must not contain suppressions field "
+                    "(must be scanner-generated only, never from response content)"
+                )
+            if "partialFingerprints" in result:
+                raise ValueError(
+                    f"SARIF run[{i}] result must not contain partialFingerprints field "
+                    "(must be scanner-generated only, never from response content)"
+                )

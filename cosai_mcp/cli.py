@@ -144,7 +144,24 @@ def main() -> None:
     callback=_help_advanced_cb,
     help="Show every option (advanced reporting, adversarial, IR/SIEM, tuning).",
 )
-@click.argument("target")
+@click.argument("target", required=False, default=None)
+@click.option("--targets", "targets_path", type=click.Path(exists=True, dir_okay=False),
+              default=None, hidden=True,
+              help="Path to a plain-text target list (one MCP server URL per line; "
+                   "blank lines and '#' comments ignored) — scan every target with "
+                   "bounded concurrency and emit one aggregated exit code, one "
+                   "merged SARIF report, and one roll-up scorecard. Mutually "
+                   "exclusive with TARGET. Only the core scan options (categories, "
+                   "engine, fail-on, catalog-root, allow-private-targets, "
+                   "probe-timeout, pii-strict, expected-catalog-hash) apply in "
+                   "fleet mode.")
+@click.option("--fleet-concurrency", type=int, default=5, show_default=True, hidden=True,
+              help="Max targets scanned in parallel in fleet mode (--targets).")
+@click.option("--fleet-target-timeout", type=float, default=600.0, show_default=True,
+              hidden=True,
+              help="Max seconds to wait on any single target in fleet mode before "
+                   "recording it as timed out and moving on — bounds the whole "
+                   "fleet run against one hung/hostile target.")
 @click.option(
     "--categories",
     default="all",
@@ -317,7 +334,10 @@ def main() -> None:
                    "reviewed catalog: a mismatch refuses to scan (exit 2) before any "
                    "probe runs, instead of silently running against a changed ruleset.")
 def scan(
-    target: str,
+    target: str | None,
+    targets_path: str | None,
+    fleet_concurrency: int,
+    fleet_target_timeout: float,
     categories: str,
     engine: str,
     fail_on: str,
@@ -411,6 +431,75 @@ def scan(
             "[ERROR] --expected-catalog-hash was passed an empty value. "
             "Omit the flag entirely to scan unpinned, or pass the real "
             "64-character catalog hash to pin a release gate.",
+            err=True,
+        )
+        sys.exit(2)
+
+    # -- ENT-P0-4: fleet mode branches off before any single-target-only
+    # logic (profiles, adversarial mode, the single-target reachability
+    # check) — each target gets its own reachability check inside
+    # run_fleet_scan, isolated per-target. --
+    if targets_path:
+        if target:
+            click.echo(
+                "[ERROR] Pass either TARGET or --targets <file>, not both.", err=True
+            )
+            sys.exit(2)
+        # Panel-review finding (ENT-P0-4): these flags have per-server
+        # semantics that don't generalize across a fleet of DIFFERENT
+        # targets (a profile/baseline/method-override tuned for one server,
+        # an ownership declaration naming one hostname) — silently dropping
+        # them produced a false-green (e.g. --auth-token ignored, every
+        # target scanned unauthenticated with no warning). Fail loudly
+        # instead of guessing what the operator meant.
+        _fleet_unsupported = [
+            name for name, used in (
+                ("--profile", bool(profile)),
+                ("--adversarial", adversarial),
+                ("--i-own-this-target", bool(i_own_this_target)),
+                ("--allow-stateful-adversarial", allow_stateful_adversarial),
+                ("--baseline", bool(baseline_path)),
+                ("--method-overrides", bool(method_overrides)),
+            ) if used
+        ]
+        if _fleet_unsupported:
+            click.echo(
+                "[ERROR] " + ", ".join(_fleet_unsupported) + " are not supported "
+                "with --targets (fleet mode) — these options have per-server "
+                "semantics that don't generalize across a fleet of different "
+                "targets. Scan each such target individually instead.",
+                err=True,
+            )
+            sys.exit(2)
+        _run_fleet_scan_and_exit(
+            targets_path=Path(targets_path),
+            max_concurrency=fleet_concurrency,
+            per_target_timeout=fleet_target_timeout,
+            categories=cat_list,
+            engine=engine,
+            allow_custom_catalog=allow_custom_catalog,
+            probe_timeout_seconds=probe_timeout,
+            catalog_root=effective_catalog_root,
+            fail_on=fail_on,
+            allow_private_targets=allow_private_targets,
+            pii_strict=pii_strict,
+            expected_catalog_hash=expected_catalog_hash,
+            auth_token=auth_token,
+            read_token=read_token,
+            mcp_path=mcp_path,
+            probe_delay_seconds=probe_delay,
+            adaptive=not no_adaptive,
+            tool_allowlist=_parse_tool_allowlist(tool_allowlist),
+            skip_reachability=skip_reachability,
+            report_sarif=report_sarif,
+            scorecard_path=scorecard_path,
+            no_sign_scorecard=no_sign_scorecard,
+        )
+        return
+
+    if not target:
+        click.echo(
+            "[ERROR] Missing argument TARGET (or pass --targets <file> for a fleet scan).",
             err=True,
         )
         sys.exit(2)
@@ -1534,7 +1623,14 @@ def _make_manifest_stubs() -> tuple[dict, dict]:
 _MANIFEST_STUBS_SARIF, _MANIFEST_STUBS_HTML = _make_manifest_stubs()
 
 
-def _write_sarif_report(result: ScanResult, path: Path) -> None:
+def _build_sarif_dict(result: ScanResult) -> dict[str, Any]:
+    """Build the SARIF 2.1.0 document dict for one ScanResult (single run).
+
+    Extracted from _write_sarif_report so fleet mode (ENT-P0-4) can build
+    one dict per target and merge their "runs" arrays into one document,
+    reusing the same rule/result population logic — never a second,
+    parallel implementation of it.
+    """
     from cosai_mcp.report.sarif import SarifBuilder, ScanContext
 
     ctx = ScanContext(
@@ -1581,7 +1677,125 @@ def _write_sarif_report(result: ScanResult, path: Path) -> None:
             else "medium",
         )
 
-    sarif_json = builder.build_json()
+    return builder.build()
+
+
+def _run_fleet_scan_and_exit(
+    *,
+    targets_path: Path,
+    max_concurrency: int,
+    per_target_timeout: float,
+    categories: list[str] | None,
+    engine: str,
+    allow_custom_catalog: bool,
+    probe_timeout_seconds: float,
+    catalog_root: Path,
+    fail_on: str,
+    allow_private_targets: bool,
+    pii_strict: bool,
+    expected_catalog_hash: str | None,
+    auth_token: str | None,
+    read_token: str | None,
+    mcp_path: str,
+    probe_delay_seconds: float,
+    adaptive: bool,
+    tool_allowlist: tuple[str, ...] | None,
+    skip_reachability: bool,
+    report_sarif: str | None,
+    scorecard_path: str | None,
+    no_sign_scorecard: bool,
+) -> None:
+    """ENT-P0-4: run a fleet scan, write the merged SARIF / aggregated
+    scorecard, and exit with the aggregate exit code. Never returns."""
+    from cosai_mcp.fleet import (
+        build_fleet_scorecard,
+        merge_sarif,
+        parse_targets_file,
+        run_fleet_scan,
+    )
+    from cosai_mcp.report.sarif import _validate_sarif_structure
+
+    try:
+        targets = parse_targets_file(targets_path)
+    except ValueError as exc:
+        click.echo(f"[ERROR] {exc}", err=True)
+        sys.exit(2)
+
+    # Panel-review finding (ENT-P0-4): ThreadPoolExecutor silently clamps
+    # max_workers<1 to 1 without any signal — a banner printing the
+    # requested value would lie about what's actually in effect. Reject
+    # instead, matching this project's fail-closed convention for other
+    # malformed operator input (e.g. --expected-catalog-hash "").
+    if max_concurrency < 1:
+        click.echo(
+            f"[ERROR] --fleet-concurrency must be >= 1 (got {max_concurrency}).",
+            err=True,
+        )
+        sys.exit(2)
+
+    click.echo(f"Fleet scan: {len(targets)} target(s), max concurrency {max_concurrency}")
+
+    fleet_result = run_fleet_scan(
+        targets,
+        max_concurrency=max_concurrency,
+        per_target_timeout=per_target_timeout,
+        categories=categories,
+        engine=engine,
+        allow_custom_catalog=allow_custom_catalog,
+        probe_timeout_seconds=probe_timeout_seconds,
+        catalog_root=catalog_root,
+        fail_on=fail_on,
+        allow_private_targets=allow_private_targets,
+        pii_strict=pii_strict,
+        expected_catalog_hash=expected_catalog_hash,
+        auth_token=auth_token,
+        read_token=read_token,
+        mcp_path=mcp_path,
+        probe_delay_seconds=probe_delay_seconds,
+        adaptive=adaptive,
+        tool_allowlist=tool_allowlist,
+        skip_reachability=skip_reachability,
+    )
+
+    _STATUS_LABEL = {0: "CLEAN", 1: "FINDINGS", 2: "ERROR", 3: "UNREACHABLE"}
+    for outcome in fleet_result.targets:
+        status = _STATUS_LABEL.get(outcome.exit_code, "?")
+        detail = f" — {outcome.error}" if outcome.error else ""
+        click.echo(f"  [{status:<11}] {outcome.target_url}{detail}")
+
+    if report_sarif:
+        sarif_docs = [
+            _build_sarif_dict(outcome.result)
+            for outcome in fleet_result.targets
+            if outcome.result is not None
+        ]
+        if sarif_docs:
+            merged = merge_sarif(sarif_docs)
+            _validate_sarif_structure(merged)
+            Path(report_sarif).write_text(
+                json.dumps(merged, indent=2, ensure_ascii=True), encoding="utf-8"
+            )
+            click.echo(f"Merged SARIF report written to {report_sarif}")
+        else:
+            click.echo(
+                "[WARN] No target completed a scan — no SARIF report written.", err=True
+            )
+
+    if scorecard_path:
+        fleet_scorecard = build_fleet_scorecard(fleet_result, signed=not no_sign_scorecard)
+        Path(scorecard_path).write_text(json.dumps(fleet_scorecard, indent=2), encoding="utf-8")
+        click.echo(f"Aggregated scorecard written to {scorecard_path}")
+
+    click.echo(f"\nFleet exit code: {fleet_result.exit_code}")
+    sys.exit(fleet_result.exit_code)
+
+
+def _write_sarif_report(result: ScanResult, path: Path) -> None:
+    from cosai_mcp.report.sarif import _validate_sarif_structure
+
+    doc = _build_sarif_dict(result)
+    _validate_sarif_structure(doc)
+    sarif_json = json.dumps(doc, indent=2, ensure_ascii=True)
     path.write_text(sarif_json, encoding="utf-8")
 
     # Attempt to sign the report (best-effort; failure is a warning not an error)

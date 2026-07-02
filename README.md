@@ -7,7 +7,7 @@
 
 Open-source MCP security framework for the 12 CoSAI threat categories (T1–T12): **9 categories with zero-config black-box/stateful coverage; 3 (T4, T9, T12) require the cosai-mcp middleware deployed in the target.**
 
-**Status:** Alpha — 1500 tests passing, Apache 2.0. Zero-config scan covers 9 categories (T1–T3, T5–T8, T10–T11). T4/T9/T12 detection needs the middleware in the target's call path. All 12 middleware modules are implemented: `auth`, `authz`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, `audit`, `validation`, `session`, and `supply_chain`.
+**Status:** Alpha — 1554 tests passing, Apache 2.0. Zero-config scan covers 9 categories (T1–T3, T5–T8, T10–T11). T4/T9/T12 detection needs the middleware in the target's call path. All 12 middleware modules are implemented: `auth`, `authz`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, `audit`, `validation`, `session`, and `supply_chain`.
 
 ```bash
 # Install from source (interim — package not yet on PyPI)
@@ -37,6 +37,9 @@ cosai scan http://localhost:8000   # loopback/RFC1918 allowed by default
 - **Adversarial mode** — embeds CSPRNG canary tokens in payloads; detects exfiltration and prompt-injection echoing from outside the server. Dual opt-in required (`--adversarial --i-own-this-target=<hostname>`). Stateful adversarial probes are additionally gated behind `--allow-stateful-adversarial`.
 - **Server profiles** — zero-config scanning for known MCP server types (FastMCP, FastAPI-MCP, etc.).
 - **SARIF 2.1.0 output** — integrates with GitHub's native security findings tab (same as CodeQL, Dependabot).
+- **Reproducible, pinned release gates** — `--expected-catalog-hash <sha>` refuses to scan (exit 2) if the loaded threat catalog has drifted from the one pinned in CI, so a PR run and its merge run are guaranteed to have scanned the identical ruleset. Also enforceable on signed-scorecard consumption (`cosai scorecard verify/show --expected-catalog-hash`) — a valid signature alone doesn't prove which catalog produced the artifact.
+- **Signed compliance mapping** — every category in a signed scorecard carries its CoSAI + OWASP MCP Top 10 + NIST AI RMF control mapping *inside the Ed25519-signed payload*, not as a prose claim in a doc — `cosai scorecard verify` prints it, and tampering with it breaks the signature.
+- **Fleet scanning** — `cosai scan --targets <file>` scans a whole fleet of MCP servers with bounded concurrency, emitting one aggregated exit code, one merged SARIF report, and one roll-up scorecard instead of N separate invocations to hand-merge. One unreachable or hung target never blocks or masks the others' results.
 
 ## Coverage matrix
 
@@ -128,6 +131,17 @@ cosai scan http://localhost:8080 --auth-token "$TOKEN" --probe-delay 2.5
 # Scope enforcement test (T02-005): provide both primary and read-only tokens
 cosai scan http://localhost:8000 --auth-token "$WRITE_TOKEN" --read-token "$READ_TOKEN"
 
+# Pin a release gate to a reviewed catalog — refuses to scan (exit 2) if the
+# loaded catalog has drifted since the hash was pinned
+cosai scan http://localhost:8000 --expected-catalog-hash "$(cat catalog.sha256)"
+cosai scorecard verify scorecard.json --expected-catalog-hash "$(cat catalog.sha256)"
+
+# Fleet scan — one exit code, one merged SARIF, one roll-up scorecard across
+# every target in the file (one URL per line, '#' comments ignored)
+cosai scan --targets fleet-targets.txt \
+  --report-sarif fleet.sarif --scorecard fleet-scorecard.json \
+  --fleet-concurrency 10
+
 # pytest plugin — turnkey: auto-runs the scan and FAILS the suite on any
 # finding at or above --cosai-severity. No test file required; the plugin
 # injects a `cosai_scan_gate` item when --cosai-target is supplied.
@@ -151,6 +165,10 @@ pytest --cosai-target=http://localhost:8000 --cosai-severity=critical
 | Middleware: `authz` (T2), `validation` (T3), `session` (T7), `supply_chain` (T11) | Shipped |
 | `CoSAIStack` middleware orchestrator | Shipped (`cosai_mcp/middleware/__init__.py`) |
 | Static tool definition analyzer (`cosai_mcp/scanner/`) | Planned (`__init__.py` is 0 bytes) |
+| Reproducible catalog-hash pin (`--expected-catalog-hash`) | Shipped (`cosai_mcp/api.py`, `cosai_mcp/cli.py`) |
+| Signed compliance mapping (CoSAI + OWASP + NIST AI RMF, in the signed scorecard) | Shipped (`cosai_mcp/scorecard/compliance.py`) |
+| Fleet scanning (`--targets`, bounded concurrency, merged SARIF/scorecard) | Shipped (`cosai_mcp/fleet.py`) |
+| Enterprise signer identity (Sigstore/Fulcio, replacing the dev signing seed) | Direction decided, not yet built ([docs/ENTERPRISE_REQUIREMENTS_2026-07-01.md](docs/ENTERPRISE_REQUIREMENTS_2026-07-01.md)) |
 
 The scanner (black-box prober + stateful harness) covers 9 of 12 categories zero-config. All 12 middleware modules are implemented and composable via `CoSAIStack`.
 
@@ -199,7 +217,7 @@ Static analyzers test what you wrote — the source code. We test what you shipp
 T4, T6, and T9 each have a passive manifest-scan layer that runs zero-config. T4 detects tool-description poisoning hidden in `tools/list`. T6 detects name collisions, reserved-method shadowing, and typosquatted tool names. T9 detects destructive tools missing two-stage commit (delete/drop/wipe/revoke/etc. tools without a `confirmed` param or `_preview` sibling) — the structural Totem check from the CoSAI WS4 T9 contribution. T4 adversarial mode with canary tokens additionally catches exfiltration from outside. For T9 and T12, full coverage requires the middleware in the call path — detecting that LLM judgment drove an authorization decision or that an audit log entry was missing requires being instrumented inside the server.
 
 **Is this ready for others to use?**
-1500 passing tests, Apache 2.0, installs with pip. The catalog format and taxonomy coverage are stable. Reference-implementation quality — solid enough to standardize the probe catalog schema against, not yet production-hardened for enterprise deployment at scale.
+1554 passing tests, Apache 2.0, installs with pip. The catalog format and taxonomy coverage are stable. Reference-implementation quality — solid enough to standardize the probe catalog schema against, not yet production-hardened for enterprise deployment at scale.
 
 **What about non-Python MCP servers?**
 The scanner speaks JSON-RPC — it's language-agnostic. Any MCP server regardless of implementation language is a valid target. The server-side middleware is Python-only today, but the scanner works against TypeScript, Go, or anything.

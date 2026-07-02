@@ -259,6 +259,9 @@ cosai_mcp/
   session.py           MCPSession: handshake, tools/list, probe dispatch
   api.py               Scanner class (Python API)
   cli.py               cosai scan + cosai audit commands
+  fleet.py             Fleet/multi-target scanning: bounded-concurrency
+                        orchestration, per-target failure isolation,
+                        SARIF/scorecard merging (ENT-P0-4)
   pytest_plugin.py     --cosai-target, --cosai-severity fixtures
 
   transport/
@@ -302,10 +305,22 @@ cosai_mcp/
     (RFC 8693 token exchange + RFC 9449 DPoP reference impl)
 
   report/
-    sarif.py           SARIF 2.1.0 structured builder
+    sarif.py           SARIF 2.1.0 structured builder (multi-run aware —
+                        every run in a merged document is validated, not
+                        just the first, for fleet mode's merged SARIF)
     html.py            HTML report (CSP hardened)
     sign.py            Per-installation report signing (keyring)
     verify.py          Report + audit chain verification
+
+  scorecard/
+    models.py          Scorecard, CategoryResult, ComplianceMapping
+                        frozen dataclasses
+    builder.py          build_scorecard(): per-category grading from a
+                        ScanResult, attaches the compliance mapping
+    compliance.py       CATEGORY_COMPLIANCE_MAP: CoSAI + OWASP MCP Top 10 +
+                        NIST AI RMF per category (ENT-P0-3) — kept in sync
+                        with docs/THREAT_MAPPING.md by a cross-check test
+    signing.py          Ed25519 sign/verify (trust-anchor-before-signature)
 
   scanner/
     (static tool definition analyzer — offline, no target needed)
