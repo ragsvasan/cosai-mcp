@@ -305,7 +305,7 @@ def main() -> None:
                    "this server actually exposes, so T2/T6/T7 scenarios run "
                    "instead of reporting INCONCLUSIVE. Split on the first '=' "
                    "only (names may contain '/'); malformed items are ignored.")
-@click.option("--tool-allowlist", "tool_allowlist", default=None,
+@click.option("--tool-allowlist", "tool_allowlist", default=None, hidden=True,
               help="Comma-separated list of operator-approved tool names for T11 "
                    "supply-chain checks. When set, any discovered tool not on this "
                    "list (unexpected) or within Levenshtein distance 1 (typosquat) "
