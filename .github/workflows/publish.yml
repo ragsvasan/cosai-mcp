@@ -1,0 +1,107 @@
+name: Publish to PyPI
+
+# Trusted Publishing (OIDC) — no long-lived PyPI token is ever stored as a
+# GitHub secret. Requires a Trusted Publisher configured on pypi.org (and,
+# for the dry-run path, on test.pypi.org) pointing at this exact repo,
+# this workflow filename, and the matching environment name below. See
+# docs/GETTING_STARTED.md "Publishing (maintainers)" for the one-time setup.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Publish target (workflow_dispatch only — release events always publish to real PyPI)"
+        type: choice
+        options:
+          - testpypi
+          - pypi
+        default: testpypi
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - run: pip install -e ".[dev]"
+      - run: ruff check cosai_mcp/ tests/
+      - run: mypy cosai_mcp/
+      - run: pytest
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  # Dry-run path: validates the full pipeline (build -> OIDC handshake ->
+  # upload) against test.pypi.org without ever touching the real index.
+  # Manually triggered only — never runs on a real GitHub Release.
+  publish-testpypi:
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/cosai-mcp/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  # Real publish: a GitHub Release being published, or an explicit manual
+  # dispatch with target=pypi. Same build artifact as the dry-run path —
+  # what gets tested is exactly what gets published, nothing rebuilt in
+  # between.
+  publish-pypi:
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/cosai-mcp/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0

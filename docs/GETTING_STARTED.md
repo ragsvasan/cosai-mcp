@@ -508,6 +508,57 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the threat definition JSON schema and
 
 ---
 
+## Publishing (maintainers)
+
+Releases go to PyPI via `.github/workflows/publish.yml` using **Trusted
+Publishing** (OIDC) — no PyPI API token is ever stored as a GitHub secret.
+This requires a one-time setup on PyPI's side before the first release.
+
+### One-time setup
+
+On [pypi.org](https://pypi.org) (and separately on
+[test.pypi.org](https://test.pypi.org) for the dry-run path), for the
+`cosai-mcp` project, add a Trusted Publisher with:
+
+| Field | Value |
+|---|---|
+| Owner | `ragsvasan` |
+| Repository name | `cosai-mcp` |
+| Workflow filename | `publish.yml` |
+| Environment name | `pypi` (or `testpypi` on test.pypi.org) |
+
+If the `cosai-mcp` project doesn't exist on PyPI yet, use "Publish a new
+project" via Trusted Publishing — it reserves the name and links the
+publisher in the same step, no separate manual upload needed first.
+
+The `pypi` / `testpypi` GitHub Environments referenced above are
+auto-created on first workflow run if they don't already exist; add
+protection rules (e.g. required reviewers) under repo Settings →
+Environments for an extra gate on real publishes, if desired.
+
+### Dry run (recommended before the first real release)
+
+Validate the entire pipeline — build, OIDC handshake, upload — against
+TestPyPI without touching the real index:
+
+Actions tab → **Publish to PyPI** → **Run workflow** → target: `testpypi`.
+
+Then verify: `pip install --index-url https://test.pypi.org/simple/ cosai-mcp`.
+
+### Real release
+
+Publishing only happens on an explicit trigger — never on a routine push:
+
+1. Bump `version` in `pyproject.toml` if this isn't the first release.
+2. Create a GitHub Release (tag `vX.Y.Z`) — this is what triggers
+   `publish-pypi`. (Or Actions tab → **Publish to PyPI** → **Run workflow**
+   → target: `pypi`, for a re-run without cutting a new release.)
+3. Once it completes, `pip install cosai-mcp` resolves the just-published
+   version. Update the "not yet on PyPI" language in this file and
+   README.md to the real install command.
+
+---
+
 ## Troubleshooting
 
 **`scan-incomplete`: handshake failed**
