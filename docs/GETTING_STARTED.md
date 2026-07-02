@@ -437,6 +437,50 @@ Output:
   Public key fingerprint: ed25519:abc123...
 ```
 
+### Sigstore/Fulcio keyless signer identity
+
+The default scorecard signature (Ed25519) is verified against a trust anchor
+baked into the release — it proves the scorecard wasn't tampered with, but
+not *which organization* produced it. Sigstore signing adds an **additional**
+signature bound to an OIDC identity, so a verifier can pin "this exact CI
+workflow, this exact repo" instead of trusting any holder of the signing key.
+
+Requires the optional `sigstore` extra and a real ambient OIDC identity token
+— it only works from an environment that provides one (GitHub Actions with
+`permissions: id-token: write`, GitLab CI, or an interactive OIDC login):
+
+```bash
+pip install cosai-mcp[sigstore]
+
+cosai scan http://localhost:8000 \
+  --scorecard scorecard.json \
+  --sigstore-sign
+# → writes scorecard.json (Ed25519-signed, as before) and
+#   scorecard.json.sigstore.json (the Sigstore bundle)
+```
+
+Verify against the identity you expect signed it — `--trusted-identity` is
+required; a bundle without a pinned identity proves nothing about who signed
+it, so this is rejected rather than silently skipped:
+
+```bash
+cosai scorecard verify scorecard.json \
+  --sigstore-bundle scorecard.json.sigstore.json \
+  --trusted-identity "https://github.com/org/repo/.github/workflows/ci.yml@refs/heads/main" \
+  --trusted-issuer "https://token.actions.githubusercontent.com"
+```
+
+`--sigstore-bundle`/`--trusted-identity`/`--trusted-issuer` also work on
+`cosai scorecard show`, independent of `--verify` (which governs only the
+Ed25519 check). Use `--sigstore-staging` on either side to test against
+Sigstore's public staging instance instead of production. Not yet supported
+in fleet mode (`--targets`) — sign each target's scorecard individually.
+
+Key rotation is not applicable — this is a keyless mechanism, so there's no
+long-lived private key to rotate. The operational equivalent is *trust-policy*
+rotation: update which `--trusted-identity`/`--trusted-issuer` a verifier
+accepts (e.g. when a CI workflow moves to a new repository).
+
 ---
 
 ## Custom Threat Definitions

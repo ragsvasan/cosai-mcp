@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -311,6 +312,18 @@ def main() -> None:
               help="Write a signed conformance scorecard JSON to this path.")
 @click.option("--no-sign-scorecard", is_flag=True, default=False, hidden=True,
               help="Produce an unsigned scorecard (skip Ed25519 signing).")
+@click.option("--sigstore-sign", is_flag=True, default=False, hidden=True,
+              help="Additionally sign the scorecard with Sigstore keyless signing "
+                   "(ENT-P0-2), writing a <scorecard>.sigstore.json sidecar bundle. "
+                   "Requires the optional 'sigstore' package (pip install "
+                   "cosai-mcp[sigstore]) and a real ambient OIDC identity (GitHub "
+                   "Actions with permissions: id-token: write, GitLab CI, or an "
+                   "interactive OIDC login) — fails loudly (exit 2) if either is "
+                   "missing, never silently skips. Does not replace the existing "
+                   "Ed25519 signature; both are written.")
+@click.option("--sigstore-staging", is_flag=True, default=False, hidden=True,
+              help="Use Sigstore's public staging instance instead of production "
+                   "(testing only) — applies to --sigstore-sign.")
 @click.option("--experimental", is_flag=True, default=False, hidden=True,
               help="Enable experimental Tracks B/D (SIEM/OCSF telemetry "
                    "emission and IR containment). These are NOT part of the "
@@ -373,6 +386,8 @@ def scan(
     critical_burst_threshold: int,
     scorecard_path: str | None,
     no_sign_scorecard: bool,
+    sigstore_sign: bool,
+    sigstore_staging: bool,
     experimental: bool,
     method_overrides: str | None,
     tool_allowlist: str | None,
@@ -435,6 +450,23 @@ def scan(
         )
         sys.exit(2)
 
+    # -- ENT-P0-2: --sigstore-sign / --sigstore-staging only make sense
+    # bound to a scorecard artifact — signing "nothing" silently is not an
+    # option this project offers. --
+    if sigstore_sign and not scorecard_path:
+        click.echo(
+            "[ERROR] --sigstore-sign requires --scorecard <path> — there is "
+            "no scorecard artifact to sign otherwise.",
+            err=True,
+        )
+        sys.exit(2)
+    if sigstore_staging and not sigstore_sign:
+        click.echo(
+            "[ERROR] --sigstore-staging requires --sigstore-sign.",
+            err=True,
+        )
+        sys.exit(2)
+
     # -- ENT-P0-4: fleet mode branches off before any single-target-only
     # logic (profiles, adversarial mode, the single-target reachability
     # check) — each target gets its own reachability check inside
@@ -468,6 +500,19 @@ def scan(
                 "with --targets (fleet mode) — these options have per-server "
                 "semantics that don't generalize across a fleet of different "
                 "targets. Scan each such target individually instead.",
+                err=True,
+            )
+            sys.exit(2)
+        # --sigstore-sign signs a single Scorecard object (see
+        # scorecard/sigstore_signing.py); the aggregated fleet scorecard
+        # (build_fleet_scorecard) wraps N per-target scorecards in a
+        # different shape and has no defined Sigstore signing semantics yet
+        # — reject rather than silently sign nothing, or invent behavior.
+        if sigstore_sign:
+            click.echo(
+                "[ERROR] --sigstore-sign is not yet supported with --targets "
+                "(fleet mode) — Sigstore signing applies to a single "
+                "scorecard artifact. Scan each target individually instead.",
                 err=True,
             )
             sys.exit(2)
@@ -680,6 +725,25 @@ def scan(
                 f"Scorecard{signed_tag}: {scorecard.conformance_level.value} "
                 f"→ {scorecard_path}"
             )
+
+            # -- ENT-P0-2: Sigstore keyless signing — an ADDITIONAL bundle
+            # alongside the Ed25519 signature above, never a replacement.
+            # Must fail loudly (exit 2), matching the Ed25519 write-failure
+            # path immediately above: a user who passed --sigstore-sign and
+            # got no bundle would otherwise wrongly believe it was signed. --
+            if sigstore_sign:
+                from cosai_mcp.scorecard.sigstore_signing import sign_scorecard_sigstore
+
+                try:
+                    bundle = sign_scorecard_sigstore(scorecard, staging=sigstore_staging)
+                except Exception as exc:  # noqa: BLE001
+                    click.echo(f"[ERROR] Sigstore signing failed: {exc}", err=True)
+                    sys.exit(2)
+                sigstore_bundle_path = f"{scorecard_path}.sigstore.json"
+                Path(sigstore_bundle_path).write_text(
+                    __import__("json").dumps(bundle, indent=2), encoding="utf-8"
+                )
+                click.echo(f"Sigstore bundle: {sigstore_bundle_path}")
         except Exception as exc:  # noqa: BLE001
             click.echo(f"[ERROR] Failed to write scorecard: {exc}", err=True)
             sys.exit(2)
@@ -734,21 +798,132 @@ def _check_scorecard_catalog_pin(sc: Any, expected_catalog_hash: str | None) -> 
         sys.exit(1)
 
 
+def _verify_sigstore_bundle_or_exit(
+    sc: Any,
+    sigstore_bundle: str | None,
+    trusted_identity: str | None,
+    trusted_issuer: str | None,
+    sigstore_staging: bool,
+) -> None:
+    """Verify *sc* against a Sigstore bundle file (ENT-P0-2), if one was given.
+
+    Triggered by --sigstore-bundle's own presence — not gated behind
+    --verify — because passing a bundle path is itself an explicit request
+    to check it; silently skipping an explicit ask is worse than the
+    (redundant) extra work.
+
+    Fail-closed: --sigstore-bundle without --trusted-identity is rejected.
+    A Sigstore signature proves someone with *a* Fulcio-issued certificate
+    signed the payload — without pinning the expected identity, that is
+    "signed by anyone," which authenticates nothing (the same reasoning
+    that makes Ed25519 verify_scorecard() refuse a bare signature check
+    with no trusted public key).
+    """
+    if not sigstore_bundle:
+        return
+    if not trusted_identity:
+        click.echo(
+            "[ERROR] --sigstore-bundle requires --trusted-identity — a "
+            "Sigstore signature from an unspecified identity proves nothing "
+            "about who signed it.",
+            err=True,
+        )
+        sys.exit(2)
+
+    import json as _json
+
+    from cosai_mcp.scorecard.sigstore_signing import (
+        SigstoreUnavailableError,
+        SigstoreVerificationError,
+        verify_scorecard_sigstore,
+    )
+
+    try:
+        bundle_dict = _json.loads(Path(sigstore_bundle).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        click.echo(f"[ERROR] Cannot read Sigstore bundle: {exc}", err=True)
+        sys.exit(2)
+
+    try:
+        verify_scorecard_sigstore(
+            sc, bundle_dict,
+            identity=trusted_identity, issuer=trusted_issuer, staging=sigstore_staging,
+        )
+    except SigstoreUnavailableError as exc:
+        click.echo(f"[ERROR] {exc}", err=True)
+        sys.exit(2)
+    except SigstoreVerificationError as exc:
+        click.echo(f"[INVALID] Sigstore verification failed: {exc}", err=True)
+        sys.exit(1)
+
+    click.echo(f"[OK] Sigstore signature valid — identity: {trusted_identity}")
+
+
+_SIGSTORE_VERIFY_OPTIONS = [
+    click.option(
+        "--sigstore-bundle", "sigstore_bundle",
+        type=click.Path(exists=True, dir_okay=False), default=None,
+        help="Path to a Sigstore bundle JSON (written alongside the scorecard "
+             "by `cosai scan --sigstore-sign`, as <scorecard>.sigstore.json). "
+             "Verifies an ADDITIONAL signature bound to an organizational "
+             "OIDC identity, on top of the Ed25519 signature. Requires "
+             "--trusted-identity.",
+    ),
+    click.option(
+        "--trusted-identity", "trusted_identity", default=None,
+        help="Expected Sigstore signer identity (e.g. the GitHub Actions "
+             "workflow identity URI that ran the scan). Required with "
+             "--sigstore-bundle.",
+    ),
+    click.option(
+        "--trusted-issuer", "trusted_issuer", default=None,
+        help="Expected OIDC issuer URL for the Sigstore identity (e.g. "
+             "https://token.actions.githubusercontent.com). Optional "
+             "additional pin alongside --trusted-identity.",
+    ),
+    click.option(
+        "--sigstore-staging", "sigstore_staging", is_flag=True, default=False,
+        help="Verify against Sigstore's public staging instance instead of "
+             "production (testing only).",
+    ),
+]
+
+
+def _apply_options(
+    options: Sequence[Callable[[Callable[..., Any]], Callable[..., Any]]],
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+        for opt in reversed(options):
+            fn = opt(fn)
+        return fn
+    return decorator
+
+
 @scorecard.command("verify")
 @click.argument("scorecard_file", type=click.Path(exists=True))
 @click.option("--expected-catalog-hash", "expected_catalog_hash", default=None,
               help="SHA-256 hex digest the scorecard's catalog_hash must match. "
                    "A valid signature alone does not prove the pinned, reviewed "
                    "catalog produced this scorecard.")
-def scorecard_verify(scorecard_file: str, expected_catalog_hash: str | None) -> None:
+@_apply_options(_SIGSTORE_VERIFY_OPTIONS)
+def scorecard_verify(
+    scorecard_file: str,
+    expected_catalog_hash: str | None,
+    sigstore_bundle: str | None,
+    trusted_identity: str | None,
+    trusted_issuer: str | None,
+    sigstore_staging: bool,
+) -> None:
     """Verify the Ed25519 signature on a scorecard JSON file.
 
     Exit codes:
         0  Valid — signature verified against the trusted installation key
-           (and catalog_hash matches --expected-catalog-hash, if given).
-        1  Invalid — signature does not verify, public key mismatch, or
-           catalog_hash does not match --expected-catalog-hash.
-        2  File cannot be read or is not a valid scorecard.
+           (and catalog_hash matches --expected-catalog-hash, and the
+           Sigstore bundle matches --trusted-identity, if given).
+        1  Invalid — signature does not verify, public key mismatch,
+           catalog_hash mismatch, or Sigstore identity mismatch.
+        2  File/bundle cannot be read, not a valid scorecard, or
+           --sigstore-bundle given without --trusted-identity.
     """
     import json as _json
 
@@ -762,14 +937,24 @@ def scorecard_verify(scorecard_file: str, expected_catalog_hash: str | None) -> 
         click.echo(f"[ERROR] Cannot read scorecard: {exc}", err=True)
         sys.exit(2)
 
+    # Adversary-pass EXPLOIT 1 (ENT-P0-2 review): the Sigstore check must run
+    # and pass BEFORE any "valid" output is printed. Printing the Ed25519
+    # [OK] line first meant a subsequent Sigstore failure left a misleading
+    # "[OK] ... valid" line on stdout above the real (possibly crashing)
+    # verdict — a log-scraper that only checks for "[OK]" would be fooled.
     try:
         verify_scorecard(sc)
         _check_scorecard_catalog_pin(sc, expected_catalog_hash)
-        click.echo(f"[OK] Scorecard signature valid — conformance: {sc.conformance_level.value}")
-        _print_compliance_mapping(sc)
     except ScorecardVerificationError as exc:
         click.echo(f"[INVALID] {exc}", err=True)
         sys.exit(1)
+
+    _verify_sigstore_bundle_or_exit(
+        sc, sigstore_bundle, trusted_identity, trusted_issuer, sigstore_staging
+    )
+
+    click.echo(f"[OK] Scorecard signature valid — conformance: {sc.conformance_level.value}")
+    _print_compliance_mapping(sc)
 
 
 @scorecard.command("show")
@@ -779,15 +964,25 @@ def scorecard_verify(scorecard_file: str, expected_catalog_hash: str | None) -> 
 @click.option("--expected-catalog-hash", "expected_catalog_hash", default=None,
               help="SHA-256 hex digest the scorecard's catalog_hash must match "
                    "(only checked when --verify is also set).")
+@_apply_options(_SIGSTORE_VERIFY_OPTIONS)
 def scorecard_show(
-    scorecard_file: str, do_verify: bool, expected_catalog_hash: str | None
+    scorecard_file: str,
+    do_verify: bool,
+    expected_catalog_hash: str | None,
+    sigstore_bundle: str | None,
+    trusted_identity: str | None,
+    trusted_issuer: str | None,
+    sigstore_staging: bool,
 ) -> None:
     """Print a human-readable summary of a conformance scorecard.
 
     Exit codes:
-        0  Scorecard printed (and verified if --verify was set).
-        1  Signature verification failed (only with --verify).
-        2  Invalid or unreadable scorecard file.
+        0  Scorecard printed (and verified if --verify or --sigstore-bundle
+           was set).
+        1  Signature verification failed (--verify) or Sigstore identity
+           mismatch (--sigstore-bundle).
+        2  Invalid/unreadable scorecard or bundle file, or --sigstore-bundle
+           given without --trusted-identity.
     """
     import json as _json
 
@@ -808,6 +1003,10 @@ def scorecard_show(
             click.echo(f"[INVALID] Signature verification failed: {exc}", err=True)
             sys.exit(1)
         _check_scorecard_catalog_pin(sc, expected_catalog_hash)
+
+    _verify_sigstore_bundle_or_exit(
+        sc, sigstore_bundle, trusted_identity, trusted_issuer, sigstore_staging
+    )
 
     _GRADE_ICON = {
         Grade.PASS: "✓",

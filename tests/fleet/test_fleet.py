@@ -32,7 +32,6 @@ from cosai_mcp.fleet import (
     run_fleet_scan,
 )
 
-
 # ===========================================================================
 # parse_targets_file — dependency-free format (CLAUDE.md locks the runtime
 # dependency list to httpx/websockets/google-re2/joserfc/keyring/jsonschema/
@@ -397,5 +396,7 @@ class TestRunFleetScanTimeout:
         def scan_fn(target: str, **_kwargs) -> TargetOutcome:
             return TargetOutcome(target_url=target, exit_code=0, result=None)
 
-        result = run_fleet_scan(["http://a:8000", "http://b:8000"], max_concurrency=2, scan_fn=scan_fn)
+        result = run_fleet_scan(
+            ["http://a:8000", "http://b:8000"], max_concurrency=2, scan_fn=scan_fn
+        )
         assert all(o.exit_code == 0 for o in result.targets)

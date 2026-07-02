@@ -242,7 +242,7 @@ Partial scans (exit 2 or 3) set `invocation.executionSuccessful: false` in SARIF
 The scanner's own supply chain is hardened against the attacks it tests for:
 
 - **Ed25519 public key** hardcoded as bytes literal in `cosai_mcp/keys.py` — not loaded from disk, cannot be replaced by a catalog substitution attack
-- **PyPI attestation** via Sigstore/PEP 740 — verifiable at install time
+- **PyPI attestation** via Sigstore/PEP 740 — verifiable at install time (this is about *installing cosai-mcp itself*; not to be confused with `scorecard/sigstore_signing.py`, which uses Sigstore to sign *scan output* — see Module Map below)
 - **GitHub Action** examples reference commit SHA, not mutable version tags
 - **Reproducible builds** + SLSA L3 provenance (Phase 9)
 - **Runtime environment** scrubbed at process start: `*_TOKEN`, `*_KEY`, cloud credential env vars stripped before any subprocess runs
@@ -321,6 +321,12 @@ cosai_mcp/
                         NIST AI RMF per category (ENT-P0-3) — kept in sync
                         with docs/THREAT_MAPPING.md by a cross-check test
     signing.py          Ed25519 sign/verify (trust-anchor-before-signature)
+    sigstore_signing.py Sigstore/Fulcio keyless sign/verify (ENT-P0-2) — an
+                        ADDITIONAL signature bound to an OIDC identity, never
+                        a replacement for the Ed25519 signature above.
+                        Optional `sigstore` extra; identity/issuer pinning is
+                        the security boundary (fail-closed, mirrors the
+                        Ed25519 trust-anchor contract)
 
   scanner/
     (static tool definition analyzer — offline, no target needed)

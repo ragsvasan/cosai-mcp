@@ -23,7 +23,9 @@ from cosai_mcp.transport.base import (
 # IP-pinning HTTPX transport
 # ---------------------------------------------------------------------------
 
-def _same_origin_trailing_slash_variant(current: httpx.URL, location: str | None) -> httpx.URL | None:
+def _same_origin_trailing_slash_variant(
+    current: httpx.URL, location: str | None
+) -> httpx.URL | None:
     """If *location* is exactly *current* with a trailing slash added or
     removed — and nothing else — return the canonical redirected-to URL.
 

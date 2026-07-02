@@ -47,7 +47,7 @@ silently altered by a catalog change between the PR run and the merge run.
   `--expected-catalog-hash ""` produced a confusing error instead of a
   clear validation message.
 
-### 🔶 ENT-P0-2 · Signer identity you can actually verify *(extends EFF-10; ties to AUDIT FIND 3)* — DIRECTION DECIDED, NOT YET BUILT
+### ✅ ENT-P0-2 · Signer identity you can actually verify *(extends EFF-10; ties to AUDIT FIND 3)* — SHIPPED 2026-07-02
 **As** GRC, **I need** the signed scorecard to be verifiable against an
 *organizational* identity — an X.509 cert chain or Sigstore/Fulcio OIDC identity —
 **not** a keypair whose private seed ships in the repo, **so that** a conformance
@@ -61,11 +61,50 @@ could have."
   `sub`) on a machine that never had the private key; a scorecard signed by the
   dev seed is rejected by a released build; key-rotation is a documented, tested
   procedure.
-- **Status (2026-07-02):** direction decided — Sigstore/Fulcio + PEP 740
-  (keyless, OIDC-bound, composes with the PyPI Trusted Publishing already
-  planned for EFF-01) over X.509/managed PKI. Logged to the project decision
-  ledger; not deferred. This is the largest single P0 item (L-effort) and
-  was sequenced last among the four; implementation has not started.
+- **Shipped:** `cosai_mcp/scorecard/sigstore_signing.py` (new module) wraps
+  `sigstore-python` (optional `pip install cosai-mcp[sigstore]` extra — kept
+  out of core deps: it pulls a newer `cryptography` floor than sibling
+  project mcp-armor pins, a conflict reproduced in this repo's own dev
+  environment). `sign_scorecard_sigstore()`/`verify_scorecard_sigstore()`
+  are an **additional** signature alongside the existing Ed25519 one, never
+  a replacement — the identity/issuer pin IS the security boundary, mirroring
+  the Ed25519 path's existing fail-closed trust-anchor contract. CLI: `cosai
+  scan --sigstore-sign [--sigstore-staging]` writes a `<scorecard>.sigstore.json`
+  bundle; `cosai scorecard verify|show --sigstore-bundle <path>
+  --trusted-identity <id> [--trusted-issuer <iss>]` verifies it, rejecting a
+  bundle given without `--trusted-identity` (a signature from an unpinned
+  identity proves nothing about who signed it). Explicitly rejected (exit 2,
+  not silently dropped) in fleet mode (`--targets`) — the aggregated fleet
+  scorecard has a different shape than a single `Scorecard` and has no
+  defined Sigstore signing semantics yet; sign each target's scorecard
+  individually instead. Key rotation is N/A — a keyless mechanism has no
+  long-lived private key to rotate; the operational equivalent is
+  trust-policy rotation (which `--trusted-identity`/`--trusted-issuer` a
+  verifier accepts), applied at verify time without re-signing history.
+  T1 panel (Defense + Adversary/Opus + security-review + cryptographic-
+  systems-audit + supply-chain-dependency personas, all parallel) caught two
+  real issues: (1) Adversary — `Verifier.production()`/`.staging()`
+  construction and `verify_artifact()` could raise exceptions outside
+  `sigstore.errors.Error` (e.g. a TUF trust-root network error), which
+  escaped as unhandled tracebacks instead of the documented "raises
+  SigstoreVerificationError on any failure" contract; compounding it,
+  `scorecard verify` printed the Ed25519 `[OK]` line *before* running the
+  Sigstore check, so a subsequent Sigstore crash left a misleading `[OK]`
+  on stdout above the real failure — fixed by widening the exception
+  handling and reordering the CLI so nothing prints "valid" until every
+  requested check has passed. (2) Supply-chain-dependency persona —
+  unlike every other HTTP client in this codebase (which hard-codes
+  `trust_env=False` per the locked SSRF-prevention rule), sigstore-python's
+  own Fulcio/Rekor/TUF calls honor ambient proxy env vars; sigstore-python
+  exposes no override, so this is documented as an accepted upstream
+  limitation rather than silently assumed away. Cryptographic-systems-audit
+  and security-review personas: no findings (identity/issuer matching,
+  bundle-tampering resistance, and canonical-bytes equivalence with the
+  Ed25519 path were all independently verified against the real installed
+  `sigstore==4.3.0` package). Real end-to-end signing cannot be
+  live-verified in this sandbox (no ambient OIDC identity, no interactive
+  OIDC login available) — documented explicitly in the module's own
+  docstring; unit tests mock sigstore-python at the module boundary.
 
 ### ✅ ENT-P0-3 · Compliance mapping *inside* the signed artifact *(extends EFF-02; ties to FIND 6/18)* — SHIPPED 2026-07-02
 **As** GRC, **I need** each category result in the *signed* scorecard to carry
@@ -281,14 +320,14 @@ in a report nobody re-reads.
 
 ## Dependency & sequencing note
 
-- **Status as of 2026-07-02:** ENT-P0-1, ENT-P0-3, and ENT-P0-4 are shipped.
-  ENT-P0-2 (signer identity) is the only open P0 item — direction decided
-  (Sigstore/Fulcio + PEP 740), implementation not started. P1/P2 are all
+- **Status as of 2026-07-02:** all four P0 items are shipped — ENT-P0-1
+  (catalog-hash pin), ENT-P0-2 (Sigstore/Fulcio signer identity), ENT-P0-3
+  (signed compliance mapping), ENT-P0-4 (fleet scanning). P1/P2 are all
   still open.
-- **ENT-P0-2 (signer identity)** and **ENT-P0-3 (signed mapping, shipped)** are
-  the spine of the whole attestation value proposition and should land before
-  any hosted component (ENT-P1-1) leans on them — ENT-P0-2 is now the sole
-  remaining blocker on that spine.
+- **ENT-P0-2 (signer identity)** and **ENT-P0-3 (signed mapping)** are the
+  spine of the whole attestation value proposition — both shipped, so
+  hosted components (ENT-P1-1) that lean on them are now unblocked on this
+  axis.
 - **ENT-P2-1 (TS IPIS)** presupposes the audit's FIND 5 is resolved — i.e. the
   Python MC-INPATH engine is turned from an unwired library into a real, wired
   in-path engine first; otherwise there is no reference implementation to port.

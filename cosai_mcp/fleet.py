@@ -21,8 +21,9 @@ from __future__ import annotations
 import concurrent.futures
 import dataclasses
 import html
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from cosai_mcp.exceptions import TargetUnreachableError
 
@@ -37,7 +38,7 @@ from cosai_mcp.exceptions import TargetUnreachableError
 _DEFAULT_PER_TARGET_TIMEOUT_SECONDS = 600.0
 
 
-def _sanitize_error(text: str) -> str:
+def _sanitize_error(text: str | BaseException) -> str:
     """Sanitize an exception message before it reaches a report artifact.
 
     Panel-review finding (ENT-P0-4): `TargetOutcome.error` is `str(exc)` on

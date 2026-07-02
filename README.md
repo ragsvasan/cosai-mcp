@@ -7,7 +7,7 @@
 
 Open-source MCP security framework for the 12 CoSAI threat categories (T1–T12): **9 categories with zero-config black-box/stateful coverage; 3 (T4, T9, T12) require the cosai-mcp middleware deployed in the target.**
 
-**Status:** Alpha — 1554 tests passing, Apache 2.0. Zero-config scan covers 9 categories (T1–T3, T5–T8, T10–T11). T4/T9/T12 detection needs the middleware in the target's call path. All 12 middleware modules are implemented: `auth`, `authz`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, `audit`, `validation`, `session`, and `supply_chain`.
+**Status:** Alpha — 1581 tests passing, Apache 2.0. Zero-config scan covers 9 categories (T1–T3, T5–T8, T10–T11). T4/T9/T12 detection needs the middleware in the target's call path. All 12 middleware modules are implemented: `auth`, `authz`, `boundary`, `protection`, `integrity`, `network`, `trust`, `resources`, `audit`, `validation`, `session`, and `supply_chain`.
 
 ```bash
 # Install from source (interim — package not yet on PyPI)
@@ -40,6 +40,7 @@ cosai scan http://localhost:8000   # loopback/RFC1918 allowed by default
 - **Reproducible, pinned release gates** — `--expected-catalog-hash <sha>` refuses to scan (exit 2) if the loaded threat catalog has drifted from the one pinned in CI, so a PR run and its merge run are guaranteed to have scanned the identical ruleset. Also enforceable on signed-scorecard consumption (`cosai scorecard verify/show --expected-catalog-hash`) — a valid signature alone doesn't prove which catalog produced the artifact.
 - **Signed compliance mapping** — every category in a signed scorecard carries its CoSAI + OWASP MCP Top 10 + NIST AI RMF control mapping *inside the Ed25519-signed payload*, not as a prose claim in a doc — `cosai scorecard verify` prints it, and tampering with it breaks the signature.
 - **Fleet scanning** — `cosai scan --targets <file>` scans a whole fleet of MCP servers with bounded concurrency, emitting one aggregated exit code, one merged SARIF report, and one roll-up scorecard instead of N separate invocations to hand-merge. One unreachable or hung target never blocks or masks the others' results.
+- **Sigstore/Fulcio keyless signer identity** — `cosai scan --sigstore-sign` writes a Sigstore bundle alongside the Ed25519-signed scorecard, binding the attestation to an *organizational OIDC identity* (e.g. "this exact GitHub Actions workflow") instead of a keypair whose private seed ships in the repo. `cosai scorecard verify --sigstore-bundle <path> --trusted-identity <id>` fails closed unless the signer identity is explicitly pinned — a bundle with *a* valid signature from *some* identity proves nothing on its own.
 
 ## Coverage matrix
 
@@ -98,6 +99,14 @@ cosai scan http://localhost:8000 --report-sarif findings.sarif
 cosai scan http://localhost:8000 --scorecard scorecard.json
 cosai scorecard verify scorecard.json
 cosai scorecard show scorecard.json --verify
+
+# Additionally sign with Sigstore/Fulcio (keyless, OIDC-bound identity) — run
+# from CI with an ambient OIDC token, e.g. GitHub Actions `id-token: write`
+cosai scan http://localhost:8000 --scorecard scorecard.json --sigstore-sign
+cosai scorecard verify scorecard.json \
+  --sigstore-bundle scorecard.json.sigstore.json \
+  --trusted-identity "https://github.com/org/repo/.github/workflows/ci.yml@refs/heads/main" \
+  --trusted-issuer "https://token.actions.githubusercontent.com"
 
 # Stream findings to SIEM as OCSF Detection Finding events
 # (Track B — EXPERIMENTAL, requires --experimental; not part of the
@@ -168,7 +177,7 @@ pytest --cosai-target=http://localhost:8000 --cosai-severity=critical
 | Reproducible catalog-hash pin (`--expected-catalog-hash`) | Shipped (`cosai_mcp/api.py`, `cosai_mcp/cli.py`) |
 | Signed compliance mapping (CoSAI + OWASP + NIST AI RMF, in the signed scorecard) | Shipped (`cosai_mcp/scorecard/compliance.py`) |
 | Fleet scanning (`--targets`, bounded concurrency, merged SARIF/scorecard) | Shipped (`cosai_mcp/fleet.py`) |
-| Enterprise signer identity (Sigstore/Fulcio, replacing the dev signing seed) | Direction decided, not yet built ([docs/ENTERPRISE_REQUIREMENTS_2026-07-01.md](docs/ENTERPRISE_REQUIREMENTS_2026-07-01.md)) |
+| Enterprise signer identity (Sigstore/Fulcio, `--sigstore-sign`/`--sigstore-bundle`) | Shipped (`cosai_mcp/scorecard/sigstore_signing.py`, optional `pip install cosai-mcp[sigstore]`) |
 
 The scanner (black-box prober + stateful harness) covers 9 of 12 categories zero-config. All 12 middleware modules are implemented and composable via `CoSAIStack`.
 
@@ -217,7 +226,7 @@ Static analyzers test what you wrote — the source code. We test what you shipp
 T4, T6, and T9 each have a passive manifest-scan layer that runs zero-config. T4 detects tool-description poisoning hidden in `tools/list`. T6 detects name collisions, reserved-method shadowing, and typosquatted tool names. T9 detects destructive tools missing two-stage commit (delete/drop/wipe/revoke/etc. tools without a `confirmed` param or `_preview` sibling) — the structural Totem check from the CoSAI WS4 T9 contribution. T4 adversarial mode with canary tokens additionally catches exfiltration from outside. For T9 and T12, full coverage requires the middleware in the call path — detecting that LLM judgment drove an authorization decision or that an audit log entry was missing requires being instrumented inside the server.
 
 **Is this ready for others to use?**
-1554 passing tests, Apache 2.0, installs with pip. The catalog format and taxonomy coverage are stable. Reference-implementation quality — solid enough to standardize the probe catalog schema against, not yet production-hardened for enterprise deployment at scale.
+1581 passing tests, Apache 2.0, installs with pip. The catalog format and taxonomy coverage are stable. Reference-implementation quality — solid enough to standardize the probe catalog schema against, not yet production-hardened for enterprise deployment at scale.
 
 **What about non-Python MCP servers?**
 The scanner speaks JSON-RPC — it's language-agnostic. Any MCP server regardless of implementation language is a valid target. The server-side middleware is Python-only today, but the scanner works against TypeScript, Go, or anything.

@@ -1026,8 +1026,8 @@ def _scan_manifest_t11(
     never silently false-greens on the vacuous probe alone.  Mirrors the
     T4/T6/T9 passive scans.  Called from ``_run_scan`` whenever T11 is in scope.
     """
-    from cosai_mcp.middleware.integrity import levenshtein
     from cosai_mcp.harness.result import make_probe_result
+    from cosai_mcp.middleware.integrity import levenshtein
 
     if not discovered_tools:
         return []
@@ -1325,7 +1325,7 @@ class Scanner:
         self.baseline_path = baseline_path
         self.pii_strict = pii_strict
         self.stateful_method_overrides = stateful_method_overrides
-        self.tool_allowlist: tuple[str, ...] | None = None
+        self.tool_allowlist = None
         self.expected_catalog_hash = expected_catalog_hash
 
     def run(self, categories: list[str] | None = None) -> ScanResult:

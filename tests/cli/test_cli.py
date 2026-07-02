@@ -935,6 +935,23 @@ class TestFleetScanCLIWiring:
         assert res.exit_code == 2, res.output
         assert "--fleet-concurrency" in res.output
 
+    def test_sigstore_sign_rejected_in_fleet_mode(self, tmp_path: Path) -> None:
+        """ENT-P0-2: --sigstore-sign signs a single Scorecard object; the
+        aggregated fleet scorecard has no defined Sigstore signing
+        semantics yet — must fail loudly, not silently sign nothing."""
+        targets_file = tmp_path / "targets.txt"
+        targets_file.write_text("http://host1:8000\n")
+        sc_path = tmp_path / "scorecard.json"
+        res = _invoke(
+            [
+                "scan", "--targets", str(targets_file),
+                "--scorecard", str(sc_path), "--sigstore-sign",
+            ]
+        )
+        assert res.exit_code == 2, res.output
+        assert "--sigstore-sign" in res.output
+        assert "not yet supported with --targets" in res.output
+
     def test_fleet_concurrency_negative_is_rejected(self, tmp_path: Path) -> None:
         targets_file = tmp_path / "targets.txt"
         targets_file.write_text("http://host1:8000\n")
