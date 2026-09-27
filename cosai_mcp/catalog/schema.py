@@ -14,8 +14,9 @@ THREAT_META_SCHEMA: dict = {
     "additionalProperties": False,
     "properties": {
         # 1.1 adds optional `confidence` (threat) + `corroboration` (probe).
-        # 1.0 files remain valid and load unchanged (additive bump).
-        "schema_version": {"type": "string", "enum": ["1.0", "1.1"]},
+        # 1.2 adds optional probe `requires_protocol_era` (MCP 2026-07-28).
+        # Older files remain valid and load unchanged (additive bumps).
+        "schema_version": {"type": "string", "enum": ["1.0", "1.1", "1.2"]},
         # Standard threats: T##-###  (e.g. T01-001)
         # Adversarial threats: T##-ADV-### (e.g. T03-ADV-001)
         "id": {"type": "string", "pattern": "^T[0-9]{2}(-[A-Z]{2,5})?-[0-9]{3}$"},
@@ -75,6 +76,11 @@ THREAT_META_SCHEMA: dict = {
                 # the probe is NOT downgraded to inconclusive. Used by T10/T11
                 # reject-the-request probes. Default/absent = False.
                 "protocol_error_is_expected": {"type": "boolean"},
+                # Schema 1.2 additive: the probe exercises surface that exists
+                # only in one MCP protocol era (e.g. 2026-07-28 request-metadata
+                # headers). A session in the other era reports INCONCLUSIVE
+                # (not applicable) instead of a vacuous PASS/FAIL.
+                "requires_protocol_era": {"type": "string", "enum": ["modern", "legacy"]},
                 # Adversarial probe optional fields
                 "description": {"type": "string"},
                 "canary_detection": {"type": "boolean"},

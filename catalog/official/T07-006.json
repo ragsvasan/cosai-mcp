@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.2",
+  "id": "T07-006",
+  "category": "T7",
+  "severity": "low",
+  "cosai_ref": "T7",
+  "owasp_ref": "MCP-Top10-A07",
+  "cwe": ["CWE-757"],
+  "confidence": "medium",
+  "probes": [
+    {
+      "id": "T07-006-p1",
+      "transport": "http",
+      "method": "initialize",
+      "description": "Against a server that speaks MCP 2026-07-28, send a legacy initialize handshake. A dual-era server that still accepts it runs a second authorization path, and on the legacy path authorization was established once at initialize rather than per request. The era is chosen by the client, so this is a downgrade path unless the legacy path enforces per-request authorization and has a documented sunset.",
+      "requires_protocol_era": "modern",
+      "payload": {
+        "protocolVersion": "2025-03-26",
+        "clientInfo": {"name": "cosai-downgrade-probe", "version": "1.0"},
+        "capabilities": {}
+      },
+      "assertions": [
+        {
+          "target": "response.error_code",
+          "operator": "ne",
+          "value": null,
+          "description": "A modern server should decline the legacy initialize handshake (or enforce per-request authorization on it)"
+        }
+      ],
+      "corroboration": [
+        {"target": "response.error", "operator": "eq", "value": false,
+         "description": "Finding only when the legacy handshake was accepted"}
+      ]
+    }
+  ],
+  "remediation": "If the legacy (initialize / Mcp-Session-Id) path must remain during migration, enforce per-request authorization on it exactly as on the stateless path, inventory it, and give it a documented sunset date. Otherwise set a minimum supported version and decline initialize, naming the supported versions in the error (CoSAI MCP Security v2.0 §3.2.12 and MCP-T7).",
+  "references": [
+    "https://cosai.org/T7",
+    "https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning#backward-compatibility-with-initialization-based-versions"
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.2",
+  "id": "T11-002",
+  "category": "T11",
+  "severity": "info",
+  "cosai_ref": "T11",
+  "owasp_ref": "MCP-Top10-A11",
+  "cwe": ["CWE-477"],
+  "confidence": "high",
+  "probes": [
+    {
+      "id": "T11-002-p1",
+      "transport": "http",
+      "method": "server/discover",
+      "description": "Protocol-level Logging is deprecated in MCP 2026-07-28 and must not be relied on as the security telemetry plane. Check whether server/discover still advertises the logging capability.",
+      "requires_protocol_era": "modern",
+      "payload": {},
+      "assertions": [
+        {
+          "target": "response.result.capabilities.logging",
+          "operator": "eq",
+          "value": null,
+          "description": "Deprecated protocol Logging capability should not be advertised"
+        }
+      ],
+      "corroboration": [
+        {"target": "response.error", "operator": "eq", "value": false,
+         "description": "server/discover succeeded"}
+      ]
+    }
+  ],
+  "remediation": "Migrate diagnostic logging to stderr (stdio) and security telemetry to OpenTelemetry with W3C Trace Context propagated in _meta. Inventory remaining uses of deprecated features (Roots, Sampling, Logging) and remove them within lifecycle deadlines (CoSAI MCP Security v2.0 §3.2.10 and §3.3.2, Deprecated feature migration).",
+  "references": [
+    "https://cosai.org/T11",
+    "https://modelcontextprotocol.io/specification/2026-07-28/deprecated"
+  ]
+}

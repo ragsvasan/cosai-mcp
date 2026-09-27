@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.2",
+  "id": "T07-005",
+  "category": "T7",
+  "severity": "medium",
+  "cosai_ref": "T7",
+  "owasp_ref": "MCP-Top10-A07",
+  "cwe": ["CWE-757"],
+  "confidence": "high",
+  "probes": [
+    {
+      "id": "T07-005-p1",
+      "transport": "http",
+      "method": "tools/list",
+      "description": "Declare an unknown protocol version (1900-01-01) in the request _meta and MCP-Protocol-Version header. MCP 2026-07-28 requires UnsupportedProtocolVersionError (-32022) listing the supported versions. A server that serves any declared version has no protocol floor, so a client can select whichever era or semantics is weakest (version downgrade).",
+      "requires_protocol_era": "modern",
+      "payload": {"_meta": {"io.modelcontextprotocol/protocolVersion": "1900-01-01"}},
+      "assertions": [
+        {
+          "target": "response.error_code",
+          "operator": "eq",
+          "value": -32022,
+          "description": "Unsupported protocol versions must be rejected with -32022"
+        }
+      ],
+      "corroboration": [
+        {"target": "response.error", "operator": "eq", "value": false,
+         "description": "Finding only when the request was served under the bogus version"}
+      ]
+    }
+  ],
+  "remediation": "Enforce a minimum supported protocol version as policy. Return HTTP 400 with UnsupportedProtocolVersionError (-32022) and data.supported for any version you do not implement or have chosen not to support (CoSAI MCP Security v2.0 §3.2.12, Migration and mixed-version operation).",
+  "references": [
+    "https://cosai.org/T7",
+    "https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning#protocol-version-negotiation",
+    "https://cwe.mitre.org/data/definitions/757.html"
+  ]
+}

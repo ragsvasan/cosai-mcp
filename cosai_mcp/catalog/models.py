@@ -74,6 +74,9 @@ class Probe:
     # for payload-injection probes (T03/T08) a protocol error is vacuous and the
     # probe is downgraded to INCONCLUSIVE (audit §2 / COV-06 / COV-08).
     protocol_error_is_expected: bool = False
+    # Schema 1.2 (additive): "modern" (MCP 2026-07-28+) or "legacy" when the
+    # probe's attack surface exists in only one protocol era.  None = any era.
+    requires_protocol_era: str | None = None
 
 
 @dataclass(frozen=True)

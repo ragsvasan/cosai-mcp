@@ -287,3 +287,81 @@ def classify_discover_response(response: Any) -> EraDetection:
     if isinstance(status, int) and (status in (401, 403, 429) or status >= 500):
         return EraDetection.UNDETERMINED
     return EraDetection.LEGACY
+
+
+# ---------------------------------------------------------------------------
+# Tool-schema hygiene (JSON Schema 2020-12 as used by 2026-07-28 tool schemas)
+# ---------------------------------------------------------------------------
+
+_MAX_SCHEMA_DEPTH = 32
+_MAX_SCHEMA_NODES = 2000
+_PRIMITIVE_HEADER_TYPES = frozenset({"string", "integer", "boolean"})
+
+
+def tool_schema_violations(input_schema: Any) -> list[str]:
+    """Return human-readable violations in a tool ``inputSchema``.
+
+    Checks (CoSAI MCP Security v2.0 §3.2.3 / MCP 2026-07-28 §JSON Schema):
+      - ``$ref`` pointing outside the document (clients MUST NOT dereference;
+        a server shipping one is a schema-poisoning / SSRF lure)
+      - ``x-mcp-header`` annotations violating the spec (non-token name,
+        duplicate name, non-primitive or ``number`` type, or not reachable from
+        the root through ``properties`` only) — conforming clients drop the tool
+      - excessive depth / subschema count (validator DoS against clients)
+
+    Pure and bounded: never raises, walks at most ``_MAX_SCHEMA_NODES`` nodes.
+    """
+    if not isinstance(input_schema, dict):
+        return []
+    violations: list[str] = []
+    nodes = 0
+    max_depth = 0
+    header_names: set[str] = set()
+
+    def _walk(node: Any, depth: int, via_properties_only: bool, path: str) -> None:
+        nonlocal nodes, max_depth
+        if nodes > _MAX_SCHEMA_NODES:
+            return
+        nodes += 1
+        max_depth = max(max_depth, depth)
+        if isinstance(node, list):
+            for i, item in enumerate(node):
+                _walk(item, depth + 1, False, f"{path}[{i}]")
+            return
+        if not isinstance(node, dict):
+            return
+        ref = node.get("$ref")
+        if isinstance(ref, str) and not ref.startswith("#"):
+            violations.append(f"external $ref at {path or '/'}: {ref[:120]}")
+        ann = node.get("x-mcp-header")
+        if ann is not None:
+            typ = node.get("type")
+            if isinstance(typ, list):
+                non_null = [t for t in typ if t != "null"]
+                typ = non_null[0] if len(non_null) == 1 else None
+            problem = None
+            if not isinstance(ann, str) or not _TOKEN_RE.match(ann):
+                problem = "name is not an HTTP token"
+            elif ann.lower() in header_names:
+                problem = "duplicate name (case-insensitive)"
+            elif typ not in _PRIMITIVE_HEADER_TYPES:
+                problem = f"type {typ!r} not string/integer/boolean"
+            elif not via_properties_only:
+                problem = "not reachable from the root via 'properties' only"
+            if isinstance(ann, str):
+                header_names.add(ann.lower())
+            if problem:
+                violations.append(f"invalid x-mcp-header at {path or '/'} ({problem})")
+        for key, value in node.items():
+            if key == "properties" and isinstance(value, dict):
+                for prop, sub in value.items():
+                    _walk(sub, depth + 1, via_properties_only, f"{path}/properties/{prop}")
+            elif isinstance(value, (dict, list)):
+                _walk(value, depth + 1, False, f"{path}/{key}")
+
+    _walk(input_schema, 0, True, "")
+    if nodes > _MAX_SCHEMA_NODES:
+        violations.append(f"schema exceeds {_MAX_SCHEMA_NODES} subschemas")
+    if max_depth > _MAX_SCHEMA_DEPTH:
+        violations.append(f"schema nesting depth {max_depth} exceeds {_MAX_SCHEMA_DEPTH}")
+    return violations

@@ -8,6 +8,7 @@ import os
 import re
 import socket
 import time
+import types
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -670,6 +671,13 @@ def _run_scan(
         if effective_categories is None or "T6" in effective_categories:
             probe_results.extend(_scan_manifest_t6(tuple(discovered_tools) if discovered_tools else ()))  # noqa: E501
 
+        # T3: passive tool-schema hygiene (external $ref, invalid x-mcp-header,
+        # validator-DoS schema size) — MCP 2026-07-28 JSON Schema 2020-12 surface.
+        if effective_categories is None or "T3" in effective_categories:
+            probe_results.extend(
+                _scan_manifest_t3_schema(tuple(discovered_tools) if discovered_tools else ())
+            )
+
         # T11: passive supply-chain scan — discovered tools vs the operator
         # allowlist (typosquat / unexpected-tool).  INCONCLUSIVE without an
         # allowlist, so T11 never false-greens on the vacuous legacy probe.
@@ -1244,6 +1252,68 @@ def _scan_manifest_t6(discovered_tools: tuple) -> list[ProbeResult]:
         ))
 
     return results
+
+
+def _scan_manifest_t3_schema(discovered_tools: tuple) -> list[ProbeResult]:
+    """Passive T3 tool-schema hygiene scan over the discovered manifest.
+
+    Flags external ``$ref``, spec-invalid ``x-mcp-header`` annotations, and
+    validator-DoS-sized schemas (``cosai_mcp.protocol.tool_schema_violations``).
+    One failing result per affected tool; a clean manifest emits one PASS
+    marker.  Hostile schema text is HTML-escaped and capped at ingestion.
+    """
+    from cosai_mcp.harness.result import ProbeResult as _ProbeResult
+    from cosai_mcp.harness.result import _html_escape
+    from cosai_mcp.protocol import tool_schema_violations
+
+    if not discovered_tools:
+        return []
+    results: list[ProbeResult] = []
+    for idx, tool in enumerate(discovered_tools, start=1):
+        schema = _to_plain(tool.input_schema)
+        violations = tool_schema_violations(schema)
+        if not violations:
+            continue
+        detail = (
+            f"Tool '{tool.name}' inputSchema: " + "; ".join(violations[:10])
+            + (f" (+{len(violations) - 10} more)" if len(violations) > 10 else "")
+        )
+        results.append(_ProbeResult(
+            probe_id=f"T03-schema-p{idx}",
+            threat_id="T03",
+            passed=False,
+            status_code=None,
+            response_body=_html_escape(detail[:2000]),
+            error=None,
+            assertions=(),
+            duration_seconds=0.0,
+            inconclusive_reason=None,
+        ))
+    if not results:
+        results.append(_ProbeResult(
+            probe_id="T03-schema-clean",
+            threat_id="T03",
+            passed=True,
+            status_code=None,
+            response_body=(
+                f"Tool-schema hygiene scan: {len(discovered_tools)} tool(s); no external "
+                "$ref, invalid x-mcp-header annotations, or oversized schemas."
+            ),
+            error=None,
+            assertions=(),
+            duration_seconds=0.0,
+            inconclusive_reason=None,
+        ))
+    return results
+
+
+def _to_plain(value: Any) -> Any:
+    """MappingProxyType/tuple → dict/list (bounded by the frozen input's size)."""
+    if isinstance(value, (dict, types.MappingProxyType)):
+        return {k: _to_plain(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_plain(v) for v in value]
+    return value
 
 
 def _normalise_categories(categories: list[str] | None) -> frozenset[str] | None:

@@ -37,7 +37,7 @@ from cosai_mcp.catalog.models import (
     ThreatDefinition,
 )
 from cosai_mcp.config import ScanConfig
-from cosai_mcp.harness.context import _to_json_safe
+from cosai_mcp.harness.context import ERA_NOT_APPLICABLE_MARKER, _to_json_safe
 from cosai_mcp.harness.result import ProbeResult, _html_escape, make_probe_result
 
 # ---------------------------------------------------------------------------
@@ -108,6 +108,8 @@ def _probe_to_dict(probe: Probe) -> dict[str, Any]:
         ]
     if probe.protocol_error_is_expected:
         d["protocol_error_is_expected"] = True
+    if probe.requires_protocol_era is not None:
+        d["requires_protocol_era"] = probe.requires_protocol_era
     return d
 
 
@@ -150,6 +152,7 @@ def _probe_from_dict(d: dict[str, Any]) -> Probe:
         probe_headers=types.MappingProxyType(raw_headers) if raw_headers else None,
         corroboration=corroboration,
         protocol_error_is_expected=bool(d.get("protocol_error_is_expected", False)),
+        requires_protocol_era=d.get("requires_protocol_era"),
     )
 
 
@@ -406,22 +409,11 @@ def _synthesize_probe(
         pattern = threat_pattern_from_category(threat.category)
         catalog_payload_dict = _to_json_safe(probe.payload)
         synth_payload = synthesize_probe_payload(discovered_tool, pattern, catalog_payload_dict)
-        return Probe(
-            id=probe.id,
-            transport=probe.transport,
-            method=probe.method,
-            payload=synth_payload,  # type: ignore[arg-type]
-            assertions=probe.assertions,
-            probe_token=probe.probe_token,
-            probe_count=probe.probe_count,
-            probe_headers=probe.probe_headers,
-            # WP1: a synthesized adaptive-retry probe MUST keep the original
-            # corroboration so the precision contract still holds on retry —
-            # without this a synthesized T3 probe reverts to noisy
-            # not_contains-only behaviour.
-            corroboration=probe.corroboration,
-            protocol_error_is_expected=probe.protocol_error_is_expected,
-        )
+        # dataclasses.replace carries EVERY other field (corroboration — WP1
+        # precision contract; protocol_error_is_expected; requires_protocol_era
+        # — schema 1.2) so a new Probe field can never be silently dropped on
+        # the adaptive retry.
+        return dataclasses.replace(probe, payload=synth_payload)  # type: ignore[arg-type]
     except ValueError:
         # Expected from template-escape guard or missing adversarial value (P2 fix)
         return None
@@ -566,6 +558,7 @@ class ProbeRunner:
         if (
             first_result.inconclusive_reason is not None
             and discovered_tool is not None
+            and ERA_NOT_APPLICABLE_MARKER not in first_result.inconclusive_reason
         ):
             adapted_probe = _synthesize_probe(probe, threat, discovered_tool)
             if adapted_probe is not None:

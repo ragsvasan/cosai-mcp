@@ -196,6 +196,14 @@ class MockMCPServer:
     modern_framing_unauth_jsonrpc_error:
         Like ``reject_modern_framing_unauth`` but the rejection is HTTP 200 with
         a JSON-RPC -32001 error (common real-world shape).
+    skip_header_validation:
+        VULNERABLE (T07-004): modern requests are served even when
+        ``Mcp-Method`` / ``Mcp-Name`` disagree with the body.
+    accept_unknown_versions:
+        VULNERABLE (T07-005): any ``_meta`` protocolVersion is served instead of
+        returning -32022 UnsupportedProtocolVersion.
+    advertise_logging:
+        ``server/discover`` advertises the deprecated ``logging`` capability.
     """
 
     def __init__(
@@ -222,7 +230,13 @@ class MockMCPServer:
         initialize_requires_auth: bool = False,
         drop_tools_call: bool = False,
         modern_framing_unauth_jsonrpc_error: bool = False,
+        skip_header_validation: bool = False,
+        accept_unknown_versions: bool = False,
+        advertise_logging: bool = False,
     ) -> None:
+        self._skip_header_validation = skip_header_validation
+        self._accept_unknown_versions = accept_unknown_versions
+        self._advertise_logging = advertise_logging
         self._modern_framing_unauth_jsonrpc_error = modern_framing_unauth_jsonrpc_error
         self._reject_modern_framing_unauth = reject_modern_framing_unauth
         self._initialize_http_status = initialize_http_status
@@ -354,7 +368,10 @@ class MockMCPServer:
                     "result": {
                         "resultType": "complete",
                         "supportedVersions": list(self._modern_supported),
-                        "capabilities": {"tools": {}},
+                        "capabilities": (
+                            {"tools": {}, "logging": {}} if self._advertise_logging
+                            else {"tools": {}}
+                        ),
                         "_meta": {
                             META_SERVER_INFO: {"name": "mock-mcp-server", "version": "0.2.0"},
                         },
@@ -543,9 +560,11 @@ class MockMCPServer:
         version = meta.get(META_PROTOCOL_VERSION)
         if lower.get(HEADER_PROTOCOL_VERSION.lower()) != version:
             return _err(ERR_HEADER_MISMATCH, "Header mismatch: MCP-Protocol-Version")
-        if version not in self._modern_supported:
+        if version not in self._modern_supported and not self._accept_unknown_versions:
             return _err(ERR_UNSUPPORTED_PROTOCOL_VERSION, "Unsupported protocol version",
                         {"supported": list(self._modern_supported), "requested": version})
+        if self._skip_header_validation:
+            return None
         if lower.get(HEADER_METHOD.lower()) != method:
             return _err(ERR_HEADER_MISMATCH, "Header mismatch: Mcp-Method")
         expected_name = mcp_name_for(method, params)

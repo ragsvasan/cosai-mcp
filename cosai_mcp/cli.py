@@ -1751,13 +1751,29 @@ def _make_manifest_stubs() -> tuple[dict, dict]:
     """Build (sarif_stubs, html_stubs) for passive manifest-scan findings.
 
     Both dicts are keyed by bare category code (e.g. "T09") because that is what
-    the passive scans (_scan_manifest_t4/t5/t6/t9/t11) write into
+    the passive scans (_scan_manifest_t3_schema/t4/t5/t6/t9/t11) write into
     ProbeResult.threat_id. A category missing here is silently dropped from the
     SARIF/HTML report, so every passive-scan category MUST have a stub.
     """
     from cosai_mcp.catalog.models import Severity
 
     sarif: dict = {
+        "T03": {
+            # Distinct rule id: T03-001 is the command-injection catalog rule.
+            "rule_id": "T03-100",
+            "name": "T3 Input Validation — Unsafe Tool inputSchema",
+            "severity": Severity.MEDIUM,
+            "remediation": (
+                "Tool inputSchema must not reference external $ref URIs (clients "
+                "must not dereference them), must use spec-valid x-mcp-header "
+                "annotations (HTTP-token name, unique, string/integer/boolean, "
+                "reachable via 'properties' only), and must stay within bounded "
+                "depth and subschema count. Ref: CoSAI MCP Security v2.0 §3.2.3, "
+                "MCP 2026-07-28 JSON Schema usage, CWE-20."
+            ),
+            "owasp_ref": "MCP-Top10-A03",
+            "cwe": ("CWE-20", "CWE-918"),
+        },
         "T05": {
             "rule_id": "T05-001",
             "name": "T5 Data Protection — Secret/PII in Tool Manifest",

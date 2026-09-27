@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.2",
+  "id": "T07-004",
+  "category": "T7",
+  "severity": "high",
+  "cosai_ref": "T7",
+  "owasp_ref": "MCP-Top10-A07",
+  "cwe": ["CWE-436", "CWE-345"],
+  "confidence": "high",
+  "probes": [
+    {
+      "id": "T07-004-p1",
+      "transport": "http",
+      "method": "tools/list",
+      "description": "MCP 2026-07-28 mirrors the JSON-RPC method into the Mcp-Method header so gateways can route and rate-limit without parsing the body. Send tools/list with Mcp-Method: tools/call. A server that does not reject the mismatch with 400 + HeaderMismatch (-32020) lets an intermediary authorize or log one operation while the server executes another (header/body split-brain).",
+      "requires_protocol_era": "modern",
+      "probe_headers": {"Mcp-Method": "tools/call"},
+      "payload": {},
+      "assertions": [
+        {
+          "target": "response.error_code",
+          "operator": "eq",
+          "value": -32020,
+          "description": "Mcp-Method / body method mismatch must be rejected with HeaderMismatch (-32020)"
+        }
+      ],
+      "corroboration": [
+        {"target": "response.error", "operator": "eq", "value": false,
+         "description": "Finding only when the mismatched request was actually served"}
+      ]
+    },
+    {
+      "id": "T07-004-p2",
+      "transport": "http",
+      "method": "tools/call",
+      "description": "Call a discovered tool with an Mcp-Name header naming a different tool. A gateway enforcing per-tool policy on Mcp-Name would allow the call while the server runs the tool named in the body.",
+      "requires_protocol_era": "modern",
+      "probe_headers": {"Mcp-Name": "cosai-shadow-tool"},
+      "payload": {"name": "{{tool_name}}", "arguments": {}},
+      "assertions": [
+        {
+          "target": "response.error_code",
+          "operator": "eq",
+          "value": -32020,
+          "description": "Mcp-Name / params.name mismatch must be rejected with HeaderMismatch (-32020)"
+        }
+      ],
+      "corroboration": [
+        {"target": "response.error", "operator": "eq", "value": false,
+         "description": "Finding only when the mismatched request was actually served"}
+      ]
+    }
+  ],
+  "remediation": "Validate MCP-Protocol-Version, Mcp-Method, Mcp-Name, and every recognised Mcp-Param-* header against the JSON-RPC body (after decoding =?base64?...?= values) before routing, authorization, rate limiting, caching, or logging. Reject any disagreement with HTTP 400 and JSON-RPC error -32020 (HeaderMismatch), and log it as a security-relevant failure (CoSAI MCP Security v2.0 §3.2.7, Transport and Network Security: Protocol request metadata).",
+  "references": [
+    "https://cosai.org/T7",
+    "https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http#server-validation",
+    "https://cwe.mitre.org/data/definitions/436.html"
+  ]
+}

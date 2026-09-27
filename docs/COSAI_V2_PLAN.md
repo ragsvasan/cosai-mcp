@@ -57,6 +57,18 @@
 
 ## 4. P1 — New probes for the 2026-07-28 attack surface
 
+**P1a batch 1 — shipped** (schema 1.2 adds optional probe `requires_protocol_era`; era-gated probes report INCONCLUSIVE "not applicable" on the other era):
+
+| ID | Check | Vulnerable → | Secure → |
+|---|---|---|---|
+| T07-004 (high) | `Mcp-Method` / `Mcp-Name` header ≠ body accepted | served | 400 + `-32020` |
+| T07-005 (medium) | Unknown `_meta` protocolVersion served (no version floor) | served | `-32022` |
+| T07-006 (low) | Modern server still accepts legacy `initialize` (downgrade path) | handshake accepted | declined |
+| T11-002 (info) | Deprecated protocol `logging` capability advertised | advertised | absent |
+| passive T3 | Tool schema: external `$ref`, spec-invalid `x-mcp-header`, validator-DoS size | finding per tool | clean marker |
+
+Remaining P1a (next batches):
+
 All black-box unless noted. Each gets a catalog entry (signed), a mock-server vulnerable/secure mode, and an entry-point test.
 
 | ID (proposed) | Cat | Check | Engine |

@@ -58,6 +58,10 @@ _SCHEMA_MISMATCH_KEYWORDS: tuple[str, ...] = (
 # Codes deliberately EXCLUDED: -32603 (internal error), -32000..-32099 (server
 # application errors, e.g. -32001 auth/scope rejection, -32029 rate limit).
 # Those are genuine security-relevant outcomes the probes are meant to observe.
+# Stable marker in the INCONCLUSIVE reason for an era-gated probe (schema 1.2).
+# The runner keys off it to skip the pointless adaptive-synthesis retry.
+ERA_NOT_APPLICABLE_MARKER = "not applicable"
+
 _PROTOCOL_VALIDATION_CODES: frozenset[int] = frozenset(
     {-32700, -32600, -32601, -32602,
      # MCP 2026-07-28 transport-level rejections (HeaderMismatch,
@@ -219,6 +223,23 @@ class ProbeContext:
         ``discovered_tool`` is passed for context (e.g. logging) but retry
         logic lives in the parent ProbeRunner — synthesis happens before fork.
         """
+        if (
+            probe.requires_protocol_era is not None
+            and self._session.protocol_era.value != probe.requires_protocol_era
+        ):
+            return make_probe_result(
+                probe_id=probe.id,
+                threat_id=threat.id,
+                passed=False,
+                assertions=(),
+                inconclusive_reason=(
+                    f"Probe targets the {probe.requires_protocol_era!r} MCP protocol "
+                    f"era but the target was scanned over the "
+                    f"{self._session.protocol_era.value!r} era — "
+                    f"{ERA_NOT_APPLICABLE_MARKER}. This test is INCONCLUSIVE."
+                ),
+            )
+
         vars_: dict[str, str] = dict(variables or {})
         vars_.setdefault("target_url", self._target_url)
         vars_.setdefault("session_id", "")
@@ -339,6 +360,10 @@ class ProbeContext:
         override_headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Route a probe's method to the appropriate session call."""
+        if method == "tools/call" and "_meta" in payload:
+            # Probe supplies its own _meta (e.g. spoofed identity claims): keep
+            # it — tools_call() would rebuild params from name/arguments only.
+            return await self._session.send_raw(method, payload, override_headers=override_headers)  # noqa: E501
         if method == "tools/call":
             name = str(payload.get("name", ""))
             arguments: dict[str, Any] = payload.get("arguments", {})

@@ -136,6 +136,7 @@ def _parse_probe(
         probe_headers=probe_headers,
         corroboration=corroboration,
         protocol_error_is_expected=bool(raw.get("protocol_error_is_expected", False)),
+        requires_protocol_era=raw.get("requires_protocol_era"),
     )
 
 
