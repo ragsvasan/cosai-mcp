@@ -167,6 +167,7 @@ def build_scorecard(
         conformance_level=conformance,
         public_key="",
         signature="",
+        assurance=getattr(result, "assurance", None),
     )
 
     if not signed:

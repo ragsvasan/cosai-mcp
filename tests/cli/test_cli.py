@@ -608,7 +608,9 @@ class TestScanHelpCollapse:
         for advanced in ("--ir-report", "--emit-to", "--scorecard",
                          "--adversarial", "--probe-timeout", "--auth-token",
                          "--allow-custom-catalog", "--no-adaptive",
-                         "--anomaly-threshold", "--contain-on-anomaly"):
+                         "--anomaly-threshold", "--contain-on-anomaly",
+                         "--assurance-level", "--evidence", "--report-assurance",
+                         "--protocol-era"):
             assert advanced in out, f"{advanced} missing from --help-advanced"
         # Core flags still present in advanced view too.
         for core in _CORE_FLAGS:

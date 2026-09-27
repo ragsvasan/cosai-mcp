@@ -29,19 +29,32 @@ from cosai_mcp.scorecard.models import ComplianceMapping
 
 CATEGORY_COMPLIANCE_MAP: dict[str, ComplianceMapping] = {
     "T1": ComplianceMapping(
-        owasp_mcp_top10="MCP01:2025 Token Mismanagement & Secret Exposure; MCP07:2025 Insufficient Authentication & Authorization",
+        owasp_mcp_top10=(
+            "MCP01:2025 Token Mismanagement & Secret Exposure; "
+            "MCP07:2025 Insufficient Authentication & Authorization"
+        ),
         nist_ai_rmf=("MANAGE 1.1 Risk Response", "GOVERN 6.2 Accountability"),
     ),
     "T2": ComplianceMapping(
-        owasp_mcp_top10="MCP02:2025 Privilege Escalation via Scope Creep; MCP07:2025 Insufficient Authentication & Authorization",
+        owasp_mcp_top10=(
+            "MCP02:2025 Privilege Escalation via Scope Creep; "
+            "MCP07:2025 Insufficient Authentication & Authorization"
+        ),
         nist_ai_rmf=("MANAGE 1.1 Risk Response", "MAP 1.1 System Context"),
     ),
     "T3": ComplianceMapping(
-        owasp_mcp_top10="MCP03:2025 Tool Poisoning; MCP05:2025 Command Injection & Execution; MCP06:2025 Prompt Injection via Contextual Payloads",
+        owasp_mcp_top10=(
+            "MCP03:2025 Tool Poisoning; "
+            "MCP05:2025 Command Injection & Execution; "
+            "MCP06:2025 Prompt Injection via Contextual Payloads"
+        ),
         nist_ai_rmf=("GOVERN 1.2 Accountability", "MEASURE 2.1 Assessment"),
     ),
     "T4": ComplianceMapping(
-        owasp_mcp_top10="MCP03:2025 Tool Poisoning; MCP06:2025 Prompt Injection via Contextual Payloads",
+        owasp_mcp_top10=(
+            "MCP03:2025 Tool Poisoning; "
+            "MCP06:2025 Prompt Injection via Contextual Payloads"
+        ),
         nist_ai_rmf=("GOVERN 1.2", "MAP 1.1 System Context"),
     ),
     "T5": ComplianceMapping(
@@ -49,7 +62,10 @@ CATEGORY_COMPLIANCE_MAP: dict[str, ComplianceMapping] = {
         nist_ai_rmf=("MAP 1.1", "MEASURE 2.6 Data Quality"),
     ),
     "T6": ComplianceMapping(
-        owasp_mcp_top10="MCP03:2025 Tool Poisoning; MCP04:2025 Software Supply Chain Attacks & Dependency Tampering",
+        owasp_mcp_top10=(
+            "MCP03:2025 Tool Poisoning; "
+            "MCP04:2025 Software Supply Chain Attacks & Dependency Tampering"
+        ),
         nist_ai_rmf=("MAP 4.1 Third-party Risks", "MANAGE 2.2"),
     ),
     "T7": ComplianceMapping(

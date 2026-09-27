@@ -10,12 +10,20 @@ import socket
 import time
 import types
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from cosai_mcp.adversarial import AdversarialMode
+from cosai_mcp.assurance import (
+    AssuranceReport,
+    EvidenceItem,
+    LevelResult,
+    evaluate_assurance,
+    load_evidence,
+)
 from cosai_mcp.catalog.loader import CatalogLoader
 from cosai_mcp.catalog.models import Severity, ThreatDefinition
 from cosai_mcp.config import ScanConfig
@@ -367,6 +375,9 @@ class ScanResult:
     scan_timestamp: str
     catalog_hash: str
     exit_code: int
+    # CoSAI v2.0 Security Assurance Profile verdict when --assurance-level was
+    # requested; None otherwise (additive, backward compatible).
+    assurance: AssuranceReport | None = None
 
     @property
     def has_findings(self) -> bool:
@@ -519,6 +530,8 @@ def _run_scan(
     tool_allowlist: tuple[str, ...] | None = None,
     expected_catalog_hash: str | None = None,
     protocol_era: str = "auto",
+    assurance_level: int | None = None,
+    evidence_dir: Path | None = None,
 ) -> ScanResult:
     """Orchestrate a complete scan and return a ``ScanResult``.
 
@@ -534,6 +547,43 @@ def _run_scan(
     """
     host, port, target_url = _parse_target(target)
     scan_timestamp = datetime.datetime.now(datetime.UTC).isoformat()
+    # Normalise once: every engine branch below compares the lowercase value.
+    engine = engine.lower()
+
+    # CoSAI v2.0 assurance: validate the level and load operator evidence
+    # BEFORE any probe runs — a bad manifest fails closed (ValueError → exit 2)
+    # without spending a round-trip against the target.
+    evidence_items: Mapping[str, EvidenceItem] = {}
+    if evidence_dir is not None and assurance_level is None:
+        raise ValueError("--evidence requires --assurance-level")
+    if assurance_level is not None:
+        if assurance_level not in (1, 2, 3, 4):
+            raise ValueError(f"--assurance-level must be 1–4, got {assurance_level!r}")
+        # A level claim must come from a FULL scan: filtering categories,
+        # engines, or profile-skipped categories removes exactly the tests that
+        # could disprove an attested control (adversary P1b EXPLOIT 2).
+        if categories:
+            raise ValueError("--assurance-level requires a full scan: remove --categories")
+        if engine != "all":
+            raise ValueError("--assurance-level requires --engine all")
+        if allow_custom_catalog:
+            raise ValueError(
+                "--assurance-level cannot be combined with --allow-custom-catalog: "
+                "untrusted custom probes must never count as proof of a control"
+            )
+        if profile is not None and profile.skip_categories:
+            raise ValueError(
+                f"--assurance-level cannot be combined with profile {profile.name!r}, "
+                f"which skips {sorted(profile.skip_categories)}"
+            )
+        if evidence_dir is not None:
+            manifest = load_evidence(evidence_dir)
+            if _parse_target(manifest.target)[2] != target_url:
+                raise ValueError(
+                    "evidence.json 'target' does not match the scanned target — "
+                    "evidence prepared for one deployment cannot attest another"
+                )
+            evidence_items = manifest.items
 
     # NOTE: _apply_env_scrub() is intentionally NOT called here (FIX [2]).
     # CLI callers call it once at process start; library callers must not mutate os.environ.
@@ -808,6 +858,37 @@ def _run_scan(
         baseline = Baseline.load(baseline_path)
         probe_results = apply_baseline(probe_results, baseline)
 
+    exit_code = _determine_exit_code(
+        probe_results, scenario_results, fail_on, threat_severity
+    )
+    assurance: AssuranceReport | None = None
+    if assurance_level is not None:
+        assurance = evaluate_assurance(
+            assurance_level, probe_results, scenario_results, evidence_items,
+            scope={
+                "scan_id": scan_id,
+                "target_url": target_url,
+                "engine": engine,
+                "categories": None,
+                "profile": profile.name if profile else None,
+                "protocol_era": protocol_era,
+                "auth_token_supplied": auth_token is not None,
+                "read_token_supplied": read_token is not None,
+                "adaptive": adaptive,
+                "stateful_method_overrides": sorted(stateful_method_overrides or {}),
+                "tool_allowlist_supplied": tool_allowlist is not None,
+                "baseline_applied": baseline_path is not None,
+                "evidence_controls": sorted(evidence_items),
+            },
+        )
+        # Fail-closed gate (Mnemo dec_8575e56c7c): a claimed level that is not
+        # MET — NOT_MET or INDETERMINATE — fails the scan. Never downgrades an
+        # internal-error exit (2) to 1.
+        if assurance.result not in (
+            LevelResult.MET, LevelResult.MET_WITH_ATTESTATION
+        ) and exit_code == 0:
+            exit_code = 1
+
     return ScanResult(
         target_url=target_url,
         threats=tuple(threats),
@@ -815,9 +896,8 @@ def _run_scan(
         scenario_results=tuple(scenario_results),
         scan_timestamp=scan_timestamp,
         catalog_hash=catalog_hash_,
-        exit_code=_determine_exit_code(
-            probe_results, scenario_results, fail_on, threat_severity
-        ),
+        exit_code=exit_code,
+        assurance=assurance,
     )
 
 
@@ -1372,6 +1452,8 @@ class Scanner:
         stateful_method_overrides: dict[str, str] | None = None,
         expected_catalog_hash: str | None = None,
         protocol_era: str = "auto",
+        assurance_level: int | None = None,
+        evidence_dir: Path | None = None,
     ) -> None:
         # Accept either a full target URL string (original form) or a ScanConfig
         # (documented public form).  When a ScanConfig is passed, its fields
@@ -1399,6 +1481,8 @@ class Scanner:
             self.tool_allowlist = cfg.tool_allowlist
             self.expected_catalog_hash = expected_catalog_hash
             self.protocol_era = cfg.protocol_era
+            self.assurance_level = assurance_level
+            self.evidence_dir = evidence_dir
             return
 
         self.target = target
@@ -1421,6 +1505,8 @@ class Scanner:
         self.tool_allowlist = None
         self.expected_catalog_hash = expected_catalog_hash
         self.protocol_era = protocol_era
+        self.assurance_level = assurance_level
+        self.evidence_dir = evidence_dir
 
     def run(self, categories: list[str] | None = None) -> ScanResult:
         """Run a complete scan and return a :class:`ScanResult`.
@@ -1455,6 +1541,8 @@ class Scanner:
                 tool_allowlist=self.tool_allowlist,
                 expected_catalog_hash=self.expected_catalog_hash,
                 protocol_era=self.protocol_era,
+                assurance_level=self.assurance_level,
+                evidence_dir=self.evidence_dir,
             )
         except (ValueError, TargetUnreachableError):
             raise  # let typed exceptions propagate as-is

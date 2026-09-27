@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from cosai_mcp.assurance.models import AssuranceReport
+
 
 class Grade(StrEnum):
     PASS = "pass"  # noqa: S105
@@ -145,6 +147,10 @@ class Scorecard:
     # Signing fields (empty string if unsigned)
     public_key: str   # hex-encoded Ed25519 public key
     signature: str    # hex-encoded Ed25519 signature
+    # CoSAI v2.0 assurance-level verdict (--assurance-level). Omitted from the
+    # serialised/signed payload when None so scorecards written before this
+    # field existed keep verifying byte-for-byte.
+    assurance: AssuranceReport | None = None
 
     @property
     def is_signed(self) -> bool:
@@ -161,6 +167,7 @@ class Scorecard:
             "conformance_level": self.conformance_level.value,
             "public_key": self.public_key,
             "signature": self.signature,
+            **({"assurance": self.assurance.to_dict()} if self.assurance else {}),
         }
 
     @classmethod
@@ -175,4 +182,7 @@ class Scorecard:
             conformance_level=ConformanceLevel(d["conformance_level"]),
             public_key=str(d.get("public_key", "")),
             signature=str(d.get("signature", "")),
+            assurance=(
+                AssuranceReport.from_dict(d["assurance"]) if d.get("assurance") else None
+            ),
         )

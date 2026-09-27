@@ -352,6 +352,21 @@ def main() -> None:
               help="MCP protocol era to speak. 'auto' probes the 2026-07-28 stateless "
                    "server/discover first and falls back to the legacy initialize "
                    "handshake; 'modern' / 'legacy' pin one era.")
+@click.option("--assurance-level", "assurance_level", type=click.IntRange(1, 4),
+              default=None, hidden=True,
+              help="Verify the target against a CoSAI MCP Security v2.0 Security "
+                   "Assurance Profile level (1 Sandbox, 2 Internal, 3 Production, "
+                   "4 Regulated). Exit 1 unless every MUST control is verified "
+                   "(PASS) or attested (--evidence).")
+@click.option("--evidence", "evidence_dir",
+              type=click.Path(exists=True, file_okay=False, dir_okay=True),
+              default=None, hidden=True,
+              help="Directory containing evidence.json mapping control IDs to "
+                   "artifacts for organisational controls (hashed into the "
+                   "scorecard as ATTESTED). Requires --assurance-level.")
+@click.option("--report-assurance", "report_assurance", type=click.Path(), default=None,
+              hidden=True,
+              help="Write the per-control assurance verdicts as JSON.")
 def scan(
     target: str | None,
     targets_path: str | None,
@@ -399,6 +414,9 @@ def scan(
     tool_allowlist: str | None,
     expected_catalog_hash: str | None,
     protocol_era: str,
+    assurance_level: int | None,
+    evidence_dir: str | None,
+    report_assurance: str | None,
 ) -> None:
     """Scan a target MCP server for CoSAI threat categories T1–T12.
 
@@ -502,6 +520,10 @@ def scan(
                 # Fleet targets are era-detected individually; a single pinned
                 # era would silently be ignored (defense FIX 1).
                 ("--protocol-era", protocol_era != "auto"),
+                # A level is a claim about ONE deployment (v2.0 §3.3.4).
+                ("--assurance-level", assurance_level is not None),
+                ("--evidence", bool(evidence_dir)),
+                ("--report-assurance", bool(report_assurance)),
             ) if used
         ]
         if _fleet_unsupported:
@@ -625,6 +647,8 @@ def scan(
             tool_allowlist=_parse_tool_allowlist(tool_allowlist),
             expected_catalog_hash=expected_catalog_hash,
             protocol_era=protocol_era,
+            assurance_level=assurance_level,
+            evidence_dir=Path(evidence_dir) if evidence_dir else None,
         )
     except ValueError as exc:
         # Includes adversarial dual opt-in failures, a malformed
@@ -641,6 +665,11 @@ def scan(
 
     # -- Emit summary --
     _print_scan_summary(result, fail_on=fail_on)
+    if result.assurance is not None:
+        _print_assurance_summary(result.assurance)
+    elif report_assurance:
+        click.echo("[ERROR] --report-assurance requires --assurance-level", err=True)
+        sys.exit(2)
 
     # -- SIEM/SOAR telemetry emission (Track B — experimental, WP3) --
     if emit_to and experimental:
@@ -723,6 +752,7 @@ def scan(
             click.echo(f"[IR] Containment error (scan result unchanged): {type(exc).__name__}", err=True)  # noqa: E501
 
     # -- Scorecard (exits 2 on write failure — explicitly configured path must succeed) --
+    scorecard = None
     if scorecard_path:
         try:
             from cosai_mcp.scorecard.builder import build_scorecard
@@ -757,6 +787,31 @@ def scan(
                 click.echo(f"Sigstore bundle: {sigstore_bundle_path}")
         except Exception as exc:  # noqa: BLE001
             click.echo(f"[ERROR] Failed to write scorecard: {exc}", err=True)
+            sys.exit(2)
+
+    # -- Assurance report: written AFTER the scorecard so it can be bound to it.
+    #    It is an UNSIGNED convenience copy; the signed scorecard's assurance
+    #    block is authoritative (adversary P1b EXPLOIT 7). --
+    if report_assurance and result.assurance is not None:
+        try:
+            doc = {
+                "unsigned_copy": True,
+                "authoritative_source": (
+                    "the 'assurance' block of the signed scorecard"
+                    + (f" {scorecard_path}" if scorecard_path else " (--scorecard not given)")
+                ),
+                "scorecard_signature": scorecard.signature if scorecard else None,
+                "target_url": result.target_url,
+                "scan_timestamp": result.scan_timestamp,
+                "catalog_hash": result.catalog_hash,
+                "assurance": result.assurance.to_dict(),
+            }
+            Path(report_assurance).write_text(
+                __import__("json").dumps(doc, indent=2), encoding="utf-8"
+            )
+            click.echo(f"Assurance report (unsigned copy) written to {report_assurance}")
+        except Exception as exc:  # noqa: BLE001
+            click.echo(f"[ERROR] Failed to write assurance report: {exc}", err=True)
             sys.exit(2)
 
     sys.exit(result.exit_code)
@@ -936,15 +991,12 @@ def scorecard_verify(
         2  File/bundle cannot be read, not a valid scorecard, or
            --sigstore-bundle given without --trusted-identity.
     """
-    import json as _json
 
-    from cosai_mcp.scorecard.models import Scorecard
     from cosai_mcp.scorecard.signing import ScorecardVerificationError, verify_scorecard
 
     try:
-        raw = _json.loads(Path(scorecard_file).read_text(encoding="utf-8"))
-        sc = Scorecard.from_dict(raw)
-    except (KeyError, ValueError, OSError) as exc:
+        sc = _load_scorecard_strict(Path(scorecard_file))
+    except (KeyError, ValueError, OSError, TypeError, AttributeError) as exc:
         click.echo(f"[ERROR] Cannot read scorecard: {exc}", err=True)
         sys.exit(2)
 
@@ -965,6 +1017,8 @@ def scorecard_verify(
     )
 
     click.echo(f"[OK] Scorecard signature valid — conformance: {sc.conformance_level.value}")
+    if sc.assurance is not None:
+        _print_assurance_claim(sc.assurance, verified=True)
     _print_compliance_mapping(sc)
 
 
@@ -995,15 +1049,13 @@ def scorecard_show(
         2  Invalid/unreadable scorecard or bundle file, or --sigstore-bundle
            given without --trusted-identity.
     """
-    import json as _json
 
-    from cosai_mcp.scorecard.models import Grade, Scorecard
+    from cosai_mcp.scorecard.models import Grade
     from cosai_mcp.scorecard.signing import ScorecardVerificationError, verify_scorecard
 
     try:
-        raw = _json.loads(Path(scorecard_file).read_text(encoding="utf-8"))
-        sc = Scorecard.from_dict(raw)
-    except (KeyError, ValueError, OSError) as exc:
+        sc = _load_scorecard_strict(Path(scorecard_file))
+    except (KeyError, ValueError, OSError, TypeError, AttributeError) as exc:
         click.echo(f"[ERROR] Cannot read scorecard: {exc}", err=True)
         sys.exit(2)
 
@@ -1031,6 +1083,8 @@ def scorecard_show(
     click.echo(f"  Timestamp  : {sc.scan_timestamp}")
     click.echo(f"  Conformance: {sc.conformance_level.value}")
     click.echo(f"  Signed     : {'yes — ' + sc.public_key[:16] + '…' if sc.is_signed else 'no'}")
+    if sc.assurance is not None:
+        _print_assurance_claim(sc.assurance, verified=bool(do_verify))
     click.echo(f"\n  {'Category':<6} {'Grade':<6} {'Findings':<10} {'Critical':<10} Engine")
     click.echo("  " + "-" * 60)
     for cat in sc.categories:
@@ -1746,6 +1800,85 @@ def _print_scan_summary(result: ScanResult, fail_on: str = "critical") -> None:
 # Manifest-scan stubs — metadata for T04/T09 passive findings that have no
 # catalog entry (catalog requires signing; manifest scans are code-driven).
 # ---------------------------------------------------------------------------
+
+def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    keys = [k for k, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise ValueError("duplicate JSON key in scorecard (ambiguous across parsers)")
+    return dict(pairs)
+
+
+def _raw_matches_canonical(raw: Any, canonical: Any, path: str = "") -> None:
+    """Every field present in the file must equal the canonical (signed) form.
+
+    Unknown keys, tampered derived fields (e.g. assurance.must_counts), or any
+    value the signature does not actually cover are rejected. Keys the file
+    omits (older scorecards) are tolerated — defaults are what got signed.
+    """
+    if isinstance(raw, dict) and isinstance(canonical, dict):
+        for key, value in raw.items():
+            if key not in canonical:
+                raise ValueError(f"unknown scorecard field {path + key!r}")
+            _raw_matches_canonical(value, canonical[key], f"{path}{key}.")
+    elif isinstance(raw, list) and isinstance(canonical, list):
+        if len(raw) != len(canonical):
+            raise ValueError(f"scorecard field {path.rstrip('.')!r} is not canonical")
+        for i, (r, c) in enumerate(zip(raw, canonical, strict=True)):
+            _raw_matches_canonical(r, c, f"{path}{i}.")
+    elif raw != canonical or type(raw) is not type(canonical):
+        raise ValueError(f"scorecard field {path.rstrip('.')!r} is not canonical "
+                         "(not covered by the signature as written)")
+
+
+def _load_scorecard_strict(path: Path) -> Any:
+    """Parse a scorecard file for verify/show: no duplicate keys, and the file
+    must be exactly what the signature covers (adversary P1b EXPLOIT 6)."""
+    import json as _json
+
+    from cosai_mcp.scorecard.models import Scorecard
+
+    raw = _json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_no_duplicate_keys)
+    if not isinstance(raw, dict):
+        raise ValueError("scorecard must be a JSON object")
+    sc = Scorecard.from_dict(raw)
+    _raw_matches_canonical(raw, sc.to_dict())
+    return sc
+
+
+def _print_assurance_claim(report: Any, *, verified: bool) -> None:
+    import re as _re
+
+    counts = report.to_dict()["must_counts"]
+    profile = _re.sub(r"[\x00-\x1f\x7f]", "", str(report.profile_version))[:80]
+    label = "" if verified else " (signature NOT verified — use --verify)"
+    click.echo(
+        f"  CoSAI assurance: Level {report.claimed_level} → {report.result.value} "
+        f"({profile}; MUST pass {counts['pass']}, attested "
+        f"{counts['attested']}, fail {counts['fail']}, unverified "
+        f"{counts['unverified']}){label}"
+    )
+
+
+def _print_assurance_summary(report: Any) -> None:
+    """Console summary of a CoSAI v2.0 assurance-level verdict (MUST controls)."""
+    from cosai_mcp.assurance import Strength, Verdict
+
+    click.echo("")
+    click.echo(
+        f"CoSAI assurance Level {report.claimed_level} ({report.profile_version}): "
+        f"{report.result.value.upper()}"
+    )
+    musts = [c for c in report.controls if c.strength is Strength.MUST]
+    counts = {v: sum(1 for c in musts if c.verdict is v) for v in Verdict}
+    click.echo(
+        f"  MUST controls: {len(musts)} — pass {counts[Verdict.PASS]}, "
+        f"attested {counts[Verdict.ATTESTED]}, fail {counts[Verdict.FAIL]}, "
+        f"unverified {counts[Verdict.UNVERIFIED]}"
+    )
+    for c in musts:
+        if c.verdict in (Verdict.FAIL, Verdict.UNVERIFIED):
+            click.echo(f"  [{c.verdict.value.upper():10}] {c.control_id} {c.title}: {c.reason}")
+
 
 def _make_manifest_stubs() -> tuple[dict, dict]:
     """Build (sarif_stubs, html_stubs) for passive manifest-scan findings.

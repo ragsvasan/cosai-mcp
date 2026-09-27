@@ -92,6 +92,28 @@ Middleware counterparts (P2, §8) supply T4/T9/T12 detection per the three-engin
 
 ## 5. P1 — Assurance-level verifier (`--assurance-level N`)
 
+**P1b — shipped.** `cosai scan TARGET --assurance-level {1..4} [--evidence DIR] [--report-assurance out.json] [--scorecard sc.json]` (advanced flags).
+
+- **Controls:** 47 rows across all 8 v2.0 dimensions in `cosai_mcp/assurance/controls.py`. They are frozen in-package data, not a signed JSON catalog (Mnemo `dec_64a81342b1`). `probe_threats` link catalog probes, passive scans, and stateful scenarios that can **disprove** a control. `verify_with` lists the positive-signal probes, those asserting a specific rejection code or status, that can **prove** it up to `blackbox_max_level`. Negative assertions ("did not leak X"), reachability checks, and generic `error == true` checks never prove a control. Today only TN-04 (request-metadata validation: T07-004/005, up to L3) is provable black-box.
+- **Verdicts** (Mnemo `dec_8575e56c7c`), in precedence order:
+  1. FAIL: any linked conclusive finding, including baseline-suppressed ones.
+  2. UNVERIFIED: a linked test did not run or produced no conclusive result; evidence cannot override this.
+  3. ATTESTED: operator evidence was supplied.
+  4. PASS: every result of every `verify_with` probe passed conclusively.
+  5. UNVERIFIED otherwise.
+- **Level results:** NOT_MET, INDETERMINATE, MET (every MUST is PASS) or MET_WITH_ATTESTATION (≥1 MUST is ATTESTED). Both MET forms exit 0; anything else exits 1. Exit 2 is never downgraded.
+- **Scope:** a level claim requires a full scan. `--categories`, `--engine` other than `all`, a profile with `skip_categories`, and `--allow-custom-catalog` are all rejected. The effective scope is signed inside the block: engine, profile, protocol era, token presence, adaptive mode, method overrides, baseline, and attested control IDs.
+- **Evidence intake:** `DIR/evidence.json` (`schema_version` 1.0, required `target` matching the scanned URL, `controls: {ID: {artifact, note}}`).
+  - Strict keys, and only known control IDs.
+  - Artifacts must be non-empty regular files inside DIR, with no symlinked component; sizes are capped and each SHA-256 is recorded.
+  - Display strings are stripped of control characters and HTML-escaped.
+  - Any violation exits 2 before a probe is sent.
+- **Scorecard:** the additive `assurance` block is signed. It is omitted when absent, so older scorecards still verify. `scorecard verify` and `scorecard show` reject duplicate JSON keys and any field that differs from the canonical signed form, and they print the claim. `show` labels an unverified claim as such.
+- **Assurance report:** `--report-assurance` is written after the scorecard, as an explicitly unsigned copy bound to the scorecard's signature.
+- **Not yet built:** an HTML report section; the evidence-per-level annex (artefact names per control) for upstream; positive-signal verifier probes for more controls (for example a dedicated 413/-32600 size-limit probe for TN-05).
+
+Original design notes (superseded where they differ):
+
 **Goal:** answer the v2.0 §3.3.5 call — *"automated checks … that validate whether a deployment meets a claimed level"* — with a signed, per-control verdict.
 
 - **Control catalog** (`catalog/assurance/`, signed like the threat catalog): one entry per matrix row × level. Fields: `control_id` (e.g. `AUTH-TOKEN-BINDING`), `dimension` (8), `level`, `strength` (MUST/SHOULD), `mcp_t` refs, `owasp` refs, `verification` ∈ {`probe`, `stateful`, `middleware`, `evidence`}, linked probe IDs.

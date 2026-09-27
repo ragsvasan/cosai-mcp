@@ -11,6 +11,7 @@ Trust anchor:
 from __future__ import annotations
 
 import base64
+import dataclasses
 import json
 import os
 from typing import Any
@@ -121,17 +122,10 @@ def sign_scorecard(scorecard: Scorecard) -> Scorecard:
     payload = _canonical_bytes(_signable_dict(scorecard))
     sig = priv.sign(payload)
 
-    return Scorecard(
-        scan_id=scorecard.scan_id,
-        target_url=scorecard.target_url,
-        scan_timestamp=scorecard.scan_timestamp,
-        catalog_hash=scorecard.catalog_hash,
-        tool_version=scorecard.tool_version,
-        categories=scorecard.categories,
-        conformance_level=scorecard.conformance_level,
-        public_key=pub_bytes.hex(),
-        signature=sig.hex(),
-    )
+    # dataclasses.replace carries every other field (incl. the additive
+    # `assurance` block) into the signed instance — a field-by-field rebuild
+    # would silently drop new fields while the signature still covered them.
+    return dataclasses.replace(scorecard, public_key=pub_bytes.hex(), signature=sig.hex())
 
 
 def verify_scorecard(scorecard: Scorecard) -> None:
