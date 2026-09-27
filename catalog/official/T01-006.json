@@ -4,7 +4,7 @@
   "category": "T1",
   "severity": "high",
   "cosai_ref": "T1",
-  "owasp_ref": "MCP-Top10-A01",
+  "owasp_ref": "MCP01:2025; MCP07:2025",
   "cwe": ["CWE-287", "CWE-345", "CWE-347"],
   "confidence": "medium",
   "probes": [

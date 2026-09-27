@@ -4,7 +4,7 @@
   "category": "T2",
   "severity": "critical",
   "cosai_ref": "T2",
-  "owasp_ref": "MCP-Top10-A02",
+  "owasp_ref": "MCP02:2025; MCP07:2025",
   "cwe": [
     "CWE-862",
     "CWE-285"

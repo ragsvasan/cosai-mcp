@@ -4,7 +4,7 @@
   "category": "T8",
   "severity": "high",
   "cosai_ref": "T8",
-  "owasp_ref": "MCP-Top10-A08",
+  "owasp_ref": "MCP09:2025",
   "cwe": [
     "CWE-918"
   ],

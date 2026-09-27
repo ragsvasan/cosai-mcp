@@ -21,7 +21,7 @@ Each file declares the threat ID, CoSAI/OWASP/CWE references, severity, and a li
   "category": "T4",
   "severity": "critical",
   "cosai_ref": "T4",
-  "owasp_ref": "MCP-Top10-A04",
+  "owasp_ref": "MCP03:2025; MCP06:2025",
   "cwe": ["CWE-74"],
   "probes": [
     {

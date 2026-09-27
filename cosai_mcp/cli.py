@@ -1771,7 +1771,7 @@ def _make_manifest_stubs() -> tuple[dict, dict]:
                 "depth and subschema count. Ref: CoSAI MCP Security v2.0 §3.2.3, "
                 "MCP 2026-07-28 JSON Schema usage, CWE-20."
             ),
-            "owasp_ref": "MCP-Top10-A03",
+            "owasp_ref": "MCP03:2025; MCP05:2025; MCP06:2025",
             "cwe": ("CWE-20", "CWE-918"),
         },
         "T05": {
@@ -1784,7 +1784,7 @@ def _make_manifest_stubs() -> tuple[dict, dict]:
                 "inject secrets via environment/secrets-manager at runtime, never "
                 "in tool definitions. Ref: CoSAI T5, CWE-312."
             ),
-            "owasp_ref": "MCP-Top10-A05",
+            "owasp_ref": "MCP10:2025",
             "cwe": ("CWE-312", "CWE-200"),
         },
         "T06": {
@@ -1796,7 +1796,7 @@ def _make_manifest_stubs() -> tuple[dict, dict]:
                 "typosquat (Levenshtein 1 of) a reserved MCP method or another "
                 "tool. Enforce a unique, signed tool allowlist. Ref: CoSAI T6, CWE-345."
             ),
-            "owasp_ref": "MCP-Top10-A06",
+            "owasp_ref": "MCP03:2025; MCP04:2025",
             "cwe": ("CWE-345",),
         },
         "T09": {
@@ -1810,7 +1810,7 @@ def _make_manifest_stubs() -> tuple[dict, dict]:
                 "a `<tool>_preview` sibling tool. No irreversible action should "
                 "execute without explicit confirmation. Ref: TKA Totem layer, CoSAI T9."
             ),
-            "owasp_ref": "MCP-Top10-A09",
+            "owasp_ref": "MCP02:2025",
             "cwe": ("CWE-284",),
         },
         "T04": {
@@ -1823,7 +1823,7 @@ def _make_manifest_stubs() -> tuple[dict, dict]:
                 "functional descriptions that describe what the tool does, not what "
                 "the LLM should do. Ref: CoSAI T4, MCP tool poisoning."
             ),
-            "owasp_ref": "MCP-Top10-A04",
+            "owasp_ref": "MCP03:2025; MCP06:2025",
             "cwe": ("CWE-74",),
         },
         "T11": {
@@ -1836,7 +1836,7 @@ def _make_manifest_stubs() -> tuple[dict, dict]:
                 "approved and signed, or remove it from the server. Maintain an "
                 "explicit approved-tool allowlist. Ref: CoSAI T11, CWE-1357."
             ),
-            "owasp_ref": "MCP-Top10-A11",
+            "owasp_ref": "MCP04:2025",
             "cwe": ("CWE-1357", "CWE-494"),
         },
     }

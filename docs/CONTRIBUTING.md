@@ -27,7 +27,7 @@ Create `catalog/official/<category>-<sequence>.json`. Example structure:
   "description": "Unicode-encoded path separators (%2e%2e%2f) may bypass naive string validation before normalization, allowing path traversal in file tools.",
   "severity": "high",
   "cosai_ref": "T3",
-  "owasp_ref": "MCP-Top10-A03",
+  "owasp_ref": "MCP03:2025; MCP05:2025; MCP06:2025",
   "cwe": ["CWE-22"],
   "probes": [
     {
@@ -84,7 +84,7 @@ Create `catalog/official/<category>-<sequence>.json`. Example structure:
 | `description` | string | ✓ | What the vulnerability is; ≤500 chars |
 | `severity` | enum | ✓ | `critical`, `high`, `medium`, `low`, `info` |
 | `cosai_ref` | string | ✓ | `T1` through `T12` |
-| `owasp_ref` | string | | `MCP-Top10-A01` etc. |
+| `owasp_ref` | string | | OWASP MCP Top 10 (2025) IDs for the category, `; `-separated, per CoSAI MCP Security v2.0 §3.3.3 (e.g. `MCP01:2025; MCP07:2025`). Empty for T10. |
 | `cwe` | array of string | | CWE identifiers |
 | `probes` | array | ✓ | At least one probe |
 | `engine` | enum | ✓ | `black-box-prober`, `stateful-harness`, `middleware` |

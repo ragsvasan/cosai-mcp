@@ -4,7 +4,7 @@
   "category": "T6",
   "severity": "high",
   "cosai_ref": "T6",
-  "owasp_ref": "MCP-Top10-A06",
+  "owasp_ref": "MCP03:2025; MCP04:2025",
   "cwe": ["CWE-829", "CWE-693"],
   "probes": [
     {

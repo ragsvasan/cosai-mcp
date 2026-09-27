@@ -10,18 +10,18 @@ Use this table for compliance evidence, vendor questionnaires, and procurement a
 
 | CoSAI | Category Name | NIST AI RMF (2026) | NIST AG-MP.1 Tool Class | OWASP MCP Top 10 | CWE | CoSAI Risk Map |
 |-------|--------------|-------------------|------------------------|-----------------|-----|---------------|
-| **T1** | Improper Authentication | MANAGE 1.1 Risk Response, GOVERN 6.2 Accountability | All classes (identity gate) | A01: Broken Authentication | CWE-287, CWE-306, CWE-384 | Critical: Contextualized |
-| **T2** | Missing Access Control | MANAGE 1.1 Risk Response, MAP 1.1 System Context | Execute-class (HITL required) | A02: Broken Access Control | CWE-285, CWE-732, CWE-269 | Critical: Contextualized |
-| **T3** | Input Validation Failures | GOVERN 1.2 Accountability, MEASURE 2.1 Assessment | Write + Execute classes | A03: Injection Attacks | CWE-78, CWE-22, CWE-89, CWE-943 | High: Traditional Amplified |
-| **T4** | Data/Control Boundary | GOVERN 1.2, MAP 1.1 System Context | All classes (data ingestion) | A04: Prompt Injection | CWE-74, CWE-77, CWE-116 | High: Novel Vector |
-| **T5** | Inadequate Data Protection | MAP 1.1, MEASURE 2.6 Data Quality | Read + Write classes | A05: Sensitive Data Exposure | CWE-200, CWE-312, CWE-311 | High: Traditional Amplified |
-| **T6** | Integrity/Verification | MAP 4.1 Third-party Risks, MANAGE 2.2 | All classes (manifest trust) | A06: Security Misconfiguration / Integrity | CWE-345, CWE-494, CWE-1357 | Critical: Supply Chain |
-| **T7** | Session Security Failures | MAP 1.1 System Context, MANAGE 1.1 | All classes (session binding) | A07: Identification and Authentication Failures | CWE-384, CWE-287, CWE-295 | Medium: Protocol Gap |
-| **T8** | Network Binding Failures | MEASURE 2.1 Security Assessment | Read class (network reach) | A08: Software and Data Integrity; A10: Server-Side Request Forgery | CWE-668, CWE-441, CWE-918 | High: Traditional Amplified |
-| **T9** | Trust Boundary Failures | GOVERN 1.2, MAP 1.1 | Execute-class (HITL gate) | Not independently mapped (see NIST AI RMF) | CWE-602, CWE-807 | High: Novel Vector |
-| **T10** | Resource Management | MEASURE 2.1, MANAGE 2.4 | Execute-class (cost amplification) | Not independently mapped (see NIST AI RMF) | CWE-400, CWE-770, CWE-834 | High: Traditional Amplified |
-| **T11** | Supply Chain/Lifecycle | MAP 4.1 Third-party Risks | All classes (installation time) | A11: Supply Chain | CWE-494, CWE-1357, CWE-693 | Critical: Supply Chain |
-| **T12** | Insufficient Logging | MEASURE 1.1 Performance Monitoring | Execute-class (accountability) | A09: Security Logging and Monitoring; A12: Insufficient Logging | CWE-778, CWE-223, CWE-532 | High: Visibility Gap |
+| **T1** | Improper Authentication | MANAGE 1.1 Risk Response, GOVERN 6.2 Accountability | All classes (identity gate) | MCP01:2025 Token Mismanagement & Secret Exposure; MCP07:2025 Insufficient Authentication & Authorization | CWE-287, CWE-306, CWE-384 | Critical: Contextualized |
+| **T2** | Missing Access Control | MANAGE 1.1 Risk Response, MAP 1.1 System Context | Execute-class (HITL required) | MCP02:2025 Privilege Escalation via Scope Creep; MCP07:2025 Insufficient Authentication & Authorization | CWE-285, CWE-732, CWE-269 | Critical: Contextualized |
+| **T3** | Input Validation Failures | GOVERN 1.2 Accountability, MEASURE 2.1 Assessment | Write + Execute classes | MCP03:2025 Tool Poisoning; MCP05:2025 Command Injection & Execution; MCP06:2025 Prompt Injection via Contextual Payloads | CWE-78, CWE-22, CWE-89, CWE-943 | High: Traditional Amplified |
+| **T4** | Data/Control Boundary | GOVERN 1.2, MAP 1.1 System Context | All classes (data ingestion) | MCP03:2025 Tool Poisoning; MCP06:2025 Prompt Injection via Contextual Payloads | CWE-74, CWE-77, CWE-116 | High: Novel Vector |
+| **T5** | Inadequate Data Protection | MAP 1.1, MEASURE 2.6 Data Quality | Read + Write classes | MCP10:2025 Context Injection & Over-Sharing | CWE-200, CWE-312, CWE-311 | High: Traditional Amplified |
+| **T6** | Integrity/Verification | MAP 4.1 Third-party Risks, MANAGE 2.2 | All classes (manifest trust) | MCP03:2025 Tool Poisoning; MCP04:2025 Software Supply Chain Attacks & Dependency Tampering | CWE-345, CWE-494, CWE-1357 | Critical: Supply Chain |
+| **T7** | Session Security Failures | MAP 1.1 System Context, MANAGE 1.1 | All classes (session binding) | MCP01:2025 Token Mismanagement & Secret Exposure | CWE-384, CWE-287, CWE-295 | Medium: Protocol Gap |
+| **T8** | Network Binding Failures | MEASURE 2.1 Security Assessment | Read class (network reach) | MCP09:2025 Shadow MCP Servers | CWE-668, CWE-441, CWE-918 | High: Traditional Amplified |
+| **T9** | Trust Boundary Failures | GOVERN 1.2, MAP 1.1 | Execute-class (HITL gate) | MCP02:2025 Privilege Escalation via Scope Creep | CWE-602, CWE-807 | High: Novel Vector |
+| **T10** | Resource Management | MEASURE 2.1, MANAGE 2.4 | Execute-class (cost amplification) | Not mapped in OWASP MCP Top 10 (CoSAI MCP Security v2.0 §3.3.3) | CWE-400, CWE-770, CWE-834 | High: Traditional Amplified |
+| **T11** | Supply Chain/Lifecycle | MAP 4.1 Third-party Risks | All classes (installation time) | MCP04:2025 Software Supply Chain Attacks & Dependency Tampering | CWE-494, CWE-1357, CWE-693 | Critical: Supply Chain |
+| **T12** | Insufficient Logging | MEASURE 1.1 Performance Monitoring | Execute-class (accountability) | MCP08:2025 Lack of Audit and Telemetry | CWE-778, CWE-223, CWE-532 | High: Visibility Gap |
 
 ---
 
@@ -67,22 +67,20 @@ T11 probes specifically address third-party MCP server risk: typosquatting detec
 
 ## OWASP MCP Top 10 Alignment
 
-cosai-mcp probes provide runnable test coverage for each OWASP MCP Top 10 item:
+Official OWASP MCP Top 10 (2025) identifiers, mapped to CoSAI categories per CoSAI MCP Security v2.0 §3.3.3 (Threat Coverage Summary). T10 has no OWASP MCP counterpart in that table.
 
-| OWASP MCP | Title | cosai-mcp coverage | Engine |
-|-----------|-------|-------------------|--------|
-| A01 | Broken Authentication | T1 probe suite | Black-box |
-| A02 | Broken Access Control | T2 probe suite + stateful harness | Stateful |
-| A03 | Injection Attacks | T3 probe suite | Black-box |
-| A04 | Prompt Injection | T4 middleware | Middleware |
-| A05 | Sensitive Data Exposure | T5 middleware | Middleware |
-| A06 | Security Misconfiguration / Integrity | T6 probe suite + stateful harness | Both |
-| A07 | Identification and Authentication Failures | T7 stateful harness | Stateful |
-| A08 | Software and Data Integrity | T8 probe suite | Black-box |
-| A09 | Security Logging and Monitoring | T12 middleware | Middleware |
-| A10 | Server-Side Request Forgery | T8 SSRF probes | Black-box |
-| A11 | Supply Chain | T11 probe suite | Black-box (partial) |
-| A12 | Insufficient Logging | T12 middleware | Middleware |
+| OWASP MCP | Title | CoSAI categories | cosai-mcp coverage |
+|-----------|-------|------------------|--------------------|
+| MCP01:2025 | Token Mismanagement & Secret Exposure | T1, T7 | T1 auth probes + T7 stateful/black-box (tokens, handles, 2026-07-28 header/version checks) |
+| MCP02:2025 | Privilege Escalation via Scope Creep | T2, T9 | T2 probes + stateful harness; T9 passive Totem scan + middleware |
+| MCP03:2025 | Tool Poisoning | T3, T4, T6 | T4 passive manifest poisoning scan; T6 manifest integrity + drift; T3 schema hygiene |
+| MCP04:2025 | Software Supply Chain Attacks & Dependency Tampering | T6, T11 | T6 manifest integrity; T11 allowlist/typosquat + deprecated-feature probes |
+| MCP05:2025 | Command Injection & Execution | T3 | T3 injection probes |
+| MCP06:2025 | Prompt Injection via Contextual Payloads | T3, T4 | T3 probes; T4 middleware (response path) |
+| MCP07:2025 | Insufficient Authentication & Authorization | T1, T2 | T1 auth probes; T2 access-control probes |
+| MCP08:2025 | Lack of Audit and Telemetry | T12 | T12 middleware (hash-chained audit log) |
+| MCP09:2025 | Shadow MCP Servers | T8 | T8 network binding / SSRF probes |
+| MCP10:2025 | Context Injection & Over-Sharing | T5 | T5 secret/PII probes + passive manifest scan |
 
 ---
 

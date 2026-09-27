@@ -4,7 +4,7 @@
   "category": "T10",
   "severity": "medium",
   "cosai_ref": "T10",
-  "owasp_ref": "MCP-Top10-A10",
+  "owasp_ref": "",
   "cwe": [
     "CWE-770"
   ],

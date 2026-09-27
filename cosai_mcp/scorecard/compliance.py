@@ -17,9 +17,11 @@ attestation that contradicted the tool's own SARIF output. Both doc tables
 have since been reconciled; test_compliance_map_matches_owasp_alignment_table
 in tests/scorecard/test_scorecard.py enforces they stay that way.)
 
-T9 and T10 have no distinct 1:1 OWASP MCP Top 10 item in that table — A09
-(Security Logging) and A12 both map to T12, and A10 (SSRF) maps to T8, so
-T9/T10 are left honestly unmapped rather than assigned an invented title.
+2026-09-27 (CoSAI MCP Security v2.0 alignment): the OWASP references are the
+official OWASP MCP Top 10 (2025) IDs and titles (MCP01:2025 … MCP10:2025),
+mapped per CoSAI MCP Security v2.0 §3.3.3 "Threat Coverage Summary". The
+earlier "A01…A12" labels were not OWASP's identifiers. T10 has no OWASP MCP
+Top 10 counterpart in the CoSAI table and is left honestly unmapped.
 """
 from __future__ import annotations
 
@@ -27,51 +29,51 @@ from cosai_mcp.scorecard.models import ComplianceMapping
 
 CATEGORY_COMPLIANCE_MAP: dict[str, ComplianceMapping] = {
     "T1": ComplianceMapping(
-        owasp_mcp_top10="A01: Broken Authentication",
+        owasp_mcp_top10="MCP01:2025 Token Mismanagement & Secret Exposure; MCP07:2025 Insufficient Authentication & Authorization",
         nist_ai_rmf=("MANAGE 1.1 Risk Response", "GOVERN 6.2 Accountability"),
     ),
     "T2": ComplianceMapping(
-        owasp_mcp_top10="A02: Broken Access Control",
+        owasp_mcp_top10="MCP02:2025 Privilege Escalation via Scope Creep; MCP07:2025 Insufficient Authentication & Authorization",
         nist_ai_rmf=("MANAGE 1.1 Risk Response", "MAP 1.1 System Context"),
     ),
     "T3": ComplianceMapping(
-        owasp_mcp_top10="A03: Injection Attacks",
+        owasp_mcp_top10="MCP03:2025 Tool Poisoning; MCP05:2025 Command Injection & Execution; MCP06:2025 Prompt Injection via Contextual Payloads",
         nist_ai_rmf=("GOVERN 1.2 Accountability", "MEASURE 2.1 Assessment"),
     ),
     "T4": ComplianceMapping(
-        owasp_mcp_top10="A04: Prompt Injection",
+        owasp_mcp_top10="MCP03:2025 Tool Poisoning; MCP06:2025 Prompt Injection via Contextual Payloads",
         nist_ai_rmf=("GOVERN 1.2", "MAP 1.1 System Context"),
     ),
     "T5": ComplianceMapping(
-        owasp_mcp_top10="A05: Sensitive Data Exposure",
+        owasp_mcp_top10="MCP10:2025 Context Injection & Over-Sharing",
         nist_ai_rmf=("MAP 1.1", "MEASURE 2.6 Data Quality"),
     ),
     "T6": ComplianceMapping(
-        owasp_mcp_top10="A06: Security Misconfiguration / Integrity",
+        owasp_mcp_top10="MCP03:2025 Tool Poisoning; MCP04:2025 Software Supply Chain Attacks & Dependency Tampering",
         nist_ai_rmf=("MAP 4.1 Third-party Risks", "MANAGE 2.2"),
     ),
     "T7": ComplianceMapping(
-        owasp_mcp_top10="A07: Identification and Authentication Failures",
+        owasp_mcp_top10="MCP01:2025 Token Mismanagement & Secret Exposure",
         nist_ai_rmf=("MAP 1.1 System Context", "MANAGE 1.1"),
     ),
     "T8": ComplianceMapping(
-        owasp_mcp_top10="A08: Software and Data Integrity; A10: Server-Side Request Forgery",
+        owasp_mcp_top10="MCP09:2025 Shadow MCP Servers",
         nist_ai_rmf=("MEASURE 2.1 Security Assessment",),
     ),
     "T9": ComplianceMapping(
-        owasp_mcp_top10="Not independently mapped in OWASP MCP Top 10 (see NIST AI RMF)",
+        owasp_mcp_top10="MCP02:2025 Privilege Escalation via Scope Creep",
         nist_ai_rmf=("GOVERN 1.2", "MAP 1.1"),
     ),
     "T10": ComplianceMapping(
-        owasp_mcp_top10="Not independently mapped in OWASP MCP Top 10 (see NIST AI RMF)",
+        owasp_mcp_top10="Not mapped in OWASP MCP Top 10 (CoSAI MCP Security v2.0 §3.3.3)",
         nist_ai_rmf=("MEASURE 2.1", "MANAGE 2.4"),
     ),
     "T11": ComplianceMapping(
-        owasp_mcp_top10="A11: Supply Chain",
+        owasp_mcp_top10="MCP04:2025 Software Supply Chain Attacks & Dependency Tampering",
         nist_ai_rmf=("MAP 4.1 Third-party Risks",),
     ),
     "T12": ComplianceMapping(
-        owasp_mcp_top10="A09: Security Logging and Monitoring; A12: Insufficient Logging",
+        owasp_mcp_top10="MCP08:2025 Lack of Audit and Telemetry",
         nist_ai_rmf=("MEASURE 1.1 Performance Monitoring",),
     ),
 }

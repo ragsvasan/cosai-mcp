@@ -4,7 +4,7 @@
   "category": "T7",
   "severity": "medium",
   "cosai_ref": "T7",
-  "owasp_ref": "MCP-Top10-A07",
+  "owasp_ref": "MCP01:2025",
   "cwe": ["CWE-942"],
   "probes": [
     {

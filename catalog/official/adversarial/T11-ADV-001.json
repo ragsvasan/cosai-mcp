@@ -4,7 +4,7 @@
   "category": "T11",
   "severity": "high",
   "cosai_ref": "T11",
-  "owasp_ref": "MCP-Top10-A11",
+  "owasp_ref": "MCP04:2025",
   "cwe": ["CWE-1357", "CWE-345"],
   "adversarial": true,
   "mode": "read-only",

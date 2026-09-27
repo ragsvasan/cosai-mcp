@@ -4,7 +4,7 @@
   "category": "T3",
   "severity": "critical",
   "cosai_ref": "T3",
-  "owasp_ref": "MCP-Top10-A03",
+  "owasp_ref": "MCP03:2025; MCP05:2025; MCP06:2025",
   "cwe": ["CWE-74", "CWE-77"],
   "adversarial": true,
   "mode": "read-only",

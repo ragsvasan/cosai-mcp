@@ -569,20 +569,21 @@ class TestComplianceMapping:
         ).read_text()
         section = doc.split("## OWASP MCP Top 10 Alignment")[1].split("## OWASP Agentic")[0]
         rows = re.findall(
-            r"^\| (A\d+) \| ([^|]+) \| (T\d+)", section, re.MULTILINE
+            r"^\| (MCP\d{2}:2025) \| ([^|]+) \| ([^|]+) \|", section, re.MULTILINE
         )
-        assert rows, "could not parse any rows from the OWASP MCP Top 10 Alignment table"
+        assert len(rows) == 10, "expected all 10 OWASP MCP Top 10 (2025) rows"
 
-        for owasp_id, title, category in rows:
-            mapping = CATEGORY_COMPLIANCE_MAP.get(category.strip())
-            assert mapping is not None, (
-                f"{category} from the doc has no CATEGORY_COMPLIANCE_MAP entry"
-            )
-            assert f"{owasp_id}:" in mapping.owasp_mcp_top10, (
-                f"doc says {category} covers {owasp_id} ({title.strip()}), but "
-                f"CATEGORY_COMPLIANCE_MAP[{category!r}].owasp_mcp_top10 = "
-                f"{mapping.owasp_mcp_top10!r} does not mention {owasp_id}"
-            )
+        for owasp_id, title, categories in rows:
+            for category in (c.strip() for c in categories.split(",")):
+                mapping = CATEGORY_COMPLIANCE_MAP.get(category)
+                assert mapping is not None, (
+                    f"{category} from the doc has no CATEGORY_COMPLIANCE_MAP entry"
+                )
+                assert f"{owasp_id} {title.strip()}" in mapping.owasp_mcp_top10, (
+                    f"doc says {category} covers {owasp_id} ({title.strip()}), but "
+                    f"CATEGORY_COMPLIANCE_MAP[{category!r}].owasp_mcp_top10 = "
+                    f"{mapping.owasp_mcp_top10!r} does not mention it"
+                )
 
     def test_every_category_gets_a_compliance_mapping_through_full_scan(
         self, tmp_path: Path
@@ -616,7 +617,7 @@ class TestComplianceMapping:
 
         t1 = next(c for c in data["categories"] if c["category"] == "T1")
         assert "MANAGE 1.1" in " ".join(t1["compliance_mapping"]["nist_ai_rmf"])
-        assert "A01" in t1["compliance_mapping"]["owasp_mcp_top10"]
+        assert "MCP07:2025" in t1["compliance_mapping"]["owasp_mcp_top10"]
 
     def test_compliance_mapping_from_dict_coerces_non_string_nist_elements(self) -> None:
         """Adversary-pass EXPLOIT 2 (ENT-P0-3 review): every sibling
@@ -1129,3 +1130,35 @@ class TestSigstoreVerifyCLIWiring:
             )
         assert result.exit_code == 1, result.output
         assert "[OK] Scorecard signature valid" not in result.output
+
+
+# CoSAI MCP Security v2.0 §3.3.3 — pinned independently of the docs so a doc
+# and code edit made together cannot silently drift from the CoSAI table.
+_V2_OWASP_BY_CATEGORY: dict[str, tuple[str, ...]] = {
+    "T1": ("MCP01:2025", "MCP07:2025"), "T2": ("MCP02:2025", "MCP07:2025"),
+    "T3": ("MCP03:2025", "MCP05:2025", "MCP06:2025"), "T4": ("MCP03:2025", "MCP06:2025"),
+    "T5": ("MCP10:2025",), "T6": ("MCP03:2025", "MCP04:2025"), "T7": ("MCP01:2025",),
+    "T8": ("MCP09:2025",), "T9": ("MCP02:2025",), "T10": (), "T11": ("MCP04:2025",),
+    "T12": ("MCP08:2025",),
+}
+
+
+def test_regression_compliance_map_matches_cosai_v2_table() -> None:
+    import re
+
+    from cosai_mcp.scorecard.compliance import CATEGORY_COMPLIANCE_MAP
+
+    for category, expected in _V2_OWASP_BY_CATEGORY.items():
+        got = tuple(re.findall(r"MCP\d{2}:2025", CATEGORY_COMPLIANCE_MAP[category].owasp_mcp_top10))
+        assert got == expected, (category, got)
+        assert "A0" not in CATEGORY_COMPLIANCE_MAP[category].owasp_mcp_top10
+
+
+def test_regression_catalog_owasp_ref_matches_cosai_v2_table() -> None:
+    from cosai_mcp.catalog.loader import CatalogLoader
+
+    root = Path(__file__).resolve().parents[2] / "catalog"
+    threats = CatalogLoader(root).load_all()
+    assert threats
+    for t in threats:
+        assert t.owasp_ref == "; ".join(_V2_OWASP_BY_CATEGORY[t.category]), (t.id, t.owasp_ref)

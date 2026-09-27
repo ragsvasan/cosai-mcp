@@ -105,6 +105,8 @@ Middleware counterparts (P2, §8) supply T4/T9/T12 detection per the three-engin
 
 ## 6. P1 — Mapping reconciliation
 
+**P1c — shipped:** compliance map, both THREAT_MAPPING.md tables, CLI passive-scan stubs, and every official catalog `owasp_ref` (re-signed) now use the official OWASP MCP Top 10 (2025) IDs `MCP01:2025`…`MCP10:2025` per v2.0 §3.3.3 (T10 unmapped). Pinned by `test_regression_compliance_map_matches_cosai_v2_table` and `test_regression_catalog_owasp_ref_matches_cosai_v2_table`. Still open: `mcp_t_ref` / `threat_refs` / `tier` catalog metadata.
+
 - Replace `A01…` titles in `scorecard/compliance.py`, `docs/THREAT_MAPPING.md`, and the SARIF `helpUri` target with the v2.0 `MCP01…MCP10` cross-reference; extend `test_compliance_map_matches_owasp_alignment_table` to pin all three to the v2.0 table.
 - Add `mcp_t_ref` (`MCP-T4`), `threat_refs` (1–34), and `tier` (1/2/3) to the catalog meta-schema as **optional** fields; backfill official files and re-sign.
 - Reports display `MCP-Tn` alongside `Tn`.

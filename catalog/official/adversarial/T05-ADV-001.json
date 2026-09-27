@@ -4,7 +4,7 @@
   "category": "T5",
   "severity": "critical",
   "cosai_ref": "T5",
-  "owasp_ref": "MCP-Top10-A05",
+  "owasp_ref": "MCP10:2025",
   "cwe": ["CWE-200", "CWE-668"],
   "adversarial": true,
   "mode": "stateful",
