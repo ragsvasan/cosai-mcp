@@ -92,8 +92,19 @@ class ScanConfig:
     reported INCONCLUSIVE.  This map remaps each placeholder to the equivalent
     identifier on the target so the scenario actually exercises the control.
     ``None`` (the default) leaves scenarios unchanged."""
+    protocol_era: str = "auto"
+    """Which MCP protocol era the session speaks: ``"auto"`` (default — probe
+    the 2026-07-28 stateless ``server/discover`` first, fall back to the legacy
+    ``initialize`` handshake), ``"modern"`` (stateless only), or ``"legacy"``
+    (handshake only; identical to pre-2026-07-28 scanner behaviour).  The scan
+    orchestrator pins ``auto`` to the detected era once per scan so per-probe
+    sessions do not re-detect.  Set by ``--protocol-era``."""
 
     def __post_init__(self) -> None:
+        if self.protocol_era not in ("auto", "modern", "legacy"):
+            raise ValueError(
+                f"protocol_era must be 'auto', 'modern', or 'legacy', got {self.protocol_era!r}"
+            )
         # Documented public form: derive host/port from the full target URL.
         if self.target is not None:
             parsed = urlparse(self.target)

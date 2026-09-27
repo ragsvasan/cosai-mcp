@@ -1,6 +1,8 @@
 """ToolInventory: capture a point-in-time manifest from a live MCP server.
 
-``capture()`` runs the full MCP handshake (initialize → initialized → tools/list)
+``capture()`` runs the MCP handshake through the scanner's pinned dual-era
+session — 2026-07-28 ``server/discover`` → tools/list, falling back to legacy
+initialize → initialized → tools/list
 and returns a frozen ``ToolInventory``.  The inventory can be serialised to JSON,
 signed, and compared across runs to detect drift.
 """
@@ -137,9 +139,9 @@ def capture(
     """Connect to ``target_url``, run MCP handshake, return a ToolInventory.
 
     Sends:
-        1. POST initialize
-        2. POST initialized  (notification — no response)
-        3. POST tools/list
+        1. POST server/discover (MCP 2026-07-28); if not modern, POST initialize
+           + initialized (legacy)
+        2. POST tools/list
 
     Parameters
     ----------
@@ -161,8 +163,6 @@ def capture(
     """
     from urllib.parse import urlparse
 
-    import httpx
-
     from cosai_mcp.config import ScanConfig
     from cosai_mcp.transport.base import resolve_and_pin
 
@@ -183,47 +183,13 @@ def capture(
         ),
     )
 
-    headers = {"Content-Type": "application/json"}
-
-    with httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False) as client:
-        # 1. initialize
-        init_payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-03-26",
-                "clientInfo": {"name": "cosai-inventory", "version": "1.0"},
-                "capabilities": {},
-            },
-        }
-        resp = client.post(url, json=init_payload, headers=headers)
-        resp.raise_for_status()
-        init_result = resp.json()
-        if "error" in init_result:
-            raise RuntimeError(f"initialize failed: {init_result['error']}")
-
-        server_info = init_result.get("result", {}).get("serverInfo", {})
-        protocol_version = init_result.get("result", {}).get("protocolVersion", "")
-
-        # 2. initialized notification (no id — server returns 204)
-        notif_payload = {
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized",
-            "params": {},
-        }
-        client.post(url, json=notif_payload, headers=headers)
-
-        # 3. tools/list
-        list_payload = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
-        resp = client.post(url, json=list_payload, headers=headers)
-        resp.raise_for_status()
-        list_result = resp.json()
-        if "error" in list_result:
-            raise RuntimeError(f"tools/list failed: {list_result['error']}")
-
-        raw_tools: list[dict] = list_result.get("result", {}).get("tools", [])
-
+    # Both eras run through the scanner's pinned StreamableHTTPTransport +
+    # MCPSession (auto era): DNS pinned at connect, no redirects, SSE-aware,
+    # server/discover first with legacy initialize fallback.  No raw httpx
+    # client, so no path can be forced onto an unpinned connection.
+    protocol_version, server_info, raw_tools = _capture_session(
+        url, hostname, port, allow_private_targets, timeout
+    )
     return ToolInventory.build(
         target=target_url,
         protocol_version=protocol_version,
@@ -231,3 +197,76 @@ def capture(
         server_version=server_info.get("version", ""),
         raw_tools=raw_tools,
     )
+
+
+def _run_sync(coro_factory: Any) -> Any:
+    """Run a coroutine to completion from sync code, even inside a running loop.
+
+    ``capture()`` is a synchronous public API; callers inside an event loop
+    (async services, Jupyter) must keep working, so the coroutine runs on a
+    worker thread with its own loop when one is already running.
+    """
+    import asyncio
+    import concurrent.futures
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro_factory())
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro_factory()).result()
+
+
+def _capture_session(
+    url: str, host: str, port: int, allow_private_targets: bool, timeout: float,
+) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
+    """Capture (protocol_version, server_info, tools) via a dual-era session.
+
+    Raises RuntimeError on handshake/tools-list failure (``"initialize
+    failed: …"`` for the legacy path, as before) or when the total deadline
+    is exceeded.
+    """
+    import asyncio
+
+    from cosai_mcp.config import ScanConfig
+    from cosai_mcp.exceptions import SessionIncompleteError
+    from cosai_mcp.protocol import ProtocolEra
+    from cosai_mcp.session import MCPSession
+    from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
+
+    config = ScanConfig(
+        target_host=host,
+        target_port=port,
+        allow_private_targets=allow_private_targets,
+        probe_timeout_seconds=timeout,
+        mcp_path="",  # POST to the URL exactly as given
+    )
+
+    async def _run() -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
+        transport = StreamableHTTPTransport(url, config)
+        await transport.connect()
+        session = MCPSession(transport, config, target_url=url)
+        try:
+            info = await session.start()
+        except SessionIncompleteError as exc:
+            prefix = (
+                "modern capture failed"
+                if session.protocol_era is ProtocolEra.MODERN
+                else "initialize failed"
+            )
+            raise RuntimeError(f"{prefix}: {exc}") from exc
+        finally:
+            await session.close()
+        manifest = info.tool_manifest if isinstance(info.tool_manifest, list) else []
+        tools = [t for t in manifest if isinstance(t, dict)]
+        server_info = info.server_info if isinstance(info.server_info, dict) else {}
+        return info.protocol_version, server_info, tools
+
+    async def _bounded() -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
+        return await asyncio.wait_for(_run(), timeout=timeout * 4)
+
+    try:
+        result: tuple[str, dict[str, Any], list[dict[str, Any]]] = _run_sync(_bounded)
+    except TimeoutError as exc:
+        raise RuntimeError("inventory capture exceeded its deadline") from exc
+    return result

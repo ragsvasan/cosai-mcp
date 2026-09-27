@@ -137,6 +137,15 @@ class Transport(ABC):
     async def close(self) -> None:
         """Tear down the transport connection."""
 
+    def set_protocol_version(self, version: str | None) -> None:  # noqa: B027
+        """Declare the modern (2026-07-28+) protocol version in use, or None for legacy.
+
+        Transports that mirror request metadata into the wire framing (Streamable
+        HTTP's ``MCP-Protocol-Version`` / ``Mcp-Method`` / ``Mcp-Name`` headers)
+        override this.  The default is a no-op: stdio carries everything in the
+        JSON-RPC body, which the session already populates.
+        """
+
     async def __aenter__(self) -> Transport:
         await self.connect()
         return self

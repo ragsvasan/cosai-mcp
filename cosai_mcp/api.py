@@ -517,6 +517,7 @@ def _run_scan(
     stateful_method_overrides: dict[str, str] | None = None,
     tool_allowlist: tuple[str, ...] | None = None,
     expected_catalog_hash: str | None = None,
+    protocol_era: str = "auto",
 ) -> ScanResult:
     """Orchestrate a complete scan and return a ``ScanResult``.
 
@@ -556,6 +557,7 @@ def _run_scan(
         pii_strict=pii_strict,
         stateful_method_overrides=stateful_method_overrides,
         tool_allowlist=tool_allowlist,
+        protocol_era=protocol_era,
     )
 
     # Generate a unique scan ID for this run (used for canary traceability)
@@ -620,6 +622,17 @@ def _run_scan(
             "refusing to scan with an unverified ruleset."
         )
 
+    # MCP 2026-07-28 dual-era: detect the target's era once and pin it, so the
+    # per-probe sessions (one process each) do not each spend a server/discover
+    # round-trip. Undetermined (auth reject, 5xx, network) stays "auto" and
+    # every session decides for itself — identical to the unpinned behaviour.
+    requested_era = config.protocol_era
+    if config.protocol_era == "auto":
+        from cosai_mcp.discovery import detect_protocol_era
+        detected_era = detect_protocol_era(target_url, config)
+        if detected_era is not None:
+            config = dataclasses.replace(config, protocol_era=detected_era)
+
     # --- Prober engine ---
     probe_results: list[ProbeResult] = []
     if engine in ("prober", "all"):
@@ -679,7 +692,13 @@ def _run_scan(
         # Both auth_token and auth_header must be cleared: auth_header carries
         # the pre-formatted "Bearer <tok>" value set by profile, and takes
         # precedence over auth_token in the transport's _build_headers().
-        no_auth_config = dataclasses.replace(config, auth_token=None, auth_header=None)
+        # Unauthenticated probes keep the operator-requested era (normally
+        # "auto") rather than the era pinned from the *authenticated* detection:
+        # a dual-era server that gates its modern path but leaves the legacy
+        # initialize open must still be caught (adversary EXPLOIT 3).
+        no_auth_config = dataclasses.replace(
+            config, auth_token=None, auth_header=None, protocol_era=requested_era,
+        )
 
         ProbeRunner(config=config, target_url=target_url)
         for threat in threats:
@@ -937,6 +956,8 @@ _RESERVED_MCP_METHODS: frozenset[str] = frozenset({
     "prompts/list", "prompts/get", "completion/complete",
     "logging/setlevel", "roots/list", "sampling/createmessage",
     "notifications/initialized", "notifications/cancelled",
+    # MCP 2026-07-28 stateless core
+    "server/discover", "subscriptions/listen",
 })
 
 
@@ -1280,6 +1301,7 @@ class Scanner:
         pii_strict: bool = False,
         stateful_method_overrides: dict[str, str] | None = None,
         expected_catalog_hash: str | None = None,
+        protocol_era: str = "auto",
     ) -> None:
         # Accept either a full target URL string (original form) or a ScanConfig
         # (documented public form).  When a ScanConfig is passed, its fields
@@ -1306,6 +1328,7 @@ class Scanner:
             self.stateful_method_overrides = cfg.stateful_method_overrides
             self.tool_allowlist = cfg.tool_allowlist
             self.expected_catalog_hash = expected_catalog_hash
+            self.protocol_era = cfg.protocol_era
             return
 
         self.target = target
@@ -1327,6 +1350,7 @@ class Scanner:
         self.stateful_method_overrides = stateful_method_overrides
         self.tool_allowlist = None
         self.expected_catalog_hash = expected_catalog_hash
+        self.protocol_era = protocol_era
 
     def run(self, categories: list[str] | None = None) -> ScanResult:
         """Run a complete scan and return a :class:`ScanResult`.
@@ -1360,6 +1384,7 @@ class Scanner:
                 stateful_method_overrides=self.stateful_method_overrides,
                 tool_allowlist=self.tool_allowlist,
                 expected_catalog_hash=self.expected_catalog_hash,
+                protocol_era=self.protocol_era,
             )
         except (ValueError, TargetUnreachableError):
             raise  # let typed exceptions propagate as-is

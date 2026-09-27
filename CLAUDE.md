@@ -22,7 +22,7 @@ Full competitive analysis: [docs/VALUE_PROP.md](docs/VALUE_PROP.md)
 - Talks TO MCP servers, never IS one
 - No MCP SDK dependency (SDK vuln cannot compromise scanner)
 - Runtime deps: `httpx`, `subprocess`, `websockets`, `google-re2`, `joserfc` (or `PyJWT[crypto]`), `keyring`
-- Transports: **Streamable HTTP** (primary, MCP 2025-03-26), stdio, LegacySSE (fallback for 2024-11-05 servers only) — all behind one `Transport` interface
+- Transports: **Streamable HTTP** (primary, MCP 2025-03-26 through 2026-07-28), stdio, LegacySSE (fallback for 2024-11-05 servers only) — all behind one `Transport` interface
 - WebSocket is not in the MCP spec and is not implemented
 
 ### 2. JSON-Extensible Threat Catalog
@@ -216,15 +216,31 @@ Black-box probing is structurally wrong for T4, T9, T12. The tool ships three en
 
 README must include a coverage matrix mapping each T category to the engine that covers it. Never claim black-box probe coverage for T4, T9, or T12.
 
-### MCP Session Lifecycle (locked — panel MCP-protocol finding)
+### MCP Session Lifecycle (locked — amended 2026-09-27 for MCP 2026-07-28, Mnemo dec_a8957a9070)
 
-Every probe MUST be preceded by:
+The scanner is a **dual-era client**. `--protocol-era` / `ScanConfig.protocol_era`: `auto` (default) | `modern` | `legacy`.
+
+Every probe MUST be preceded by one of:
+
+**Modern (2026-07-28, stateless — tried first under `auto`):**
+1. `server/discover` carrying per-request `_meta` (`io.modelcontextprotocol/protocolVersion`, `clientInfo`, `clientCapabilities`) and, on HTTP, `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` headers
+2. `tools/list` with the same `_meta` (cache manifest)
+3. Every later request carries `_meta` + headers; `x-mcp-header` params mirrored to `Mcp-Param-*`
+
+**Legacy (2025-11-25 and earlier — fallback):**
 1. `initialize` request (with `protocolVersion`, accurate `clientInfo`, minimal `capabilities`)
 2. `initialized` notification
 3. `tools/list` (cache manifest; T3/T4 probes iterate discovered tools)
 
-Scanner that cannot complete handshake reports `scan-incomplete`, NOT `clean`.
-Transport autodetection: if server responds with `protocolVersion: "2024-11-05"`, fall back to LegacySSE.
+Era selection rules (spec dual-era client, `cosai_mcp/protocol.py::classify_discover_response`):
+- DiscoverResult / `-32022` listing `2026-07-28` → modern.
+- Recognisably modern but unusable (`-32020`/`-32021`, or no mutual version) → `scan-incomplete`. **Never downgrade a modern server to the legacy handshake** (v2.0 §3.2.12 downgrade path).
+- Anything else → legacy fallback. HTTP 401/403/429/5xx is *undetermined*: session falls back, but the scan does not pin an era from it.
+- `_run_scan` detects the era once and pins it for all per-probe sessions.
+- Probe-supplied `_meta` keys and `override_headers` always win (T1/T7 spoof/mismatch probes).
+
+Scanner that cannot complete the chosen handshake reports `scan-incomplete`, NOT `clean`.
+Transport autodetection: if a legacy server responds with `protocolVersion: "2024-11-05"`, fall back to LegacySSE.
 
 ### Exit Codes (locked — fail-closed contract)
 

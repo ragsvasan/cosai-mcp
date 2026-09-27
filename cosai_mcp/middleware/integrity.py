@@ -35,6 +35,8 @@ STANDARD_MCP_METHODS: frozenset[str] = frozenset({
     "prompts/list", "prompts/get", "completion/complete",
     "logging/setlevel", "roots/list", "sampling/createmessage",
     "notifications/initialized", "notifications/cancelled",
+    # MCP 2026-07-28 stateless core
+    "server/discover", "subscriptions/listen",
 })
 
 # Cyrillic/Greek homoglyphs → Latin look-alike. Tool names are folded through

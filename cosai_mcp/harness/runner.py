@@ -269,6 +269,48 @@ def _probe_subprocess_entry(
             try:
                 await session.start()
             except SessionIncompleteError as exc:
+                if (
+                    pass_on_auth_reject
+                    and _is_auth_rejection(exc)
+                    and session.discover_auth_rejected
+                ):
+                    # MCP 2026-07-28 is stateless: a 401/403 on server/discover
+                    # gates nothing, and the legacy-handshake failure may be
+                    # unrelated to auth. Send the probe's ACTUAL request
+                    # unauthenticated in BOTH wire framings (modern, legacy) and
+                    # let the least favourable outcome decide:
+                    #   - any framing answered < 400 with the probe FAILING
+                    #     (request served) → that failing result stands;
+                    #   - any framing unverifiable (no status / exception) →
+                    #     scan error, never a synthesized PASS;
+                    #   - otherwise every framing was rejected: a < 400 JSON-RPC
+                    #     rejection that satisfied the probe → that real PASS;
+                    #     all >= 400 with at least one 401/403 → PASS below
+                    #     (a modern-only server answers legacy framing 400).
+                    # (adversary round-2 EXPLOIT 2, round-3 EXPLOIT 1/2, round-4)
+                    outcomes: list[tuple[ProbeResult | None, int | None]] = []
+                    for modern_framing in (True, False):
+                        session.enter_unverified(modern=modern_framing)
+                        try:
+                            verified = await ProbeContext(
+                                session, effective_config, target_url
+                            ).execute_probe(probe, threat, variables)
+                        except Exception:  # noqa: BLE001 — unverifiable
+                            verified = None
+                        outcomes.append(
+                            (verified, verified.status_code if verified is not None else None)
+                        )
+                    for verified, st in outcomes:
+                        if verified is not None and st is not None and st < 400 \
+                                and not verified.passed:
+                            return verified.to_dict()
+                    if any(st is None for _, st in outcomes):
+                        raise
+                    for verified, st in outcomes:
+                        if verified is not None and st is not None and st < 400:
+                            return verified.to_dict()
+                    if not any(st in (401, 403) for _, st in outcomes):
+                        raise
                 if pass_on_auth_reject and _is_auth_rejection(exc):
                     # Auth correctly enforced at the MCP handshake level.
                     # Synthesise a PASS result — the probe's goal is to confirm

@@ -5,6 +5,7 @@ Run:  pytest tests/transport/ -v
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import socket
 import warnings
@@ -725,9 +726,40 @@ class TestMCPSession:
         await session.start()
         await session.tools_call("echo", {})
 
-        assert call_order[0] == "initialize"
-        tools_call_seen = any(m == "tools/call" for m in call_order)
-        assert tools_call_seen
+        # Amended lifecycle (MCP 2026-07-28 dual-era, dec_a8957a9070): auto mode
+        # probes server/discover first; a legacy server then gets the full
+        # initialize handshake before any tools/call.
+        assert call_order[0] == "server/discover"
+        assert call_order[1] == "initialize"
+        assert call_order.index("initialize") < call_order.index("tools/call")
+
+    @pytest.mark.asyncio
+    async def test_regression_legacy_era_initialize_is_first_message(self):
+        """protocol_era='legacy' reproduces the pre-2026-07-28 wire sequence exactly."""
+        config = dataclasses.replace(_public_config(), protocol_era="legacy")
+        mock_transport = create_autospec(Transport, instance=True)
+        call_order: list[str] = []
+
+        async def side_effect_send(method: str, params: dict, **kwargs) -> dict:
+            call_order.append(method)
+            if method == "initialize":
+                return _make_init_success()
+            if method == "tools/list":
+                return _make_tools_list_response()
+            return {"jsonrpc": "2.0", "id": 5, "result": {}}
+
+        mock_transport.send = AsyncMock(side_effect=side_effect_send)
+        mock_transport.send_notification = AsyncMock()
+        mock_transport.close = AsyncMock()
+
+        session = MCPSession(mock_transport, config)
+        await session.start()
+        await session.tools_call("echo", {"a": 1})
+
+        assert call_order == ["initialize", "tools/list", "tools/call"]
+        # Legacy tools/call body is untouched — no _meta injected.
+        tools_call_params = mock_transport.send.await_args_list[-1].args[1]
+        assert tools_call_params == {"name": "echo", "arguments": {"a": 1}}
 
     @pytest.mark.asyncio
     async def test_regression_transport_fallback_sse(self):

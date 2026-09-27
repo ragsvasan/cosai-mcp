@@ -20,6 +20,19 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
+from cosai_mcp.protocol import (
+    ERR_HEADER_MISMATCH,
+    ERR_UNSUPPORTED_PROTOCOL_VERSION,
+    HEADER_METHOD,
+    HEADER_NAME,
+    HEADER_PROTOCOL_VERSION,
+    META_PROTOCOL_VERSION,
+    META_SERVER_INFO,
+    MODERN_PROTOCOL_VERSION,
+    decode_header_value,
+    mcp_name_for,
+)
+
 _DEFAULT_TOOLS = [
     {"name": "echo", "description": "Echoes input", "inputSchema": {"type": "object"}},
 ]
@@ -55,12 +68,26 @@ class _MCPHandler(BaseHTTPRequestHandler):
         headers = dict(self.headers)
         response = self.server.mock_server.handle_rpc(request, headers)
 
+        if response.get("_drop"):
+            self.close_connection = True
+            self.connection.close()
+            return
+
         # Finding 10: notifications (no 'id') → 204 No Content, not 200 + body
         if not response:
             self.send_response(204)
             self.end_headers()
         else:
-            self._send_json(200, response)
+            status = response.pop("_http_status", 200)
+            if self.server.mock_server._sse_responses:
+                payload = f"event: message\ndata: {json.dumps(response)}\n\n".encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            else:
+                self._send_json(status, response)
 
     def _send_json(self, status: int, data: dict[str, Any]) -> None:
         payload = json.dumps(data).encode()
@@ -130,6 +157,45 @@ class MockMCPServer:
         bounds recursive/looping tool chains (T10 denial-of-wallet).  Default
         None = unlimited (vulnerable). ``tools/list`` is never counted, so the
         MCP handshake does not consume the budget.
+    protocol_era:
+        ``"legacy"`` (default): initialize-handshake server; ``server/discover``
+        is an unknown method (-32601).  ``"modern"``: MCP 2026-07-28 stateless
+        server — answers ``server/discover``, validates per-request ``_meta``
+        and the ``MCP-Protocol-Version`` / ``Mcp-Method`` / ``Mcp-Name`` headers
+        against the body (400 + -32020 HeaderMismatch on disagreement), and
+        rejects ``initialize``.  ``"dual"``: both — ``_meta``-bearing requests
+        are served statelessly, ``initialize`` selects legacy semantics.
+    modern_supported_versions:
+        ``supportedVersions`` advertised in modern mode (default
+        ``["2026-07-28"]``).  Set to e.g. ``["2099-01-01"]`` to simulate a
+        modern server with no mutually supported version.
+    modern_requires_auth:
+        Modern (``_meta``-bearing) requests without an ``Authorization`` header
+        get HTTP 401 / -32001, while the legacy path stays open — the v2.0
+        dual-era "legacy downgrade" vulnerability.
+    sse_responses:
+        Frame every JSON-RPC response as a ``text/event-stream`` event.
+    modern_auth_only_on_discover:
+        Only ``server/discover`` requires ``Authorization`` (401 otherwise);
+        every other stateless request is served — a vulnerable modern server
+        whose discover gate protects nothing.
+    discover_http_status:
+        If set, ``server/discover`` always gets this HTTP status with a
+        non-modern JSON-RPC error (any era) — e.g. 503 to force the
+        undetermined-era fallback.
+    reject_modern_framing_unauth:
+        Any request carrying modern framing (``MCP-Protocol-Version`` header or
+        protocol ``_meta``) without ``Authorization`` gets 401, while
+        legacy-framed requests are served — a framing-dependent auth gate.
+    initialize_http_status:
+        If set, ``initialize`` always fails with this HTTP status (-32603).
+    initialize_requires_auth:
+        ``initialize`` without ``Authorization`` gets 401 / -32001.
+    drop_tools_call:
+        ``tools/call`` gets no HTTP response — the connection is closed.
+    modern_framing_unauth_jsonrpc_error:
+        Like ``reject_modern_framing_unauth`` but the rejection is HTTP 200 with
+        a JSON-RPC -32001 error (common real-world shape).
     """
 
     def __init__(
@@ -145,7 +211,31 @@ class MockMCPServer:
         confirmation_gates_access: bool = False,
         reject_replayed_tokens: bool = False,
         call_budget: int | None = None,
+        protocol_era: str = "legacy",
+        modern_supported_versions: list[str] | None = None,
+        modern_requires_auth: bool = False,
+        sse_responses: bool = False,
+        modern_auth_only_on_discover: bool = False,
+        discover_http_status: int | None = None,
+        reject_modern_framing_unauth: bool = False,
+        initialize_http_status: int | None = None,
+        initialize_requires_auth: bool = False,
+        drop_tools_call: bool = False,
+        modern_framing_unauth_jsonrpc_error: bool = False,
     ) -> None:
+        self._modern_framing_unauth_jsonrpc_error = modern_framing_unauth_jsonrpc_error
+        self._reject_modern_framing_unauth = reject_modern_framing_unauth
+        self._initialize_http_status = initialize_http_status
+        self._initialize_requires_auth = initialize_requires_auth
+        self._drop_tools_call = drop_tools_call
+        self._modern_auth_only_on_discover = modern_auth_only_on_discover
+        self._discover_http_status = discover_http_status
+        self._modern_requires_auth = modern_requires_auth
+        self._sse_responses = sse_responses
+        if protocol_era not in ("legacy", "modern", "dual"):
+            raise ValueError(f"protocol_era must be legacy|modern|dual, got {protocol_era!r}")
+        self._protocol_era = protocol_era
+        self._modern_supported = list(modern_supported_versions or [MODERN_PROTOCOL_VERSION])
         self._tools = tools if tools is not None else list(_DEFAULT_TOOLS)
         self._tools_call_response = tools_call_response
         self._initialize_error = initialize_error
@@ -214,6 +304,68 @@ class MockMCPServer:
         # Notifications have no 'id' — no response needed, return empty
         if req_id is None:
             return {}
+
+        lower_headers = {k.lower(): v for k, v in (headers or {}).items()}
+        unauthenticated = "authorization" not in lower_headers
+        raw_p = request.get("params")
+        has_modern_meta = isinstance(raw_p, dict) and isinstance(raw_p.get("_meta"), dict) \
+            and META_PROTOCOL_VERSION in raw_p["_meta"]
+        if self._reject_modern_framing_unauth and unauthenticated and (
+            HEADER_PROTOCOL_VERSION.lower() in lower_headers or has_modern_meta
+        ):
+            return {"jsonrpc": "2.0", "id": req_id, "_http_status": 401,
+                    "error": {"code": -32001, "message": "Unauthorized"}}
+        if self._modern_framing_unauth_jsonrpc_error and unauthenticated and (
+            HEADER_PROTOCOL_VERSION.lower() in lower_headers or has_modern_meta
+        ) and method != "server/discover":
+            return {"jsonrpc": "2.0", "id": req_id,
+                    "error": {"code": -32001, "message": "Unauthorized"}}
+        if method == "initialize" and self._initialize_requires_auth and unauthenticated:
+            return {"jsonrpc": "2.0", "id": req_id, "_http_status": 401,
+                    "error": {"code": -32001, "message": "Unauthorized"}}
+        if method == "initialize" and self._initialize_http_status is not None:
+            return {"jsonrpc": "2.0", "id": req_id, "_http_status": self._initialize_http_status,
+                    "error": {"code": -32603, "message": "Internal error"}}
+        if method == "tools/call" and self._drop_tools_call:
+            return {"_drop": True}
+
+        if method == "server/discover" and self._discover_http_status is not None:
+            return {"jsonrpc": "2.0", "id": req_id, "_http_status": self._discover_http_status,
+                    "error": {"code": -32000, "message": "unavailable"}}
+        if (
+            method == "server/discover"
+            and self._modern_auth_only_on_discover
+            and "authorization" not in {k.lower() for k in (headers or {})}
+        ):
+            return {"jsonrpc": "2.0", "id": req_id, "_http_status": 401,
+                    "error": {"code": -32001, "message": "Unauthorized"}}
+
+        if self._protocol_era != "legacy":
+            rejection = self._modern_gate(request, headers or {})
+            if rejection is not None:
+                return rejection
+            params = request.get("params")
+            is_modern_request = isinstance(params, dict) and isinstance(params.get("_meta"), dict) \
+                and META_PROTOCOL_VERSION in params["_meta"]
+            if method == "server/discover" and is_modern_request:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "resultType": "complete",
+                        "supportedVersions": list(self._modern_supported),
+                        "capabilities": {"tools": {}},
+                        "_meta": {
+                            META_SERVER_INFO: {"name": "mock-mcp-server", "version": "0.2.0"},
+                        },
+                    },
+                }
+            if method == "tools/list" and is_modern_request:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {"resultType": "complete", "tools": self._get_tools_for_call()},
+                }
 
         if method == "initialize":
             if self._initialize_error:
@@ -348,6 +500,64 @@ class MockMCPServer:
             "id": req_id,
             "error": {"code": -32601, "message": f"Method not found: {method!r}"},
         }
+
+    def _modern_gate(
+        self, request: dict[str, Any], headers: dict[str, str],
+    ) -> dict[str, Any] | None:
+        """Spec server validation for 2026-07-28; None means "serve it".
+
+        Modern-only servers reject ``initialize`` and any request lacking the
+        required ``_meta``; dual-era servers let those through to legacy
+        handling.  ``_meta``-bearing requests must agree with their headers.
+        """
+        req_id = request.get("id")
+        method = request.get("method", "")
+        raw_params = request.get("params")
+        params: dict[str, Any] = raw_params if isinstance(raw_params, dict) else {}
+        meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else None
+        lower = {k.lower(): v for k, v in headers.items()}
+
+        def _err(code: int, message: str, data: Any = None) -> dict[str, Any]:
+            error: dict[str, Any] = {"code": code, "message": message}
+            if data is not None:
+                error["data"] = data
+            return {"jsonrpc": "2.0", "id": req_id, "error": error, "_http_status": 400}
+
+        if (
+            self._modern_requires_auth
+            and meta is not None
+            and "authorization" not in lower
+        ):
+            return {"jsonrpc": "2.0", "id": req_id, "_http_status": 401,
+                    "error": {"code": -32001, "message": "Unauthorized"}}
+
+        if meta is None or META_PROTOCOL_VERSION not in meta:
+            if self._protocol_era == "dual":
+                return None
+            if method == "initialize":
+                return _err(-32601, f"initialize not supported; supported versions: "
+                                    f"{self._modern_supported}")
+            return _err(-32602, "Missing required _meta field "
+                                f"{META_PROTOCOL_VERSION!r}")
+
+        version = meta.get(META_PROTOCOL_VERSION)
+        if lower.get(HEADER_PROTOCOL_VERSION.lower()) != version:
+            return _err(ERR_HEADER_MISMATCH, "Header mismatch: MCP-Protocol-Version")
+        if version not in self._modern_supported:
+            return _err(ERR_UNSUPPORTED_PROTOCOL_VERSION, "Unsupported protocol version",
+                        {"supported": list(self._modern_supported), "requested": version})
+        if lower.get(HEADER_METHOD.lower()) != method:
+            return _err(ERR_HEADER_MISMATCH, "Header mismatch: Mcp-Method")
+        expected_name = mcp_name_for(method, params)
+        if expected_name is not None:
+            raw = lower.get(HEADER_NAME.lower())
+            try:
+                decoded = decode_header_value(raw) if raw is not None else None
+            except ValueError:
+                decoded = None
+            if decoded != expected_name:
+                return _err(ERR_HEADER_MISMATCH, "Header mismatch: Mcp-Name")
+        return None
 
     def _token_replay_id(self, token: str) -> str | None:
         """Return a stable replay key for a Bearer token, or None to skip dedup.

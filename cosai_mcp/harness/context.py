@@ -59,7 +59,12 @@ _SCHEMA_MISMATCH_KEYWORDS: tuple[str, ...] = (
 # application errors, e.g. -32001 auth/scope rejection, -32029 rate limit).
 # Those are genuine security-relevant outcomes the probes are meant to observe.
 _PROTOCOL_VALIDATION_CODES: frozenset[int] = frozenset(
-    {-32700, -32600, -32601, -32602}
+    {-32700, -32600, -32601, -32602,
+     # MCP 2026-07-28 transport-level rejections (HeaderMismatch,
+     # MissingRequiredClientCapability, UnsupportedProtocolVersion): the server
+     # refused the request envelope before any tool ran, so they are never
+     # evidence the control under test fired (adversary EXPLOIT 1).
+     -32020, -32021, -32022}
 )
 
 # Request-level rejection codes: the server failed to parse (-32700) or rejected

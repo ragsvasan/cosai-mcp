@@ -264,6 +264,7 @@ _STANDARD_MCP_METHODS: frozenset[str] = frozenset({
     "initialize", "notifications/initialized", "tools/list", "tools/call",
     "ping", "resources/list", "resources/read", "resources/templates/list",
     "prompts/list", "prompts/get", "completion/complete", "logging/setLevel",
+    "server/discover", "subscriptions/listen",
 })
 
 # JSON-RPC codes meaning the server did not accept the method/request at all:

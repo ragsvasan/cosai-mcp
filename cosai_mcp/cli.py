@@ -346,6 +346,12 @@ def main() -> None:
                    "'Catalog hash:' in scan output). Pins a release gate to an exact, "
                    "reviewed catalog: a mismatch refuses to scan (exit 2) before any "
                    "probe runs, instead of silently running against a changed ruleset.")
+@click.option("--protocol-era", "protocol_era",
+              type=click.Choice(["auto", "modern", "legacy"]), default="auto",
+              show_default=True, hidden=True,
+              help="MCP protocol era to speak. 'auto' probes the 2026-07-28 stateless "
+                   "server/discover first and falls back to the legacy initialize "
+                   "handshake; 'modern' / 'legacy' pin one era.")
 def scan(
     target: str | None,
     targets_path: str | None,
@@ -392,6 +398,7 @@ def scan(
     method_overrides: str | None,
     tool_allowlist: str | None,
     expected_catalog_hash: str | None,
+    protocol_era: str,
 ) -> None:
     """Scan a target MCP server for CoSAI threat categories T1–T12.
 
@@ -492,6 +499,9 @@ def scan(
                 ("--allow-stateful-adversarial", allow_stateful_adversarial),
                 ("--baseline", bool(baseline_path)),
                 ("--method-overrides", bool(method_overrides)),
+                # Fleet targets are era-detected individually; a single pinned
+                # era would silently be ignored (defense FIX 1).
+                ("--protocol-era", protocol_era != "auto"),
             ) if used
         ]
         if _fleet_unsupported:
@@ -614,6 +624,7 @@ def scan(
             stateful_method_overrides=_parse_method_overrides(method_overrides),
             tool_allowlist=_parse_tool_allowlist(tool_allowlist),
             expected_catalog_hash=expected_catalog_hash,
+            protocol_era=protocol_era,
         )
     except ValueError as exc:
         # Includes adversarial dual opt-in failures, a malformed

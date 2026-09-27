@@ -273,6 +273,55 @@ def discover_tools(target_url: str, config: ScanConfig) -> tuple[DiscoveredTool,
         ScanConfig for auth, MCP path, and network constraints.
     """
     try:
-        return asyncio.run(_discover_tools_async(target_url, config))
+        # Total deadline (discover/initialize + tools/list): see detect_protocol_era.
+        return asyncio.run(asyncio.wait_for(
+            _discover_tools_async(target_url, config),
+            timeout=config.probe_timeout_seconds * 4,
+        ))
     except Exception:
         return ()
+
+
+# ---------------------------------------------------------------------------
+# Protocol-era detection (MCP 2026-07-28 vs legacy handshake)
+# ---------------------------------------------------------------------------
+
+async def _detect_protocol_era_async(target_url: str, config: ScanConfig) -> str | None:
+    from cosai_mcp.protocol import EraDetection
+    from cosai_mcp.session import MCPSession
+    from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
+
+    transport = StreamableHTTPTransport(target_url, config)
+    try:
+        await transport.connect()
+        detection = await MCPSession(transport, config, target_url=target_url).detect_era()
+    finally:
+        try:
+            await transport.close()
+        except Exception:  # noqa: BLE001, S110
+            pass
+    if detection is EraDetection.MODERN:
+        return "modern"
+    if detection is EraDetection.LEGACY:
+        return "legacy"
+    return None
+
+
+def detect_protocol_era(target_url: str, config: ScanConfig) -> str | None:
+    """Return ``"modern"`` / ``"legacy"`` for the target, or None if undetermined.
+
+    One ``server/discover`` round-trip.  None (auth rejection, 5xx, network
+    failure, or a modern server we cannot speak to) means the caller should
+    leave ``protocol_era="auto"`` so each session decides — and reports —
+    for itself.  Never raises.
+    """
+    try:
+        # Total deadline: this runs in the parent scan process, outside the
+        # per-probe OS-kill backstop, and httpx timeouts are per-read — a
+        # drip-feeding server must not stall the scan (adversary EXPLOIT 5).
+        return asyncio.run(asyncio.wait_for(
+            _detect_protocol_era_async(target_url, config),
+            timeout=config.probe_timeout_seconds * 2,
+        ))
+    except Exception:
+        return None

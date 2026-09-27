@@ -1,4 +1,4 @@
-"""Streamable HTTP transport — MCP 2025-03-26 primary transport."""
+"""Streamable HTTP transport — MCP 2025-03-26 through 2026-07-28."""
 from __future__ import annotations
 
 import asyncio
@@ -12,6 +12,7 @@ import httpx
 
 from cosai_mcp.config import ScanConfig
 from cosai_mcp.exceptions import DNSRebindingError
+from cosai_mcp.protocol import META_PROTOCOL_VERSION, request_metadata_headers
 from cosai_mcp.transport.base import (
     Transport,
     check_dns_rebinding,
@@ -145,13 +146,16 @@ class _PinnedAsyncTransport(httpx.AsyncBaseTransport):
 # ---------------------------------------------------------------------------
 
 class StreamableHTTPTransport(Transport):
-    """MCP 2025-03-26 Streamable HTTP transport.
+    """MCP Streamable HTTP transport.
 
     Single-endpoint POST semantics.  Response is either:
     * ``application/json`` — direct JSON-RPC response
     * ``text/event-stream`` — SSE stream carrying one or more JSON-RPC messages
 
-    Session affinity is maintained via the optional ``Mcp-Session-Id`` header.
+    Legacy (2025-03-26 … 2025-11-25): session affinity via the optional
+    ``Mcp-Session-Id`` header.  Modern (2026-07-28, after
+    ``set_protocol_version``): no session; every POST carries
+    ``MCP-Protocol-Version`` / ``Mcp-Method`` / ``Mcp-Name`` request headers.
     """
 
     def __init__(self, base_url: str, config: ScanConfig) -> None:
@@ -159,6 +163,7 @@ class StreamableHTTPTransport(Transport):
         self._config = config
         self._pinned_ip: str | None = None
         self._session_id: str | None = None
+        self._protocol_version: str | None = None
         self._pinned_transport: _PinnedAsyncTransport | None = None
         self._client: httpx.AsyncClient | None = None
         self._recv_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=64)
@@ -191,7 +196,8 @@ class StreamableHTTPTransport(Transport):
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
-        if self._session_id:
+        # Modern servers have no protocol session; never echo a session id to them.
+        if self._session_id and self._protocol_version is None:
             headers["Mcp-Session-Id"] = self._session_id
         if self._config.auth_header:
             headers["Authorization"] = self._config.auth_header
@@ -208,6 +214,9 @@ class StreamableHTTPTransport(Transport):
             "method": method,
             "params": params,
         }
+
+    def set_protocol_version(self, version: str | None) -> None:
+        self._protocol_version = version
 
     # ------------------------------------------------------------------
     # Transport lifecycle
@@ -254,6 +263,16 @@ class StreamableHTTPTransport(Transport):
             raise RuntimeError("Transport not connected — call connect() first")
 
         headers = self._build_headers()
+        if self._protocol_version is not None:
+            # The header mirrors the body: a probe that spoofs the _meta
+            # protocolVersion must reach the server consistently, not trip an
+            # accidental HeaderMismatch (adversary EXPLOIT 2).
+            meta = params.get("_meta")
+            body_version = meta.get(META_PROTOCOL_VERSION) if isinstance(meta, dict) else None
+            version = body_version if isinstance(body_version, str) else self._protocol_version
+            headers.update(request_metadata_headers(method, params, version))
+        # Applied last so probes can deliberately send mismatched or missing
+        # request-metadata headers (T7 header/body-confusion checks).
         if override_headers:
             headers.update(override_headers)
         payload = self._make_rpc(method, params)
