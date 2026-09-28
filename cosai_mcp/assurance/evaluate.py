@@ -87,14 +87,18 @@ def _control_verdict(
     probe_results: list[Any],
     scenario_results: list[Any],
     evidence: Mapping[str, EvidenceItem],
+    required_optional: frozenset[str] = frozenset(),
 ) -> ControlVerdict:
+    skipped_note = ""
+
     def _mk(
         strength: Strength | None, verdict: Verdict, reason: str,
         linked: tuple[str, ...] = (), sha: str | None = None,
     ) -> ControlVerdict:
         return ControlVerdict(
             control_id=control.control_id, dimension=control.dimension,
-            title=control.title, strength=strength, verdict=verdict, reason=reason,
+            title=control.title, strength=strength, verdict=verdict,
+            reason=reason + skipped_note,
             linked_results=linked, evidence_sha256=sha,
         )
 
@@ -103,7 +107,9 @@ def _control_verdict(
         return _mk(None, Verdict.NOT_REQUIRED, f"Not required at Level {level}.")
 
     linked = set(control.probe_threats) | set(control.verify_with)
-    ran, failed, passed, seen = _outcomes(linked, probe_results, scenario_results)
+    ran, failed, passed, seen = _outcomes(
+        linked | set(control.optional_probes), probe_results, scenario_results
+    )
     item = evidence.get(control.control_id)
     sha = item.sha256 if item else None
 
@@ -112,7 +118,15 @@ def _control_verdict(
         return _mk(req.strength, Verdict.FAIL,
                    f"Scanner finding(s) contradict: {req.text}.", probe_ids, sha)
 
-    required_to_run = {i for i in linked if not _PASSIVE_ID.match(i)}
+    # Optional disproof links become REQUIRED when the target exposes their
+    # surface (e.g. modern-only probes on a modern target), so an era pin or
+    # category filter cannot manufacture "not applicable" (batch-2 EXPLOIT 7).
+    promoted = set(control.optional_probes) & required_optional
+    required_to_run = {i for i in linked if not _PASSIVE_ID.match(i)} | promoted
+    skipped = sorted(set(control.optional_probes) - ran - promoted)
+    if skipped:
+        skipped_note = (f" Optional disproof test(s) not conclusively run in this scan: "
+                        f"{', '.join(skipped)}.")
     # A passive scan that is ABSENT (empty manifest) is exempt, but one that is
     # PRESENT and says it could not run (e.g. T11 without --tool-allowlist) is a
     # skipped disproving test like any other (round-3 EXPLOIT 1).
@@ -157,15 +171,21 @@ def evaluate_assurance(
     scenario_results: Iterable[Any] = (),
     evidence: Mapping[str, EvidenceItem] | None = None,
     scope: Mapping[str, Any] | None = None,
+    required_optional: frozenset[str] = frozenset(),
 ) -> AssuranceReport:
-    """Evaluate every control at ``claimed_level`` (1–4)."""
+    """Evaluate every control at ``claimed_level`` (1–4).
+
+    ``required_optional``: optional-link IDs that must run for this target
+    (e.g. modern-only probes when the target speaks MCP 2026-07-28).
+    """
     if claimed_level not in (1, 2, 3, 4):
         raise ValueError(f"assurance level must be 1–4, got {claimed_level!r}")
     probes = list(probe_results)
     scenarios = list(scenario_results)
     ev = evidence or {}
     verdicts = tuple(
-        _control_verdict(c, claimed_level, probes, scenarios, ev) for c in CONTROLS
+        _control_verdict(c, claimed_level, probes, scenarios, ev, required_optional)
+        for c in CONTROLS
     )
     musts = [v for v in verdicts if v.strength is Strength.MUST]
     if any(v.verdict is Verdict.FAIL for v in musts):

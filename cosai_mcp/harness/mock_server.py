@@ -204,6 +204,20 @@ class MockMCPServer:
         returning -32022 UnsupportedProtocolVersion.
     advertise_logging:
         ``server/discover`` advertises the deprecated ``logging`` capability.
+    trust_meta_admin_identity:
+        VULNERABLE (T01-007): with ``modern_requires_auth``, an unauthenticated
+        request whose ``_meta`` clientInfo claims ``admin-console`` is served.
+    expose_task_enumeration:
+        VULNERABLE (T07-007): ``tasks/list`` enumerates tasks and ``tasks/get``
+        returns a task for any (guessable) ID.
+    tool_cache_scope_public:
+        VULNERABLE (T05-003): tool results carry ``cacheScope: "public"``.
+    unauth_http_status:
+        HTTP status used for ``modern_requires_auth`` rejections (default 401;
+        e.g. 400 to model servers that refuse with a generic client error).
+    auth_exempt_discover:
+        With ``modern_requires_auth``: ``server/discover`` is public; everything
+        else still needs Authorization.
     """
 
     def __init__(
@@ -233,7 +247,19 @@ class MockMCPServer:
         skip_header_validation: bool = False,
         accept_unknown_versions: bool = False,
         advertise_logging: bool = False,
+        trust_meta_admin_identity: bool = False,
+        expose_task_enumeration: bool = False,
+        tool_cache_scope_public: bool = False,
+        auth_exempt_discover: bool = False,
+        unauth_http_status: int = 401,
+        discover_error_message: str = "unavailable",
     ) -> None:
+        self._discover_error_message = discover_error_message
+        self._unauth_http_status = unauth_http_status
+        self._auth_exempt_discover = auth_exempt_discover
+        self._trust_meta_admin_identity = trust_meta_admin_identity
+        self._expose_task_enumeration = expose_task_enumeration
+        self._tool_cache_scope_public = tool_cache_scope_public
         self._skip_header_validation = skip_header_validation
         self._accept_unknown_versions = accept_unknown_versions
         self._advertise_logging = advertise_logging
@@ -345,7 +371,7 @@ class MockMCPServer:
 
         if method == "server/discover" and self._discover_http_status is not None:
             return {"jsonrpc": "2.0", "id": req_id, "_http_status": self._discover_http_status,
-                    "error": {"code": -32000, "message": "unavailable"}}
+                    "error": {"code": -32000, "message": self._discover_error_message}}
         if (
             method == "server/discover"
             and self._modern_auth_only_on_discover
@@ -383,6 +409,10 @@ class MockMCPServer:
                     "id": req_id,
                     "result": {"resultType": "complete", "tools": self._get_tools_for_call()},
                 }
+
+        extra = self._modern_extras(method, request)
+        if extra is not None:
+            return extra
 
         if method == "initialize":
             if self._initialize_error:
@@ -518,6 +548,28 @@ class MockMCPServer:
             "error": {"code": -32601, "message": f"Method not found: {method!r}"},
         }
 
+    def _modern_extras(
+        self, method: str, request: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Tasks / cacheScope behaviours for the P1 probes (None = default)."""
+        req_id = request.get("id")
+        raw_params = request.get("params")
+        params: dict[str, Any] = raw_params if isinstance(raw_params, dict) else {}
+        if self._expose_task_enumeration and method == "tasks/list":
+            return {"jsonrpc": "2.0", "id": req_id, "result": {
+                "resultType": "complete", "tasks": [{"taskId": "1", "status": "working"}]}}
+        if self._expose_task_enumeration and method == "tasks/get":
+            return {"jsonrpc": "2.0", "id": req_id, "result": {
+                "resultType": "complete", "taskId": str(params.get("taskId")),
+                "status": "completed", "result": {"content": []}}}
+        if method != "tools/call":
+            return None
+        if self._tool_cache_scope_public:
+            return {"jsonrpc": "2.0", "id": req_id, "result": {
+                "resultType": "complete", "cacheScope": "public", "ttlMs": 3600000,
+                "content": [{"type": "text", "text": "ok"}]}}
+        return None
+
     def _modern_gate(
         self, request: dict[str, Any], headers: dict[str, str],
     ) -> dict[str, Any] | None:
@@ -540,12 +592,20 @@ class MockMCPServer:
                 error["data"] = data
             return {"jsonrpc": "2.0", "id": req_id, "error": error, "_http_status": 400}
 
+        spoofed_admin = (
+            self._trust_meta_admin_identity
+            and isinstance(meta, dict)
+            and isinstance(meta.get("io.modelcontextprotocol/clientInfo"), dict)
+            and meta["io.modelcontextprotocol/clientInfo"].get("name") == "admin-console"
+        )
         if (
             self._modern_requires_auth
             and meta is not None
             and "authorization" not in lower
+            and not spoofed_admin
+            and not (self._auth_exempt_discover and method == "server/discover")
         ):
-            return {"jsonrpc": "2.0", "id": req_id, "_http_status": 401,
+            return {"jsonrpc": "2.0", "id": req_id, "_http_status": self._unauth_http_status,
                     "error": {"code": -32001, "message": "Unauthorized"}}
 
         if meta is None or META_PROTOCOL_VERSION not in meta:

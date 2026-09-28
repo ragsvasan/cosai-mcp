@@ -571,6 +571,11 @@ def _run_scan(
                 "--assurance-level cannot be combined with --allow-custom-catalog: "
                 "untrusted custom probes must never count as proof of a control"
             )
+        if protocol_era != "auto":
+            raise ValueError(
+                "--assurance-level requires --protocol-era auto: pinning an era can "
+                "make modern-only disproof tests 'not applicable' on a modern target"
+            )
         if profile is not None and profile.skip_categories:
             raise ValueError(
                 f"--assurance-level cannot be combined with profile {profile.name!r}, "
@@ -686,12 +691,14 @@ def _run_scan(
 
     # --- Prober engine ---
     probe_results: list[ProbeResult] = []
+    discovered_for_assurance: tuple[Any, ...] = ()
     if engine in ("prober", "all"):
         # P10: discover tool schemas once; use for adaptive payload synthesis.
         # discover_tools() is a superset of the old _get_first_tool_name() —
         # returns (first_tool_name, all_discovered_tools).  Falls back to
         # ("ping", ()) on failure so the scan proceeds identically to pre-P10.
         real_tool_name, discovered_tools = _run_discovery(target_url, config)
+        discovered_for_assurance = tuple(discovered_tools or ())
 
         # T4: passive manifest scan — no probe sent, uses already-fetched manifest.
         # Runs whenever T4 is in scope (no category filter, or T4 explicitly requested).
@@ -772,6 +779,17 @@ def _run_scan(
             # initialize, that IS correct behavior (auth enforced) → probe PASSES.
             is_auth_category = threat.category.upper() in AUTH_PROBE_CATEGORIES
             probe_config = no_auth_config if is_auth_category else config
+            # An unauthenticated probe of a MODERN-only surface on a target the
+            # authenticated scan detected as modern must run modern: under
+            # "auto" a dual-era server's open legacy handshake would make it
+            # "not applicable" and hide the modern-path flaw (adversary batch-2
+            # EXPLOIT 2).
+            if (
+                is_auth_category
+                and config.protocol_era == "modern"
+                and any(p.requires_protocol_era == "modern" for p in threat.probes)
+            ):
+                probe_config = dataclasses.replace(no_auth_config, protocol_era="modern")
             probe_runner = ProbeRunner(config=probe_config, target_url=target_url)
 
             # Find the DiscoveredTool matching the tool under test.
@@ -863,8 +881,30 @@ def _run_scan(
     )
     assurance: AssuranceReport | None = None
     if assurance_level is not None:
+        # Only catalog probes whose every probe targets the modern era are
+        # promoted to required optional-link tests.
+        # Fail closed: promote when the target was detected modern OR the era
+        # could not be determined ("auto" left unpinned) — only a positively
+        # LEGACY target makes modern-only probes genuinely not applicable
+        # (round-2 B2R2-4; a non-auto --protocol-era is rejected up front).
+        # Probes that need a real tool (tools/call) are not promoted when the
+        # target exposed no tools — a secure server could never satisfy them
+        # (round-2 B2R2-5).
+        # An empty manifest counts as "no tools" only if a confirming discovery
+        # SUCCEEDS with zero tools; a failed/timed-out discovery keeps the
+        # promotion (fail closed — round-3 FIX 6).
+        no_tools = False
+        if not discovered_for_assurance:
+            from cosai_mcp.discovery import discover_tools_checked
+            no_tools = discover_tools_checked(target_url, config) == ()
+        modern_only_ids = frozenset(
+            t.id for t in threats
+            if t.probes and all(p.requires_protocol_era == "modern" for p in t.probes)
+            and not (no_tools and any(p.method == "tools/call" for p in t.probes))
+        ) if config.protocol_era in ("modern", "auto") else frozenset()
         assurance = evaluate_assurance(
             assurance_level, probe_results, scenario_results, evidence_items,
+            required_optional=modern_only_ids,
             scope={
                 "scan_id": scan_id,
                 "target_url": target_url,

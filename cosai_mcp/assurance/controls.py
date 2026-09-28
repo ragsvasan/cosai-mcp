@@ -47,6 +47,7 @@ def _c(
     probes: tuple[str, ...] = (),
     blackbox_max_level: int = 0,
     verify_with: tuple[str, ...] = (),
+    optional: tuple[str, ...] = (),
 ) -> Control:
     return Control(
         control_id=control_id,
@@ -59,6 +60,7 @@ def _c(
         probe_threats=probes,
         blackbox_max_level=blackbox_max_level,
         verify_with=verify_with,
+        optional_probes=optional,
     )
 
 
@@ -285,7 +287,7 @@ CONTROLS: tuple[Control, ...] = (
         2: (S, "Honor ttlMs/cacheScope; default private/no-store"),
         3: (M, "Prevent cross-user/tenant caching; revalidate pinned definitions"),
         4: (M, "Centralized cache policy with tenant-isolated keys"),
-    }),
+    }, optional=("T05-003",)),
     _c("TI-06", _TI, "SSRF and traversal defense", ("MCP-T3", "MCP-T8"), {
         2: (M, "Restrict URL schemes to HTTPS; sanitize file paths"),
         3: (M, "Deny loopback, link-local, and cloud metadata destinations"),
@@ -296,12 +298,12 @@ CONTROLS: tuple[Control, ...] = (
         2: (M, "Handles are CSPRNG, opaque, principal-scoped; auth on every request"),
         3: (M, "Tenant-bound, expiring, revocable handles; revocation cancels tasks"),
         4: (M, "Continuous re-evaluation and automated revocation on anomaly"),
-    }, probes=("T7-SC-001", "T7-SC-002")),
+    }, probes=("T7-SC-001", "T7-SC-002"), optional=("T07-007",)),
     _c("SD-02", _SD, "Request metadata trust", ("MCP-T1",), {
         2: (M, "_meta identity/capability claims never used alone for authorization"),
         3: (M, "Reject _meta claims conflicting with the authenticated principal"),
         4: (M, "Gateway reconciliation of _meta claims with workload identity"),
-    }),
+    }, optional=("T01-007",)),
     _c("SD-03", _SD, "Client-held state integrity", ("MCP-T7",), {
         2: (M, "Sealed state (e.g. requestState) HMAC/AEAD-protected; reject on failure"),
         3: (M, "Principal, expiry, and request ID sealed inside the payload"),

@@ -25,6 +25,7 @@ failure signal (CI exit code ≥ 2), never as a clean result.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import types as _types
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -401,16 +402,10 @@ def _apply_method_overrides(
             )
         )
 
-    return Scenario(
-        id=scenario.id,
-        name=scenario.name,
-        threat_categories=scenario.threat_categories,
-        steps=tuple(new_steps),
-        description=scenario.description,
-        # Preserve the T10 loop-budget opt-in across remapping so an
-        # operator's method_overrides does not silently drop the check.
-        loop_budget_check=scenario.loop_budget_check,
-    )
+    # dataclasses.replace preserves every other field (loop_budget_check,
+    # …) so an operator's method_overrides can never silently
+    # drop a check.
+    return dataclasses.replace(scenario, steps=tuple(new_steps))
 
 
 def _detect_unbounded_tool_loop(

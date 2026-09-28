@@ -39,6 +39,7 @@ from cosai_mcp.catalog.models import (
 from cosai_mcp.config import ScanConfig
 from cosai_mcp.harness.context import ERA_NOT_APPLICABLE_MARKER, _to_json_safe
 from cosai_mcp.harness.result import ProbeResult, _html_escape, make_probe_result
+from cosai_mcp.protocol import EraDetection
 
 # ---------------------------------------------------------------------------
 # Required keys every subprocess result dict must contain (Finding 1)
@@ -273,9 +274,38 @@ def _probe_subprocess_entry(
                 await session.start()
             except SessionIncompleteError as exc:
                 if (
-                    pass_on_auth_reject
-                    and _is_auth_rejection(exc)
-                    and session.discover_auth_rejected
+                    probe.requires_protocol_era == "modern"
+                    and session.discover_detection is EraDetection.LEGACY
+                    # Only POSITIVE legacy evidence (discover is an unknown
+                    # method) — an auth refusal of discover also classifies as
+                    # LEGACY — and never when the scan pinned the modern era
+                    # (round-3 EXPLOIT 1).
+                    and session.discover_error_code == -32601
+                    and effective_config.protocol_era != "modern"
+                ):
+                    # The server answered discover as a LEGACY server: its
+                    # handshake failure says nothing about the modern surface,
+                    # and modern-framed calls to it would mislabel legacy
+                    # behaviour as a modern flaw (round-2 B2R2-1).
+                    return make_probe_result(
+                        probe_id=probe.id, threat_id=threat.id, passed=False,
+                        assertions=(),
+                        inconclusive_reason=(
+                            "Probe targets the 'modern' MCP protocol era but the "
+                            f"target identified as legacy — {ERA_NOT_APPLICABLE_MARKER}. "
+                            "This test is INCONCLUSIVE."
+                        ),
+                    ).to_dict()
+                if pass_on_auth_reject and (
+                    (_is_auth_rejection(exc) and session.discover_auth_rejected)
+                    # Stateless 2026-07-28: a refused discover OR a refused
+                    # scanner-identity tools/list gates nothing for a probe of
+                    # the modern surface — always test the probe's own request,
+                    # whatever the handshake error text says (batch-2 EXPLOIT 1,
+                    # round-5). Verification only PASSes on a real 401/403 to
+                    # the probe's own request.
+                    or (probe.requires_protocol_era == "modern"
+                        and session.discover_detection is not None)
                 ):
                     # MCP 2026-07-28 is stateless: a 401/403 on server/discover
                     # gates nothing, and the legacy-handshake failure may be
@@ -292,7 +322,13 @@ def _probe_subprocess_entry(
                     #     (a modern-only server answers legacy framing 400).
                     # (adversary round-2 EXPLOIT 2, round-3 EXPLOIT 1/2, round-4)
                     outcomes: list[tuple[ProbeResult | None, int | None]] = []
-                    for modern_framing in (True, False):
+                    # An era-gated probe (schema 1.2) is only meaningful in its
+                    # own framing; the other framing would return "not
+                    # applicable" (no status) and wrongly block a PASS.
+                    framings = {
+                        "modern": (True,), "legacy": (False,),
+                    }.get(probe.requires_protocol_era or "", (True, False))
+                    for modern_framing in framings:
                         session.enter_unverified(modern=modern_framing)
                         try:
                             verified = await ProbeContext(
@@ -413,7 +449,12 @@ def _synthesize_probe(
         # precision contract; protocol_error_is_expected; requires_protocol_era
         # — schema 1.2) so a new Probe field can never be silently dropped on
         # the adaptive retry.
-        return dataclasses.replace(probe, payload=synth_payload)  # type: ignore[arg-type]
+        # Keep every non-(name, arguments) key of the catalog payload — e.g. a
+        # T01-007 spoofed _meta — so the retry still tests the same property
+        # (adversary batch-2 EXPLOIT 3).
+        extra = {k: v for k, v in catalog_payload_dict.items() if k not in ("name", "arguments")}
+        merged = types.MappingProxyType({**dict(synth_payload), **extra})
+        return dataclasses.replace(probe, payload=merged)
     except ValueError:
         # Expected from template-escape guard or missing adversarial value (P2 fix)
         return None

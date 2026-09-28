@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.2",
+  "id": "T05-003",
+  "category": "T5",
+  "severity": "medium",
+  "cosai_ref": "T5",
+  "owasp_ref": "MCP10:2025",
+  "cwe": ["CWE-524", "CWE-668"],
+  "confidence": "medium",
+  "probes": [
+    {
+      "id": "T05-003-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "description": "MCP 2026-07-28 lets results declare cacheScope/ttlMs. A tool result marked cacheScope: public may be cached by shared intermediaries and served to other users or tenants. Tool outputs are request- and caller-specific and should be private or uncacheable.",
+      "requires_protocol_era": "modern",
+      "payload": {"name": "{{tool_name}}", "arguments": {}},
+      "assertions": [
+        {"target": "response.result.cacheScope", "operator": "ne", "value": "public",
+         "description": "Tool results must not be marked publicly cacheable"}
+      ],
+      "corroboration": [
+        {"target": "response.error", "operator": "eq", "value": false,
+         "description": "Finding only for a served result"}
+      ]
+    }
+  ],
+  "remediation": "Default cacheable results to private/no-store. Never mark user- or tenant-specific results (tool outputs, resource reads) with cacheScope: public; keep ttlMs short and invalidate pinned definitions on list-change notifications (CoSAI MCP Security v2.0 §3.2.7 and §3.3.2, Cacheable result handling).",
+  "references": [
+    "https://cosai.org/T5",
+    "https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching"
+  ]
+}

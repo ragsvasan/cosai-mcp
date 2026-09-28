@@ -55,6 +55,11 @@ class Control:
     probe_threats: tuple[str, ...] = ()
     blackbox_max_level: int = 0
     verify_with: tuple[str, ...] = ()
+    # Disproof-only links that are NOT required to run: a conclusive finding
+    # still FAILS the control, but an absent/inconclusive result does not
+    # block attestation. For probes whose surface is optional on the target
+    # (2026-07-28-only features, the Tasks extension).
+    optional_probes: tuple[str, ...] = ()
 
     def requirement(self, level: int) -> Requirement | None:
         req: Requirement | None = self.levels.get(level)

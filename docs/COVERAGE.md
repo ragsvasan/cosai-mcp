@@ -1,7 +1,7 @@
 # cosai-mcp — Coverage Status
 
 **Date:** 2026-07-02
-**Build:** 1861/1861 tests passing
+**Build:** 1891/1891 tests passing
 **Catalog:** 27 signed threat definitions + 4 adversarial (Ed25519, signatures now enforced)
 **Status:** All phases P0–P13 complete. Codex P1/P2 findings resolved. ENT-P0-1/P0-3/P0-4 (catalog-hash pin, signed compliance mapping, fleet scanning) shipped — see [docs/ENTERPRISE_REQUIREMENTS_2026-07-01.md](ENTERPRISE_REQUIREMENTS_2026-07-01.md).
 
@@ -30,13 +30,13 @@ Full T4/T9/T12 coverage still requires middleware instrumentation inside the tar
 
 | # | Category | Engine | Catalog entries | Status |
 |---|----------|--------|----------------|--------|
-| T1 | Improper Authentication | Black-box prober | T01-001–004 | **Done** — missing auth, cross-session token, token replay (jti), DPoP binding |
+| T1 | Improper Authentication | Black-box prober | T01-001–004 | **Done** — missing auth, cross-session token, token replay (jti), DPoP binding; `_meta` identity/capability spoofing (T01-007, MCP 2026-07-28) |
 | T2 | Missing Access Control | Black-box + stateful harness | T02-001, T02-003 | **Done** — privilege scope probe; destructive one-shot (T02-003); stateful privilege escalation chain + confused deputy |
 | T3 | Input Validation Failures | Black-box prober + passive schema scan | T03-001, T03-002, `_scan_manifest_t3_schema` | **Done** — command injection, path traversal, SQL injection, null bytes, oversized payloads; passive tool-schema hygiene (external `$ref`, spec-invalid `x-mcp-header`, validator-DoS schema size — MCP 2026-07-28) |
 | T4 | Data/Control Boundary | Black-box prober (passive) + Middleware | — | **Done** — passive manifest scan wired into `_run_scan`; `ToolPoisoningDetector` + `ResponseBoundaryGuard` for full response-path coverage |
-| T5 | Inadequate Data Protection | Black-box prober | T05-001, T05-002 | **Done** — PII pattern detection, credential pattern detection in tool responses |
+| T5 | Inadequate Data Protection | Black-box prober | T05-001, T05-002 | **Done** — PII pattern detection, credential pattern detection in tool responses; publicly cacheable tool results (T05-003, MCP 2026-07-28 cacheScope) |
 | T6 | Integrity/Verification | Passive manifest scan + stateful harness | `_scan_manifest_t6` | **Done** — passive manifest-integrity scan (name collision, reserved-method shadow, Levenshtein-1 typosquat); stateful mid-session manifest-drift diff enforced in `run_scenario` (rug pull) |
-| T7 | Session Security Failures | Stateful harness + black-box prober | T07-001–006 | **Done** — session fixation, token-in-URL, cross-session replay, explicit revocation (T7-SC-002); MCP 2026-07-28: header/body mismatch (T07-004), protocol-version floor (T07-005), legacy-handshake downgrade path (T07-006) |
+| T7 | Session Security Failures | Stateful harness + black-box prober | T07-001–007, T7-SC-001–002 | **Done** — session fixation, token-in-URL, cross-session replay, explicit revocation (T7-SC-002); MCP 2026-07-28: header/body mismatch (T07-004), protocol-version floor (T07-005), legacy-handshake downgrade path (T07-006), task-handle enumeration (T07-007) |
 | T8 | Network Binding Failures | Black-box prober | T08-001–003 | **Done** — SSRF (RFC1918/link-local/loopback/file://), protocol version, 0.0.0.0 binding detection |
 | T9 | Trust Boundary Failures | Middleware + passive manifest scan | — | **Done** — passive Totem manifest scan (destructive tools missing two-stage commit); full coverage via LLMOutputSanitizer + TrustBoundaryChecker (deploy middleware in target) |
 | T10 | Resource Management | Black-box prober | T10-001–003 | **Done** — oversized input, rate limiting (429), recursive payload / DoW, heartbeat |
@@ -81,7 +81,7 @@ Requires `--adversarial --i-own-this-target`. Blocked against RFC1918 and loopba
 
 ## Test Suite
 
-**1861 tests passing** across:
+**1891 tests passing** across:
 
 | Module | What |
 |--------|------|

@@ -90,6 +90,10 @@ class MCPSession:
         # stateless 2026-07-28 era that gates nothing by itself — see
         # enter_unverified() and the runner's auth-reject handling.
         self.discover_auth_rejected: bool = False
+        # Era classification of this session's server/discover probe (None when
+        # the era was pinned to legacy and no probe was sent).
+        self.discover_detection: EraDetection | None = None
+        self.discover_error_code: Any = None
         self._request_meta: dict[str, Any] = build_request_meta(CLIENT_INFO, CLIENT_CAPABILITIES)
 
     # ------------------------------------------------------------------
@@ -129,6 +133,9 @@ class MCPSession:
         if requested is not ProtocolEra.LEGACY:
             detection, response = await self._probe_modern()
             self.discover_auth_rejected = response.get("_status_code") in (401, 403)
+            self.discover_detection = detection
+            err = response.get("error")
+            self.discover_error_code = err.get("code") if isinstance(err, dict) else None
             if detection is EraDetection.MODERN:
                 return await self._start_modern(response)
             if requested is ProtocolEra.MODERN or detection in (
@@ -143,7 +150,13 @@ class MCPSession:
                 )
             # LEGACY / UNDETERMINED under auto → dual-era fallback.
             self._transport.set_protocol_version(None)
-            if detection is EraDetection.UNDETERMINED:
+            positive_legacy = (
+                detection is EraDetection.LEGACY and self.discover_error_code == -32601
+            )
+            if not positive_legacy:
+                # UNDETERMINED, or LEGACY without positive evidence (e.g. a
+                # generic 400 auth refusal of discover): keep the discover
+                # answer in the error so an auth refusal stays recognisable.
                 try:
                     return await self._start_legacy()
                 except SessionIncompleteError as exc:
@@ -161,7 +174,9 @@ class MCPSession:
         Does not change session state beyond the transport's header mode.
         Used by the scan orchestrator to pin ``protocol_era`` once per scan.
         """
-        detection, _ = await self._probe_modern()
+        detection, response = await self._probe_modern()
+        err = response.get("error")
+        self.discover_error_code = err.get("code") if isinstance(err, dict) else None
         self._transport.set_protocol_version(None)
         return detection
 
@@ -469,20 +484,22 @@ class MCPSession:
 
 
 def _summarize(response: dict[str, Any]) -> str:
-    """Short, bounded description of a discover response for error messages.
+    """Short description of a discover response for error messages.
 
-    Includes the HTTP status and JSON-RPC error so the runner's auth-rejection
-    keyword match (``401``/``403``/``unauthorized``) still fires in modern mode.
+    Deliberately carries NO server-controlled text (error messages, codes,
+    version strings): the runner's auth-rejection check substring-matches
+    ``401``/``403``/``unauthorized`` across the whole message, so a hostile
+    body (e.g. a trace id "…a401f…") must never be able to turn an unrelated
+    failure into a synthesized PASS (round-5 FIX 1). Only the real HTTP status
+    and the local exception type are included.
     """
     parts: list[str] = []
-    if (status := response.get("_status_code")) is not None:
+    if isinstance(status := response.get("_status_code"), int):
         parts.append(f"HTTP {status}")
     if "error" in response:
-        parts.append(f"error={response['error']!r}")
+        parts.append("JSON-RPC error")
     if "exception" in response:
-        parts.append(str(response["exception"]))
+        parts.append(str(response["exception"]).split(":", 1)[0][:60])
     if "result" in response and not parts:
-        result = response["result"]
-        versions = result.get("supportedVersions") if isinstance(result, dict) else None
-        parts.append(f"supportedVersions={versions!r}")
-    return ("; ".join(parts) or "empty response")[:500]
+        parts.append("DiscoverResult")
+    return "; ".join(parts) or "empty response"

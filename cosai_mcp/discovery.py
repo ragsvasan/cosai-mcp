@@ -221,6 +221,18 @@ async def _discover_tools_async(
     Returns empty tuple on any network or parse failure.
     Caps the manifest at _MAX_TOOLS_PER_MANIFEST to prevent iteration DoS.
     """
+    try:
+        return await _discover_tools_async_raw(target_url, config)
+    except Exception:
+        return ()
+
+
+async def _discover_tools_async_raw(
+    target_url: str,
+    config: ScanConfig,
+) -> tuple[DiscoveredTool, ...]:
+    """As :func:`_discover_tools_async` but RAISES on failure, so callers can
+    tell "the server exposes no tools" from "discovery failed"."""
     from cosai_mcp.session import MCPSession
     from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
 
@@ -241,8 +253,6 @@ async def _discover_tools_async(
             if dt is not None:
                 discovered.append(dt)
         return tuple(discovered)
-    except Exception:
-        return ()
     finally:
         try:
             await transport.close()
@@ -287,6 +297,8 @@ def discover_tools(target_url: str, config: ScanConfig) -> tuple[DiscoveredTool,
 # ---------------------------------------------------------------------------
 
 async def _detect_protocol_era_async(target_url: str, config: ScanConfig) -> str | None:
+    import dataclasses
+
     from cosai_mcp.protocol import EraDetection
     from cosai_mcp.session import MCPSession
     from cosai_mcp.transport.streamable_http import StreamableHTTPTransport
@@ -294,7 +306,10 @@ async def _detect_protocol_era_async(target_url: str, config: ScanConfig) -> str
     transport = StreamableHTTPTransport(target_url, config)
     try:
         await transport.connect()
-        detection = await MCPSession(transport, config, target_url=target_url).detect_era()
+        probe_session = MCPSession(transport, config, target_url=target_url)
+        detection = await asyncio.wait_for(
+            probe_session.detect_era(), timeout=config.probe_timeout_seconds * 2
+        )
     finally:
         try:
             await transport.close()
@@ -302,9 +317,30 @@ async def _detect_protocol_era_async(target_url: str, config: ScanConfig) -> str
             pass
     if detection is EraDetection.MODERN:
         return "modern"
-    if detection is EraDetection.LEGACY:
+    if detection is not EraDetection.LEGACY:
+        return None
+    # Pin "legacy" only on POSITIVE evidence: discover is an unknown method, or
+    # the legacy handshake actually succeeds. A generic 4xx refusal of discover
+    # (e.g. an auth-gated modern server) must not pin legacy — that would make
+    # modern-only disproof tests "not applicable" (round-4 FIX 1).
+    if probe_session.discover_error_code == -32601:
         return "legacy"
-    return None
+    legacy_config = dataclasses.replace(config, protocol_era="legacy")
+    legacy_transport = StreamableHTTPTransport(target_url, legacy_config)
+    try:
+        await legacy_transport.connect()
+        await asyncio.wait_for(
+            MCPSession(legacy_transport, legacy_config, target_url=target_url).start(),
+            timeout=config.probe_timeout_seconds * 3,
+        )
+        return "legacy"
+    except Exception:  # noqa: BLE001 — era undetermined; stay "auto"
+        return None
+    finally:
+        try:
+            await legacy_transport.close()
+        except Exception:  # noqa: BLE001, S110
+            pass
 
 
 def detect_protocol_era(target_url: str, config: ScanConfig) -> str | None:
@@ -321,7 +357,25 @@ def detect_protocol_era(target_url: str, config: ScanConfig) -> str | None:
         # drip-feeding server must not stall the scan (adversary EXPLOIT 5).
         return asyncio.run(asyncio.wait_for(
             _detect_protocol_era_async(target_url, config),
-            timeout=config.probe_timeout_seconds * 2,
+            timeout=config.probe_timeout_seconds * 5,
+        ))
+    except Exception:
+        return None
+
+
+def discover_tools_checked(
+    target_url: str, config: ScanConfig,
+) -> tuple[DiscoveredTool, ...] | None:
+    """Like :func:`discover_tools`, but ``None`` on failure instead of ``()``.
+
+    ``()`` then means the server answered tools/list with no usable tools.
+    Used where treating a failed discovery as "no tools" would fail OPEN
+    (assurance promotion of tool-calling probes).
+    """
+    try:
+        return asyncio.run(asyncio.wait_for(
+            _discover_tools_async_raw(target_url, config),
+            timeout=config.probe_timeout_seconds * 4,
         ))
     except Exception:
         return None

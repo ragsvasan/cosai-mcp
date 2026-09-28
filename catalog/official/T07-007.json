@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.2",
+  "id": "T07-007",
+  "category": "T7",
+  "severity": "high",
+  "cosai_ref": "T7",
+  "owasp_ref": "MCP01:2025",
+  "cwe": ["CWE-330", "CWE-639"],
+  "confidence": "high",
+  "probes": [
+    {
+      "id": "T07-007-p1",
+      "transport": "http",
+      "method": "tasks/list",
+      "description": "The Tasks extension removed tasks/list: possession of an unguessable task handle is the only discovery mechanism. A server that still enumerates tasks lets any caller discover other principals' durable execution handles.",
+      "requires_protocol_era": "modern",
+      "payload": {"_meta": {"io.modelcontextprotocol/clientCapabilities": {"extensions": {"io.modelcontextprotocol/tasks": {}}}}},
+      "assertions": [
+        {"target": "response.error_code", "operator": "error_code_in", "value": [-32601, -32001],
+         "description": "tasks/list must not exist (method not found) or must be refused"}
+      ],
+      "corroboration": [
+        {"target": "response.error", "operator": "eq", "value": false,
+         "description": "Finding only when a task listing was returned"}
+      ]
+    },
+    {
+      "id": "T07-007-p2",
+      "transport": "http",
+      "method": "tasks/get",
+      "description": "Poll a guessable, sequential task ID. Task IDs must be CSPRNG-generated, opaque, and authorized against the caller; a server that returns a task for a guessed ID leaks durable state across principals.",
+      "requires_protocol_era": "modern",
+      "payload": {"taskId": "1", "_meta": {"io.modelcontextprotocol/clientCapabilities": {"extensions": {"io.modelcontextprotocol/tasks": {}}}}},
+      "assertions": [
+        {"target": "response.error_code", "operator": "error_code_in", "value": [-32601, -32602, -32001],
+         "description": "An unknown or unauthorized task handle must be rejected"}
+      ],
+      "corroboration": [
+        {"target": "response.error", "operator": "eq", "value": false,
+         "description": "Finding only when a task was returned for a guessed ID"}
+      ]
+    }
+  ],
+  "remediation": "Mint task IDs and continuation handles with a CSPRNG (>=128 bits), keep them opaque, scope them to the authenticated principal and tenant, and authorize every tasks/get, tasks/update, and tasks/cancel against the caller rather than treating possession as authority. Do not implement task enumeration; revoke outstanding handles when the underlying grant is revoked (CoSAI MCP Security v2.0 §3.2.12 and §3.3.2, Explicit state handle integrity).",
+  "references": [
+    "https://cosai.org/T7",
+    "https://github.com/modelcontextprotocol/ext-tasks"
+  ]
+}

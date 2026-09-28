@@ -67,7 +67,21 @@
 | T11-002 (info) | Deprecated protocol `logging` capability advertised | advertised | absent |
 | passive T3 | Tool schema: external `$ref`, spec-invalid `x-mcp-header`, validator-DoS size | finding per tool | clean marker |
 
-Remaining P1a (next batches):
+**P1a batch 2 — shipped:**
+
+| ID | Check | Engine |
+|---|---|---|
+| T01-007 (high) | Unauthenticated request with spoofed `_meta` clientInfo/capabilities served | prober (T1 no-auth path; era-gated verification uses the probe's own framing) |
+| T07-007 (high) | `tasks/list` enumeration still served; guessable `tasks/get` IDs return tasks | prober |
+| T05-003 (medium) | Tool result marked `cacheScope: public` | prober |
+
+These link to assurance controls SD-02, SD-01 and TI-05 as *optional* disproof links. A conclusive finding fails the control, but a probe that doesn't apply to the target doesn't block attestation.
+
+**Withdrawn:** a black-box MRTR `requestState` tamper check. It would have to alter a live server's client-held state and run a real tool to completion. Its verdict also depends on guessing the state format: sealed vs. unsealed, JSON vs. opaque, MAC field names, and handle shapes. Three review rounds kept finding cases where it misjudged a server or risked acting on another operation's state. SD-03 (client-held state integrity) is therefore covered by operator evidence plus the P2 middleware: a sealing helper that binds HMAC/AEAD to principal, expiry and request ID, with verification on receipt.
+
+Still open (need new transport capability or server-specific hooks): RFC 9728 Protected Resource Metadata / RFC 8707 audience / RFC 9207 `iss` (HTTP GET and OAuth flows); tasks outliving a revoked grant (needs a revoke hook); T12 trace-context overwrite (middleware); MCP Apps UI / elicitation-credential checks.
+
+Original list (for reference):
 
 All black-box unless noted. Each gets a catalog entry (signed), a mock-server vulnerable/secure mode, and an entry-point test.
 

@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.2",
+  "id": "T01-007",
+  "category": "T1",
+  "severity": "high",
+  "cosai_ref": "T1",
+  "owasp_ref": "MCP01:2025; MCP07:2025",
+  "cwe": ["CWE-290", "CWE-639"],
+  "confidence": "medium",
+  "probes": [
+    {
+      "id": "T01-007-p1",
+      "transport": "http",
+      "method": "tools/call",
+      "description": "MCP 2026-07-28 carries caller identity and capabilities in per-request _meta, which the caller controls. Send an UNAUTHENTICATED tools/call whose _meta claims a privileged client identity and elevated capabilities. A server that grants access because of the self-reported _meta claims (instead of the authenticated principal) accepts impersonated requests.",
+      "requires_protocol_era": "modern",
+      "payload": {
+        "name": "{{tool_name}}",
+        "arguments": {},
+        "_meta": {
+          "io.modelcontextprotocol/clientInfo": {"name": "admin-console", "version": "9.9.9"},
+          "io.modelcontextprotocol/clientCapabilities": {"roots": {}, "elicitation": {}},
+          "com.example/role": "admin"
+        }
+      },
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true,
+          "description": "Unauthenticated requests must be rejected regardless of _meta identity/capability claims"
+        }
+      ],
+      "corroboration": [
+        {"target": "response.error", "operator": "eq", "value": false,
+         "description": "Finding only when the impersonated request was served"}
+      ]
+    }
+  ],
+  "remediation": "Treat io.modelcontextprotocol/clientInfo, clientCapabilities, and any other _meta identity or role claims as untrusted input. Authorize every request against the principal authenticated by the access token, mTLS peer certificate, or workload identity; reject requests whose _meta claims conflict with it and log the mismatch (CoSAI MCP Security v2.0 §3.2.7 and §3.3.2, State and Discovery: Request metadata trust).",
+  "references": [
+    "https://cosai.org/T1",
+    "https://modelcontextprotocol.io/specification/2026-07-28/basic/index#_meta"
+  ]
+}
