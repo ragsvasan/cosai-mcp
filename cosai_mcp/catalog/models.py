@@ -96,3 +96,13 @@ class ThreatDefinition:
     # Confidence (schema 1.1, additive): reporting label only — NEVER gates.
     # Defaults to MEDIUM so pre-1.1 catalog files behave identically.
     confidence: Confidence = Confidence.MEDIUM
+    # Schema 1.3 (additive, reporting only): CoSAI MCP Security v2.0 category
+    # label ("MCP-T4") and the numbered threats (1–34, §3.1) the entry tests.
+    mcp_t_ref: str = ""
+    threat_refs: tuple[int, ...] = ()
+
+    @property
+    def threat_tiers(self) -> tuple[int, ...]:
+        """v2.0 §3.1 tiers of ``threat_refs``: 1 MCP-specific (threats 1–7),
+        2 MCP-contextualized (8–15), 3 conventional (16–34)."""
+        return tuple(sorted({1 if n <= 7 else 2 if n <= 15 else 3 for n in self.threat_refs}))

@@ -15,8 +15,10 @@ THREAT_META_SCHEMA: dict = {
     "properties": {
         # 1.1 adds optional `confidence` (threat) + `corroboration` (probe).
         # 1.2 adds optional probe `requires_protocol_era` (MCP 2026-07-28).
+        # 1.3 adds optional `mcp_t_ref` + `threat_refs` (CoSAI MCP Security v2.0
+        # category label and numbered threats 1–34).
         # Older files remain valid and load unchanged (additive bumps).
-        "schema_version": {"type": "string", "enum": ["1.0", "1.1", "1.2"]},
+        "schema_version": {"type": "string", "enum": ["1.0", "1.1", "1.2", "1.3"]},
         # Standard threats: T##-###  (e.g. T01-001)
         # Adversarial threats: T##-ADV-### (e.g. T03-ADV-001)
         "id": {"type": "string", "pattern": "^T[0-9]{2}(-[A-Z]{2,5})?-[0-9]{3}$"},
@@ -39,6 +41,14 @@ THREAT_META_SCHEMA: dict = {
         "confidence": {
             "type": "string",
             "enum": ["low", "medium", "high"],
+        },
+        # Schema 1.3 additive: CoSAI MCP Security v2.0 labels (reporting only).
+        "mcp_t_ref": {"type": "string", "pattern": "^MCP-T([1-9]|1[0-2])$"},
+        "threat_refs": {
+            "type": "array",
+            "items": {"type": "integer", "minimum": 1, "maximum": 34},
+            "minItems": 1,
+            "uniqueItems": True,
         },
         # Adversarial-only optional fields
         "adversarial": {"type": "boolean"},

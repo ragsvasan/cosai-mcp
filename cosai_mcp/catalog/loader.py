@@ -164,6 +164,8 @@ def _parse_threat(
         provenance=provenance,
         mode=data.get("mode", "read-only"),
         confidence=Confidence(data.get("confidence", "medium")),
+        mcp_t_ref=data.get("mcp_t_ref", ""),
+        threat_refs=tuple(data.get("threat_refs", ())),
     )
     _assert_no_mutable_containers(threat, threat.id)
     return threat

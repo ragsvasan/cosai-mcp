@@ -75,10 +75,11 @@ class TestSchema12:
         with pytest.raises(SchemaValidationError):
             validate_threat_json(self._threat(requires_protocol_era="future"))
 
-    def test_older_schema_versions_still_load(self) -> None:
-        threats = CatalogLoader(CATALOG_ROOT).load_all()
-        versions = {t.schema_version for t in threats}
-        assert {"1.0", "1.2"} <= versions
+    @pytest.mark.parametrize("version", ["1.0", "1.1", "1.2"])
+    def test_older_schema_versions_still_validate(self, version: str) -> None:
+        doc = self._threat()
+        doc["schema_version"] = version
+        validate_threat_json(doc)
 
     def test_field_survives_subprocess_serialization(self) -> None:
         threat = CatalogLoader(CATALOG_ROOT).load_file(Path("official/T07-004.json"))

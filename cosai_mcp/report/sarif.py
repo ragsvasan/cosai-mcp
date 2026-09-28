@@ -104,6 +104,9 @@ class SarifBuilder:
         owasp_ref: str = "",
         cwe: tuple = (),
         confidence: str = "medium",
+        mcp_t_ref: str = "",
+        threat_refs: tuple = (),
+        threat_tiers: tuple = (),
     ) -> None:
         """Register a probe result.
 
@@ -142,6 +145,13 @@ class SarifBuilder:
             # otherwise-empty properties dict (only low/high carry signal).
             if confidence in ("low", "high"):
                 props["confidence"] = confidence
+            # CoSAI MCP Security v2.0 labels (schema 1.3, signed catalog).
+            if mcp_t_ref:
+                props["cosai_mcp_t"] = str(mcp_t_ref)[:16]
+            if threat_refs:
+                props["cosai_threats"] = [int(n) for n in threat_refs]
+            if threat_tiers:
+                props["cosai_threat_tiers"] = [int(n) for n in threat_tiers]
             if props:
                 rule_dict["properties"] = props
             # helpUri — standard SARIF field, points to OWASP MCP Top 10 project

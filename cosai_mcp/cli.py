@@ -2021,6 +2021,7 @@ def _build_sarif_dict(result: ScanResult) -> dict[str, Any]:
                 owasp_ref=stub.get("owasp_ref", ""),
                 cwe=stub.get("cwe", ()),
                 confidence="medium",
+                mcp_t_ref="MCP-T" + str(int(probe_result.threat_id[1:])),
             )
             continue
         builder.add_result(
@@ -2034,6 +2035,9 @@ def _build_sarif_dict(result: ScanResult) -> dict[str, Any]:
             confidence=getattr(getattr(threat, "confidence", None), "value", "medium")
             if getattr(threat, "confidence", None) is not None
             else "medium",
+            mcp_t_ref=getattr(threat, "mcp_t_ref", ""),
+            threat_refs=tuple(getattr(threat, "threat_refs", ())),
+            threat_tiers=tuple(getattr(threat, "threat_tiers", ())),
         )
 
     return builder.build()

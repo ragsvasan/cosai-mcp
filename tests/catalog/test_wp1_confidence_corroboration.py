@@ -48,11 +48,13 @@ def test_official_catalog_loads_after_resign() -> None:
     threats = CatalogLoader(CATALOG_ROOT).load_all()
     assert len(threats) >= 17
     t1 = next(t for t in threats if t.id == "T01-001")
-    assert t1.schema_version == "1.1"
+    # Upgraded to 1.3 (v2.0 labels); the 1.1 confidence/corroboration fields
+    # must survive the upgrade unchanged.
+    assert t1.schema_version == "1.3"
     assert t1.confidence == Confidence.HIGH
     assert len(t1.probes[0].corroboration) == 1
     t3 = next(t for t in threats if t.id == "T03-001")
-    assert t3.schema_version == "1.1"
+    assert t3.schema_version == "1.3"
     assert all(len(p.corroboration) >= 1 for p in t3.probes)
 
 

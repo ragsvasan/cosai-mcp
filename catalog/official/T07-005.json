@@ -1,10 +1,12 @@
 {
-  "schema_version": "1.2",
+  "schema_version": "1.3",
   "id": "T07-005",
   "category": "T7",
   "severity": "medium",
   "cosai_ref": "T7",
   "owasp_ref": "MCP01:2025",
+  "mcp_t_ref": "MCP-T7",
+  "threat_refs": [27],
   "cwe": ["CWE-757"],
   "confidence": "high",
   "probes": [
