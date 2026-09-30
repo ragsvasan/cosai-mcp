@@ -218,6 +218,61 @@ class StreamableHTTPTransport(Transport):
     def set_protocol_version(self, version: str | None) -> None:
         self._protocol_version = version
 
+    @property
+    def endpoint(self) -> str:
+        """The MCP endpoint URL every JSON-RPC POST goes to."""
+        return self._endpoint
+
+    def same_origin(self, url: str) -> bool:
+        """True if *url* has the MCP endpoint's scheme, host, and port."""
+        a, b = httpx.URL(self._endpoint), httpx.URL(url)
+        return (a.scheme, a.host, a.port) == (b.scheme, b.host, b.port)
+
+    async def request_raw(
+        self,
+        method: str,
+        url: str,
+        *,
+        content: bytes | None = None,
+        headers: dict[str, str] | None = None,
+        max_bytes: int = 65_536,
+    ) -> tuple[int, dict[str, str], bytes]:
+        """Issue a non-JSON-RPC HTTP request to the SAME ORIGIN as the endpoint.
+
+        Used for RFC 9728 Protected Resource Metadata discovery. Goes through
+        the DNS-pinned client (no redirects, no proxy env); refuses any URL on
+        a different origin (locked contract: destinations are never
+        server-controlled — Mnemo dec_451b2d49f9). The body is capped at
+        *max_bytes*; returns (status, lowercase headers, body).
+        """
+        if self._client is None:
+            raise RuntimeError("Transport not connected — call connect() first")
+        if not self.same_origin(url):
+            raise ValueError("request_raw refuses cross-origin URLs")
+        req_headers = {k: v for k, v in self._build_headers().items()
+                       if k.lower() != "content-type"} if content is None else self._build_headers()
+        if headers:
+            req_headers.update(headers)
+        # Never let the server choose a decompression ratio: ask for identity,
+        # read RAW bytes under the cap, and refuse any encoded body — a
+        # gzip-of-gzip bomb would otherwise inflate before the cap is checked
+        # (adversary PRM EXPLOIT 9).
+        req_headers["Accept-Encoding"] = "identity"
+        async with self._client.stream(method, url, content=content, headers=req_headers) as resp:
+            check_redirect(resp.status_code)
+            resp_headers = {k.lower(): v for k, v in resp.headers.items()}
+            if resp_headers.get("content-encoding", "identity").strip().lower() not in (
+                "", "identity",
+            ):
+                raise ValueError("request_raw refuses content-encoded responses")
+            body = b""
+            async for chunk in resp.aiter_raw():
+                body += chunk
+                if len(body) > max_bytes:
+                    body = body[:max_bytes]
+                    break
+            return resp.status_code, resp_headers, body
+
     # ------------------------------------------------------------------
     # Transport lifecycle
     # ------------------------------------------------------------------

@@ -79,7 +79,13 @@ These link to assurance controls SD-02, SD-01 and TI-05 as *optional* disproof l
 
 **Withdrawn:** a black-box MRTR `requestState` tamper check. It would have to alter a live server's client-held state and run a real tool to completion. Its verdict also depends on guessing the state format: sealed vs. unsealed, JSON vs. opaque, MAC field names, and handle shapes. Three review rounds kept finding cases where it misjudged a server or risked acting on another operation's state. SD-03 (client-held state integrity) is therefore covered by operator evidence plus the P2 middleware: a sealing helper that binds HMAC/AEAD to principal, expiry and request ID, with verification on receipt.
 
-Still open (need new transport capability or server-specific hooks): RFC 9728 Protected Resource Metadata / RFC 8707 audience / RFC 9207 `iss` (HTTP GET and OAuth flows); tasks outliving a revoked grant (needs a revoke hook); T12 trace-context overwrite (middleware); MCP Apps UI / elicitation-credential checks.
+**OAuth discovery / audience — shipped:**
+- **Passive RFC 9728 Protected Resource Metadata check** (`cosai_mcp/wellknown.py`, SARIF `T01-100`, disproves SD-04). It runs when the server answers an unauthenticated request with HTTP 401, and uses the `WWW-Authenticate` `resource_metadata` or the well-known path.
+  - It requires `resource` to name this server and `authorization_servers` to be HTTPS.
+  - Requests are same-origin only, through the pinned transport (Mnemo `dec_451b2d49f9`). An off-origin `resource_metadata` is reported, never fetched.
+- **T01-008 (high):** a valid token issued for another resource (`--foreign-audience-token`) must be rejected. This is an optional link to AZ-06.
+
+Still open (need server-specific hooks or a full OAuth client): RFC 9207 `iss` validation (a client-side authorization-response check); tasks outliving a revoked grant (needs a revoke hook); T12 trace-context overwrite (middleware); MCP Apps UI / elicitation-credential checks.
 
 Original list (for reference):
 

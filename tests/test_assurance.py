@@ -36,7 +36,7 @@ from cosai_mcp.harness.mock_server import MockMCPServer
 from cosai_mcp.harness.result import ProbeResult
 
 CATALOG_ROOT = Path(__file__).parent.parent / "catalog"
-_PASSIVE_IDS = {"T03", "T04", "T05", "T06", "T09", "T11"}
+_PASSIVE_IDS = {"T01", "T03", "T04", "T05", "T06", "T09", "T11"}
 _SCENARIO_IDS = {"T2-SC-001", "T2-SC-002", "T6-SC-001", "T7-SC-001", "T7-SC-002"}
 _L1_MUSTS = ("TN-02", "TN-03", "TN-07", "IS-01", "IS-02")
 # Linked tests that must have RUN for the L1 MUST controls to be attestable.

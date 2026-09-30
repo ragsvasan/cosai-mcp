@@ -71,6 +71,11 @@ class ScanConfig:
     read_token: str | None = None
     """Bearer token with read-only scope.  Used by probes with ``probe_token: "read"``
     to verify that limited-scope tokens are rejected by write-capable tools."""
+    foreign_audience_token: str | None = None
+    """Bearer token that is VALID but issued for a DIFFERENT resource (RFC 8707
+    audience). Used by probes with ``probe_token: "foreign_audience"`` to verify
+    the server rejects tokens not minted for it. Set by
+    ``--foreign-audience-token``."""
     extra_request_headers: dict[str, str] | None = None
     """Extra HTTP headers added to every request in this config context.
     Used by probe_headers to inject headers like Origin for CORS testing."""

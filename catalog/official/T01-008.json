@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.3",
+  "id": "T01-008",
+  "category": "T1",
+  "severity": "high",
+  "cosai_ref": "T1",
+  "owasp_ref": "MCP01:2025; MCP07:2025",
+  "mcp_t_ref": "MCP-T1",
+  "threat_refs": [
+    8,
+    18
+  ],
+  "cwe": [
+    "CWE-287",
+    "CWE-863"
+  ],
+  "confidence": "high",
+  "probes": [
+    {
+      "id": "T01-008-p1",
+      "transport": "http",
+      "method": "tools/list",
+      "description": "List tools with a bearer token that is valid but was issued for a DIFFERENT resource (supplied via --foreign-audience-token; a short-lived JWT whose aud is not this server). tools/list needs no arguments, so a rejection can only be about the token. The server must validate the token audience (RFC 8707) and reject it; accepting it lets tokens minted for one service be replayed against another.",
+      "probe_token": "foreign_audience",
+      "payload": {},
+      "assertions": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": true,
+          "description": "A token issued for another resource must be rejected"
+        }
+      ],
+      "corroboration": [
+        {
+          "target": "response.error",
+          "operator": "eq",
+          "value": false,
+          "description": "Finding only when the foreign-audience call was served"
+        }
+      ]
+    }
+  ],
+  "remediation": "Validate the aud claim (RFC 8707 resource indicator) of every access token against this MCP server's canonical URI and reject mismatches; never accept or pass through tokens issued for other resources (CoSAI MCP Security v2.0 \u00a73.2.2 and \u00a73.3.2, Audience restriction / Token passthrough).",
+  "references": [
+    "https://cosai.org/T1",
+    "https://www.rfc-editor.org/rfc/rfc8707",
+    "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization"
+  ]
+}

@@ -1,7 +1,7 @@
 # cosai-mcp — Coverage Status
 
 **Date:** 2026-07-02
-**Build:** 1905/1905 tests passing
+**Build:** 1951/1951 tests passing
 **Catalog:** 27 signed threat definitions + 4 adversarial (Ed25519, signatures now enforced)
 **Status:** All phases P0–P13 complete. Codex P1/P2 findings resolved. ENT-P0-1/P0-3/P0-4 (catalog-hash pin, signed compliance mapping, fleet scanning) shipped — see [docs/ENTERPRISE_REQUIREMENTS_2026-07-01.md](ENTERPRISE_REQUIREMENTS_2026-07-01.md).
 
@@ -30,7 +30,7 @@ Full T4/T9/T12 coverage still requires middleware instrumentation inside the tar
 
 | # | Category | Engine | Catalog entries | Status |
 |---|----------|--------|----------------|--------|
-| T1 | Improper Authentication | Black-box prober | T01-001–004 | **Done** — missing auth, cross-session token, token replay (jti), DPoP binding; `_meta` identity/capability spoofing (T01-007, MCP 2026-07-28) |
+| T1 | Improper Authentication | Black-box prober | T01-001–004 | **Done** — missing auth, cross-session token, token replay (jti), DPoP binding; `_meta` identity/capability spoofing (T01-007, MCP 2026-07-28); RFC 8707 audience restriction (T01-008, needs `--foreign-audience-token`); RFC 9728 Protected Resource Metadata discovery (passive, same-origin only) |
 | T2 | Missing Access Control | Black-box + stateful harness | T02-001, T02-003 | **Done** — privilege scope probe; destructive one-shot (T02-003); stateful privilege escalation chain + confused deputy |
 | T3 | Input Validation Failures | Black-box prober + passive schema scan | T03-001, T03-002, `_scan_manifest_t3_schema` | **Done** — command injection, path traversal, SQL injection, null bytes, oversized payloads; passive tool-schema hygiene (external `$ref`, spec-invalid `x-mcp-header`, validator-DoS schema size — MCP 2026-07-28) |
 | T4 | Data/Control Boundary | Black-box prober (passive) + Middleware | — | **Done** — passive manifest scan wired into `_run_scan`; `ToolPoisoningDetector` + `ResponseBoundaryGuard` for full response-path coverage |
@@ -81,7 +81,7 @@ Requires `--adversarial --i-own-this-target`. Blocked against RFC1918 and loopba
 
 ## Test Suite
 
-**1905 tests passing** across:
+**1951 tests passing** across:
 
 | Module | What |
 |--------|------|

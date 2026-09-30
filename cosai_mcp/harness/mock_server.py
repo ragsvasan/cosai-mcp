@@ -47,7 +47,30 @@ class _MCPHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         pass  # suppress noisy output in tests
 
+    def do_GET(self) -> None:
+        """Serve configured well-known documents (RFC 9728 PRM); else 404."""
+        mock = self.server.mock_server
+        with mock._log_lock:
+            mock._get_log.append(self.path)
+        doc = mock._well_known.get(self.path)
+        if doc is None:
+            self._send_json(404, {"error": "not found"})
+        else:
+            self._send_json(200, doc)
+
     def do_POST(self) -> None:
+        # Bearer enforcement (RFC 9728 / RFC 8707 tests): reject before parsing.
+        mock = self.server.mock_server
+        if mock._require_bearer is not None:
+            auth = self.headers.get("Authorization", "")
+            ok = (auth.startswith("Bearer ") and len(auth) > 7) if mock._accept_any_bearer \
+                else auth == f"Bearer {mock._require_bearer}"
+            if not ok:
+                self._send_json(401, {"jsonrpc": "2.0", "id": None, "error": {
+                    "code": -32001, "message": "Unauthorized"}},
+                    extra_headers={"WWW-Authenticate": mock._www_authenticate}
+                    if mock._www_authenticate else None)
+                return
         # Finding 14: validate Content-Type before parsing body
         content_type = self.headers.get("Content-Type", "")
         if not content_type.startswith("application/json"):
@@ -89,11 +112,14 @@ class _MCPHandler(BaseHTTPRequestHandler):
             else:
                 self._send_json(status, response)
 
-    def _send_json(self, status: int, data: dict[str, Any]) -> None:
+    def _send_json(self, status: int, data: dict[str, Any],
+                   extra_headers: dict[str, str] | None = None) -> None:
         payload = json.dumps(data).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
+        for key, value in (extra_headers or {}).items():
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(payload)
 
@@ -212,6 +238,17 @@ class MockMCPServer:
         returns a task for any (guessable) ID.
     tool_cache_scope_public:
         VULNERABLE (T05-003): tool results carry ``cacheScope: "public"``.
+    require_bearer:
+        Every POST must carry ``Authorization: Bearer <require_bearer>``;
+        otherwise HTTP 401 (with ``www_authenticate`` as the challenge header).
+    accept_any_bearer:
+        VULNERABLE (T01-008): with ``require_bearer``, any bearer token is
+        accepted — no audience validation.
+    www_authenticate:
+        ``WWW-Authenticate`` header value sent with bearer rejections.
+    well_known:
+        Map of GET path → JSON document (e.g. RFC 9728 Protected Resource
+        Metadata at ``/.well-known/oauth-protected-resource/mcp``).
     unauth_http_status:
         HTTP status used for ``modern_requires_auth`` rejections (default 401;
         e.g. 400 to model servers that refuse with a generic client error).
@@ -253,7 +290,16 @@ class MockMCPServer:
         auth_exempt_discover: bool = False,
         unauth_http_status: int = 401,
         discover_error_message: str = "unavailable",
+        require_bearer: str | None = None,
+        accept_any_bearer: bool = False,
+        www_authenticate: str | None = None,
+        well_known: dict[str, Any] | None = None,
     ) -> None:
+        self._require_bearer = require_bearer
+        self._accept_any_bearer = accept_any_bearer
+        self._www_authenticate = www_authenticate
+        self._well_known: dict[str, Any] = dict(well_known or {})
+        self._get_log: list[str] = []
         self._discover_error_message = discover_error_message
         self._unauth_http_status = unauth_http_status
         self._auth_exempt_discover = auth_exempt_discover

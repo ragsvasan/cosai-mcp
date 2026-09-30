@@ -364,6 +364,13 @@ def main() -> None:
               help="Directory containing evidence.json mapping control IDs to "
                    "artifacts for organisational controls (hashed into the "
                    "scorecard as ATTESTED). Requires --assurance-level.")
+@click.option("--foreign-audience-token", "foreign_audience_token", default=None,
+              hidden=True, envvar="COSAI_FOREIGN_AUDIENCE_TOKEN",
+              help="A valid, SHORT-LIVED (<1h) JWT issued for a DIFFERENT, sacrificial "
+                   "test resource (RFC 8707 audience). It is disclosed to the server "
+                   "under test — never use a token for a real production resource. "
+                   "T01-008 asserts the server rejects it. Requires --auth-token and an "
+                   "HTTPS (or loopback) target. Without it T01-008 is INCONCLUSIVE.")
 @click.option("--report-assurance", "report_assurance", type=click.Path(), default=None,
               hidden=True,
               help="Write the per-control assurance verdicts as JSON.")
@@ -417,6 +424,7 @@ def scan(
     assurance_level: int | None,
     evidence_dir: str | None,
     report_assurance: str | None,
+    foreign_audience_token: str | None,
 ) -> None:
     """Scan a target MCP server for CoSAI threat categories T1–T12.
 
@@ -524,6 +532,7 @@ def scan(
                 ("--assurance-level", assurance_level is not None),
                 ("--evidence", bool(evidence_dir)),
                 ("--report-assurance", bool(report_assurance)),
+                ("--foreign-audience-token", bool(foreign_audience_token)),
             ) if used
         ]
         if _fleet_unsupported:
@@ -649,6 +658,7 @@ def scan(
             protocol_era=protocol_era,
             assurance_level=assurance_level,
             evidence_dir=Path(evidence_dir) if evidence_dir else None,
+            foreign_audience_token=foreign_audience_token,
         )
     except ValueError as exc:
         # Includes adversarial dual opt-in failures, a malformed
@@ -1884,13 +1894,28 @@ def _make_manifest_stubs() -> tuple[dict, dict]:
     """Build (sarif_stubs, html_stubs) for passive manifest-scan findings.
 
     Both dicts are keyed by bare category code (e.g. "T09") because that is what
-    the passive scans (_scan_manifest_t3_schema/t4/t5/t6/t9/t11) write into
+    the passive scans (wellknown PRM/_scan_manifest_t3_schema/t4/t5/t6/t9/t11) write into
     ProbeResult.threat_id. A category missing here is silently dropped from the
     SARIF/HTML report, so every passive-scan category MUST have a stub.
     """
     from cosai_mcp.catalog.models import Severity
 
     sarif: dict = {
+        "T01": {
+            # Distinct rule id: passive RFC 9728 Protected Resource Metadata check.
+            "rule_id": "T01-100",
+            "name": "T1 Authentication — Protected Resource Metadata (RFC 9728)",
+            "severity": Severity.MEDIUM,
+            "remediation": (
+                "A server that requires authentication must publish RFC 9728 "
+                "Protected Resource Metadata on its own origin (and advertise it via "
+                "the WWW-Authenticate resource_metadata parameter) whose 'resource' "
+                "is this MCP server and whose 'authorization_servers' are HTTPS. "
+                "Ref: CoSAI MCP Security v2.0 §3.3.2 (SD-04), MCP authorization."
+            ),
+            "owasp_ref": "MCP01:2025; MCP07:2025",
+            "cwe": ("CWE-287", "CWE-346"),
+        },
         "T03": {
             # Distinct rule id: T03-001 is the command-injection catalog rule.
             "rule_id": "T03-100",

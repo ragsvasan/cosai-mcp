@@ -249,6 +249,26 @@ def _probe_subprocess_entry(
                 auth_token=config.read_token,
                 auth_header=None,
             )
+        elif probe.probe_token == "foreign_audience":  # noqa: S105
+            if not config.foreign_audience_token:
+                return make_probe_result(
+                    probe_id=probe.id,
+                    threat_id=threat.id,
+                    passed=False,
+                    assertions=(),
+                    error=None,
+                    duration_seconds=0.0,
+                    inconclusive_reason=(
+                        "probe_token='foreign_audience' requires --foreign-audience-token "
+                        "(a valid token issued for a different resource); skipping "
+                        "audience-restriction probe"
+                    ),
+                ).to_dict()
+            effective_config = dataclasses.replace(
+                config,
+                auth_token=config.foreign_audience_token,
+                auth_header=None,
+            )
 
         # probe_headers are applied per-call in ProbeContext.execute_probe() via
         # override_headers — NOT merged here.  Merging into extra_request_headers

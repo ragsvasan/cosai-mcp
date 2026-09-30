@@ -507,6 +507,65 @@ def _determine_exit_code(
 # Core scan orchestration
 # ---------------------------------------------------------------------------
 
+def _validate_foreign_audience_token(token: str, target_url: str,
+                                     auth_token: str | None, *, endpoint: str) -> None:
+    """Guardrails for --foreign-audience-token (adversary PRM EXPLOITS 2/3).
+
+    The token is handed to a server under test that may be hostile, so it must
+    be a short-lived JWT for a DIFFERENT resource, never sent in cleartext to a
+    remote host; and a working --auth-token must exist so a rejection is
+    attributable to the audience, not to "any token is refused". Raises
+    ValueError (exit 2) before any request is sent. The JWT is decoded without
+    verification — only its claims' shape is checked, never trusted.
+    """
+    import base64
+    import json as _json
+    import math
+    from urllib.parse import urlparse
+
+    from cosai_mcp.wellknown import _canonical
+
+    parsed = urlparse(target_url)
+    if parsed.scheme != "https" and (parsed.hostname or "") not in (
+        "localhost", "127.0.0.1", "::1",
+    ):
+        raise ValueError("--foreign-audience-token is refused for non-HTTPS remote "
+                         "targets: the token would be sent in cleartext")
+    if not auth_token:
+        raise ValueError("--foreign-audience-token requires --auth-token (a token the "
+                         "server accepts) so a rejection can be attributed to audience")
+    parts = token.split(".")
+    try:
+        if len(parts) != 3:
+            raise ValueError
+        payload = _json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+        if not isinstance(payload, dict):
+            raise ValueError
+    except (ValueError, TypeError, RecursionError):
+        raise ValueError("--foreign-audience-token must be a JWT (header.payload.signature)"
+                         ) from None
+    aud = payload.get("aud")
+    auds = [aud] if isinstance(aud, str) else aud if isinstance(aud, list) else []
+    if not auds or not all(isinstance(a, str) and a for a in auds):
+        raise ValueError("--foreign-audience-token must carry an 'aud' claim")
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    # Normalized comparison against the target, its origin, and the actual MCP
+    # endpoint (origin + mcp_path) — case / default-port variants of this
+    # server's own audience must not pass (round-2 FIX 3).
+    own = {_canonical(u) for u in (target_url, origin, endpoint)} - {None}
+    if any(_canonical(a) in own for a in auds):
+        raise ValueError("--foreign-audience-token's 'aud' names this server — it must be "
+                         "a token for a DIFFERENT resource")
+    exp = payload.get("exp")
+    now = time.time()
+    if not isinstance(exp, (int, float)) or not math.isfinite(exp) or exp <= now:
+        raise ValueError("--foreign-audience-token must carry an unexpired 'exp'")
+    if exp - now > 3600:
+        raise ValueError("--foreign-audience-token must be short-lived (expires within 1 "
+                         "hour): it is disclosed to the server under test — use a "
+                         "sacrificial token for a test resource, never a production one")
+
+
 def _run_scan(
     *,
     target: str,
@@ -519,6 +578,7 @@ def _run_scan(
     allow_private_targets: bool = True,
     auth_token: str | None = None,
     read_token: str | None = None,
+    foreign_audience_token: str | None = None,
     mcp_path: str = "/mcp",
     adaptive: bool = True,
     profile: ServerProfile | None = None,
@@ -549,6 +609,19 @@ def _run_scan(
     scan_timestamp = datetime.datetime.now(datetime.UTC).isoformat()
     # Normalise once: every engine branch below compares the lowercase value.
     engine = engine.lower()
+
+    if foreign_audience_token is not None:
+        # Same endpoint derivation as StreamableHTTPTransport (full URL as-is,
+        # else origin + effective mcp_path).
+        _fa = urlparse(target_url)
+        _fa_path = (profile.mcp_path if profile else None) or mcp_path
+        _fa_endpoint = (
+            target_url.rstrip("/") if _fa.path not in ("", "/")
+            else f"{_fa.scheme}://{_fa.netloc}{_fa_path.rstrip('/')}/"
+        )
+        _validate_foreign_audience_token(
+            foreign_audience_token, target_url, auth_token, endpoint=_fa_endpoint,
+        )
 
     # CoSAI v2.0 assurance: validate the level and load operator evidence
     # BEFORE any probe runs — a bad manifest fails closed (ValueError → exit 2)
@@ -607,6 +680,7 @@ def _run_scan(
         probe_timeout_seconds=probe_timeout_seconds,
         auth_token=effective_auth_token,
         read_token=read_token,
+        foreign_audience_token=foreign_audience_token,
         mcp_path=effective_mcp_path,
         auth_header=effective_auth_header,
         probe_delay_seconds=probe_delay_seconds,
@@ -727,6 +801,12 @@ def _run_scan(
         # that only asserted tools/list succeeds (audit COV-02).
         if effective_categories is None or "T6" in effective_categories:
             probe_results.extend(_scan_manifest_t6(tuple(discovered_tools) if discovered_tools else ()))  # noqa: E501
+
+        # T1: RFC 9728 Protected Resource Metadata discovery (CoSAI v2.0 SD-04):
+        # same-origin GETs only, through the pinned transport (dec_451b2d49f9).
+        if effective_categories is None or "T1" in effective_categories:
+            from cosai_mcp.wellknown import scan_protected_resource_metadata
+            probe_results.extend(scan_protected_resource_metadata(target_url, config))
 
         # T3: passive tool-schema hygiene (external $ref, invalid x-mcp-header,
         # validator-DoS schema size) — MCP 2026-07-28 JSON Schema 2020-12 surface.
@@ -893,6 +973,20 @@ def _run_scan(
         # An empty manifest counts as "no tools" only if a confirming discovery
         # SUCCEEDS with zero tools; a failed/timed-out discovery keeps the
         # promotion (fail closed — round-3 FIX 6).
+        # Once the PRM check observed HTTP 401 (auth-required surface), the
+        # audience test is applicable: skipping it (no --foreign-audience-token)
+        # must not let AZ-06 be attested (adversary PRM EXPLOIT 5).
+        # (round-2 FIX 2: a supplied credential proves the auth surface exists
+        # regardless of how the target answers the unauthenticated probe.)
+        auth_required_seen = (
+            auth_token is not None or effective_auth_header is not None
+            or any(
+                r.threat_id == "T01"
+                and (r.inconclusive_reason is None
+                     or r.probe_id in ("T01-prm-5", "T01-prm-6"))
+                for r in probe_results
+            )
+        )
         no_tools = False
         if not discovered_for_assurance:
             from cosai_mcp.discovery import discover_tools_checked
@@ -902,6 +996,8 @@ def _run_scan(
             if t.probes and all(p.requires_protocol_era == "modern" for p in t.probes)
             and not (no_tools and any(p.method == "tools/call" for p in t.probes))
         ) if config.protocol_era in ("modern", "auto") else frozenset()
+        if auth_required_seen:
+            modern_only_ids = modern_only_ids | {"T01-008"}
         assurance = evaluate_assurance(
             assurance_level, probe_results, scenario_results, evidence_items,
             required_optional=modern_only_ids,
@@ -914,6 +1010,7 @@ def _run_scan(
                 "protocol_era": protocol_era,
                 "auth_token_supplied": auth_token is not None,
                 "read_token_supplied": read_token is not None,
+                "foreign_audience_token_supplied": foreign_audience_token is not None,
                 "adaptive": adaptive,
                 "stateful_method_overrides": sorted(stateful_method_overrides or {}),
                 "tool_allowlist_supplied": tool_allowlist is not None,
@@ -1494,6 +1591,7 @@ class Scanner:
         protocol_era: str = "auto",
         assurance_level: int | None = None,
         evidence_dir: Path | None = None,
+        foreign_audience_token: str | None = None,
     ) -> None:
         # Accept either a full target URL string (original form) or a ScanConfig
         # (documented public form).  When a ScanConfig is passed, its fields
@@ -1523,6 +1621,7 @@ class Scanner:
             self.protocol_era = cfg.protocol_era
             self.assurance_level = assurance_level
             self.evidence_dir = evidence_dir
+            self.foreign_audience_token = cfg.foreign_audience_token
             return
 
         self.target = target
@@ -1547,6 +1646,7 @@ class Scanner:
         self.protocol_era = protocol_era
         self.assurance_level = assurance_level
         self.evidence_dir = evidence_dir
+        self.foreign_audience_token = foreign_audience_token
 
     def run(self, categories: list[str] | None = None) -> ScanResult:
         """Run a complete scan and return a :class:`ScanResult`.
@@ -1583,6 +1683,7 @@ class Scanner:
                 protocol_era=self.protocol_era,
                 assurance_level=self.assurance_level,
                 evidence_dir=self.evidence_dir,
+                foreign_audience_token=self.foreign_audience_token,
             )
         except (ValueError, TargetUnreachableError):
             raise  # let typed exceptions propagate as-is

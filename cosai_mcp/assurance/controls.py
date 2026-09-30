@@ -130,7 +130,7 @@ CONTROLS: tuple[Control, ...] = (
         2: (S, "aud claim validation on received tokens"),
         3: (M, "RFC 8707 resource indicators; reject audience mismatch"),
         4: (M, "Resource indicators enforced globally with RFC 9728 discovery"),
-    }),
+    }, optional=("T01-008",)),
     _c("AZ-07", _AZ, "No token passthrough", ("MCP-T1", "MCP-T2"), {
         2: (M, "Never forward tokens issued for the MCP server to upstream APIs"),
         3: (M, "Downstream auth only via RFC 8693 token exchange"),
@@ -313,7 +313,7 @@ CONTROLS: tuple[Control, ...] = (
         2: (S, "Support server/discover and RFC 9728 Protected Resource Metadata"),
         3: (M, "Implement server/discover and Protected Resource Metadata"),
         4: (M, "Discovery and OIDC validation with centralized policy"),
-    }),
+    }, probes=("T01",)),  # passive RFC 9728 PRM check (cosai_mcp.wellknown)
     _c("SD-05", _SD, "Elicitation security", ("MCP-T4", "MCP-T9"), {
         2: (S, "Treat elicitation as untrusted; no credentials via form mode"),
         3: (M, "Input-required flows isolated from privileged tool invocation"),

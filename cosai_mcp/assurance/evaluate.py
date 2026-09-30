@@ -36,6 +36,11 @@ from cosai_mcp.assurance.models import (
     Verdict,
 )
 
+# Passive checks that ALWAYS emit a result whenever they run (the RFC 9728 PRM
+# check, "T01"): their absence means the check was skipped, so it is required
+# like any catalog probe (adversary PRM EXPLOIT 4).
+_ALWAYS_EMITTING_PASSIVE: frozenset[str] = frozenset({"T01"})
+
 # Passive manifest scans emit bare category IDs ("T06") and only when the
 # manifest is non-empty, so their ABSENCE is not proof a test was skipped —
 # but a present, inconclusive passive result is.
@@ -122,7 +127,10 @@ def _control_verdict(
     # surface (e.g. modern-only probes on a modern target), so an era pin or
     # category filter cannot manufacture "not applicable" (batch-2 EXPLOIT 7).
     promoted = set(control.optional_probes) & required_optional
-    required_to_run = {i for i in linked if not _PASSIVE_ID.match(i)} | promoted
+    required_to_run = (
+        {i for i in linked if not _PASSIVE_ID.match(i) or i in _ALWAYS_EMITTING_PASSIVE}
+        | promoted
+    )
     skipped = sorted(set(control.optional_probes) - ran - promoted)
     if skipped:
         skipped_note = (f" Optional disproof test(s) not conclusively run in this scan: "
