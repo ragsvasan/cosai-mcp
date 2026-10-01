@@ -52,6 +52,7 @@ class AuditEntry:
     timestamp_utc: float    # time.time() — Unix epoch, UTC
     prev_hash: str          # SHA-256 of previous entry's chain_hash ("0"*64 for first)
     chain_hash: str         # SHA-256(prev_hash + canonical_json(this entry minus chain_hash))
+    event: dict[str, Any] | None = None   # readable security-event fields (never raw params)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -63,6 +64,7 @@ class AuditEntry:
             "timestamp_utc": self.timestamp_utc,
             "prev_hash":    self.prev_hash,
             "chain_hash":   self.chain_hash,
+            **({"event": self.event} if self.event is not None else {}),
         }
 
     @classmethod
@@ -76,6 +78,7 @@ class AuditEntry:
             timestamp_utc=d["timestamp_utc"],
             prev_hash=d["prev_hash"],
             chain_hash=d["chain_hash"],
+            event=d.get("event"),
         )
 
 
@@ -89,6 +92,20 @@ def _params_digest(params: dict[str, Any]) -> str:
     """Deterministic SHA-256 digest of params — sorted keys, compact JSON."""
     canonical = json.dumps(params, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return _sha256(canonical)
+
+
+def _clean_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return "".join(c if c.isprintable() else "?" for c in value[:256])
+    if isinstance(value, (list, tuple)):
+        return [_clean_value(v) for v in list(value)[:32]]
+    if isinstance(value, (bool, int, float)) or value is None:
+        return value
+    return _clean_value(str(value))
+
+
+def _clean_event(event: dict[str, Any]) -> dict[str, Any]:
+    return {_clean_value(str(k))[:64]: _clean_value(v) for k, v in list(event.items())[:16]}
 
 
 def _compute_chain_hash(entry_without_hash: dict[str, Any]) -> str:
@@ -134,6 +151,7 @@ class AuditLogger:
         session_id: str,
         params: dict[str, Any] | None = None,
         parent_id: str | None = None,
+        event: dict[str, Any] | None = None,
     ) -> str:
         """Append one audit entry and return its entry_id.
 
@@ -148,6 +166,12 @@ class AuditLogger:
             storing sensitive argument values in the log).
         parent_id:
             entry_id of the parent call for DAG edge construction.
+        event:
+            Optional security-event fields stored READABLY (and covered by the
+            chain hash) for incident response — e.g. the authenticated subject
+            and a fixed failure label. Only middleware-generated or
+            authenticated values; never raw tool parameters. Strings are
+            stripped of non-printable characters and capped.
 
         Returns
         -------
@@ -157,6 +181,7 @@ class AuditLogger:
         """
         entry_id = str(uuid.uuid4())
         digest = _params_digest(params or {})
+        clean_event = _clean_event(event) if event is not None else None
         now = time.time()
 
         with self._lock:
@@ -172,6 +197,8 @@ class AuditLogger:
                 "timestamp_utc": now,
                 "prev_hash":     prev,
             }
+            if clean_event is not None:
+                partial["event"] = clean_event
             chain_hash = _compute_chain_hash(partial)
             partial["chain_hash"] = chain_hash
 

@@ -150,6 +150,9 @@ def decode_header_value(value: str) -> str:
     return value
 
 
+NAME_BEARING_METHODS = frozenset(_NAME_BEARING_METHODS)
+
+
 def mcp_name_for(method: str, params: dict[str, Any]) -> str | None:
     """Return the body value mirrored into ``Mcp-Name`` for *method*, if any."""
     field = _NAME_BEARING_METHODS.get(method)
@@ -166,11 +169,14 @@ def request_metadata_headers(
     headers = {HEADER_PROTOCOL_VERSION: version, HEADER_METHOD: method}
     name = mcp_name_for(method, params)
     if name is not None:
-        headers[HEADER_NAME] = encode_header_value(name)
+        try:
+            headers[HEADER_NAME] = encode_header_value(name)
+        except UnicodeEncodeError:
+            pass   # lone surrogate in a hostile name: send without Mcp-Name
     return headers
 
 
-def _header_param_value(value: Any) -> str | None:
+def _header_param_value(value: Any, *, strict: bool = False) -> str | None:
     if value is None:
         return None
     if isinstance(value, bool):
@@ -180,11 +186,17 @@ def _header_param_value(value: Any) -> str | None:
             return None
         return str(value)
     if isinstance(value, str):
-        return encode_header_value(value)
+        try:
+            return encode_header_value(value)
+        except UnicodeEncodeError:
+            if strict:
+                raise
+            return None
     return None
 
 
-def x_mcp_param_headers(input_schema: Any, arguments: Any) -> dict[str, str]:
+def x_mcp_param_headers(input_schema: Any, arguments: Any, *,
+                        strict: bool = False) -> dict[str, str]:
     """Return ``Mcp-Param-{name}`` headers for ``x-mcp-header`` annotations.
 
     Only annotations reachable from the schema root through a chain of
@@ -198,8 +210,30 @@ def x_mcp_param_headers(input_schema: Any, arguments: Any) -> dict[str, str]:
     scanner must instead *see* hostile tool definitions, so the tool stays in
     the manifest and is probed; only the invalid header is withheld.
     """
-    if not isinstance(input_schema, dict) or not isinstance(arguments, dict):
+    if not isinstance(arguments, dict):
         return {}
+    headers: dict[str, str] = {}
+    for name, path in x_mcp_header_annotations(input_schema):
+        node: Any = arguments
+        for step in path:
+            if not isinstance(node, dict) or step not in node:
+                node = None
+                break
+            node = node[step]
+        encoded = _header_param_value(node, strict=strict)
+        if encoded is not None:
+            headers[HEADER_PARAM_PREFIX + name] = encoded
+    return headers
+
+
+def x_mcp_header_annotations(input_schema: Any) -> list[tuple[str, tuple[str, ...]]]:
+    """Valid ``x-mcp-header`` annotations as (header name, property path).
+
+    Valid = reachable through ``properties`` chains, RFC 9110 token name,
+    case-insensitively unique, primitive (optionally nullable) target type.
+    """
+    if not isinstance(input_schema, dict):
+        return []
 
     annotations: list[tuple[str, tuple[str, ...], Any]] = []
 
@@ -220,7 +254,7 @@ def x_mcp_param_headers(input_schema: Any, arguments: Any) -> dict[str, str]:
     _walk(input_schema, (), 0)
 
     seen: set[str] = set()
-    headers: dict[str, str] = {}
+    valid: list[tuple[str, tuple[str, ...]]] = []
     for name, path, typ in annotations:
         lowered = name.lower()
         if not _TOKEN_RE.match(name) or lowered in seen:
@@ -232,16 +266,8 @@ def x_mcp_param_headers(input_schema: Any, arguments: Any) -> dict[str, str]:
             typ = non_null[0] if len(non_null) == 1 else None
         if typ not in ("string", "integer", "boolean"):
             continue
-        node: Any = arguments
-        for step in path:
-            if not isinstance(node, dict) or step not in node:
-                node = None
-                break
-            node = node[step]
-        encoded = _header_param_value(node)
-        if encoded is not None:
-            headers[HEADER_PARAM_PREFIX + name] = encoded
-    return headers
+        valid.append((name, path))
+    return valid
 
 
 # ---------------------------------------------------------------------------
