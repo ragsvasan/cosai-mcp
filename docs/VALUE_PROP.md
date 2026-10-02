@@ -95,6 +95,46 @@ cosai-mcp's value is not "another scanner." It is the **runnable reference imple
 
 This is conformance you can verify, not a dashboard you have to believe.
 
+### The CoSAI v2.0 §3.3.5 automated verifier
+
+CoSAI MCP Security v2.0 (September 2026) turns the T1–T12 taxonomy into four
+Security Assurance Profiles (L1 Sandbox → L4 Regulated) across eight control
+dimensions, and §3.3.5 calls for automated verification of a deployment against
+a claimed level. cosai-mcp is that verifier:
+
+- `cosai scan TARGET --assurance-level N` evaluates every §3.3.2 control at the
+  claimed level and signs the per-control verdicts, the level result, the
+  effective scan scope and the evidence hashes into the scorecard.
+- It is honest about what black-box testing can establish. Probes can
+  **disprove** a control (any conclusive finding is FAIL, which evidence cannot
+  override) but **prove** one only where a probe asserts a positive rejection
+  signal (today TN-04, up to L3) — and only when every linked test actually
+  ran conclusively and no evidence was supplied for that control (evidence
+  makes it ATTESTED). Everything else is ATTESTED from hashed operator
+  evidence and caps the result at `met_with_attestation` — never presented
+  as PASS.
+- [docs/EVIDENCE_PER_LEVEL.md](EVIDENCE_PER_LEVEL.md) — generated from the same
+  control catalog the verifier uses — answers v2.0 open question #4 (what
+  evidence demonstrates each control at each level) and names the reference
+  middleware (cosai-mcp `middleware`; mcp-armor `EnvelopeEngine` /
+  `explicit_state` — opt-in, behind ArmorMiddleware, not yet in a released
+  version) an operator can deploy and cite.
+- It speaks both protocol eras: MCP 2026-07-28 (stateless, `server/discover`,
+  per-request `_meta`, routing headers) and the 2024-11-05 → 2025-11-25
+  `initialize` handshake, without ever downgrading a modern server.
+
+Proposed upstream contribution to `cosai-oasis`: the evidence-per-level annex
+and the machine-readable control catalog as a reference implementation of
+§3.3. (Prepared here; submission is a maintainer action.)
+
+### Roadmap — post-quantum signing (not implemented)
+
+v2.0 flags harvest-now-forge-later risk for long-lived signed artifacts. Planned,
+not shipped: ML-DSA (FIPS 204) signatures on the official catalog and
+scorecards alongside Ed25519 (dual-signed during transition), and hybrid
+X25519 + ML-KEM-768 for any future encrypted evidence transport. Today every
+signature in cosai-mcp is Ed25519 (plus optional Sigstore/Fulcio).
+
 ---
 
 ## Full Capability Matrix
