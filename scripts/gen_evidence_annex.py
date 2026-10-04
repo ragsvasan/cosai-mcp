@@ -53,12 +53,13 @@ REFERENCE_IMPL: dict[str, str] = {
     "SD-03": "cosai-mcp `middleware.state.RequestStateSealer`; mcp-armor "
              "`explicit_state.RequestStateSealer` (not yet in a released version)",
     "LO-01": "cosai-mcp `telemetry.ocsf.build_mcp_api_activity` (OCSF 6003, "
-             "keyed parameter digests); hash-chained `middleware.audit.AuditLogger`",
+             "keyed parameter digests); hash-chained `middleware.audit.AuditLogger`; "
+             "mcp-armor `ocsf.build_mcp_api_activity` (not yet in a released version)",
     "LO-02": "cosai-mcp `telemetry.ocsf.build_mcp_api_activity` "
              "(`cosai_agentic.delegation_path`)",
     "LO-03": "cosai-mcp / mcp-armor `tracecontext` (canonical traceparent, "
              "identity-free bounded baggage, client trace id preserved)",
-    "LO-04": "cosai-mcp `telemetry.ocsf.build_mcp_api_activity` "
+    "LO-04": "cosai-mcp / mcp-armor `build_mcp_api_activity` "
              "(`unmapped.cosai_agentic`)",
 }
 

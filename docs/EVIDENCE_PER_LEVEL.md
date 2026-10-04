@@ -348,7 +348,7 @@ MCP threats: MCP-T12
 - **L4 MUST** — Immutable, tamper-evident logging of all interactions
 
 Scanner: no black-box signal — evidence only.
-Reference implementation: cosai-mcp `telemetry.ocsf.build_mcp_api_activity` (OCSF 6003, keyed parameter digests); hash-chained `middleware.audit.AuditLogger`.
+Reference implementation: cosai-mcp `telemetry.ocsf.build_mcp_api_activity` (OCSF 6003, keyed parameter digests); hash-chained `middleware.audit.AuditLogger`; mcp-armor `ocsf.build_mcp_api_activity` (not yet in a released version).
 
 ### LO-02 — Delegation chain logging
 
@@ -381,7 +381,7 @@ MCP threats: MCP-T12
 - **L4 MUST** — Mandatory agentic fields correlated in SIEM
 
 Scanner: no black-box signal — evidence only.
-Reference implementation: cosai-mcp `telemetry.ocsf.build_mcp_api_activity` (`unmapped.cosai_agentic`).
+Reference implementation: cosai-mcp / mcp-armor `build_mcp_api_activity` (`unmapped.cosai_agentic`).
 
 ### LO-05 — Monitoring and alerting
 

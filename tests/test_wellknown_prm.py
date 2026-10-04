@@ -141,7 +141,6 @@ def _jwt(aud: Any = "https://other-api.example/", exp_in: float = 600.0) -> str:
     return f"{b64({'alg': 'RS256'})}.{b64({'aud': aud, 'exp': time.time() + exp_in})}.sig"
 
 
-FOREIGN = _jwt()
 
 
 def _t01_008(mock_kwargs: dict[str, Any], foreign: str | None) -> list[Any]:
@@ -157,11 +156,11 @@ def _t01_008(mock_kwargs: dict[str, Any], foreign: str | None) -> list[Any]:
 
 
 def test_foreign_audience_token_rejected_passes() -> None:
-    assert all(r.passed is True for r in _t01_008({}, FOREIGN))
+    assert all(r.passed is True for r in _t01_008({}, _jwt()))
 
 
 def test_foreign_audience_token_accepted_is_a_finding() -> None:
-    results = _t01_008({"accept_any_bearer": True}, FOREIGN)
+    results = _t01_008({"accept_any_bearer": True}, _jwt())
     assert all(r.passed is False and r.inconclusive_reason is None and r.error is None
                for r in results), results
 
@@ -203,7 +202,7 @@ def test_exploit_t01_008_invalid_params_is_not_pass() -> None:
     """T01-008 uses tools/list: a server that accepts the foreign token cannot
     hide behind an argument-validation error."""
     bad_args = {"jsonrpc": "2.0", "id": 0, "error": {"code": -32602, "message": "missing args"}}
-    results = _t01_008({"accept_any_bearer": True, "tools_call_response": bad_args}, FOREIGN)
+    results = _t01_008({"accept_any_bearer": True, "tools_call_response": bad_args}, _jwt())
     assert all(r.passed is False and r.inconclusive_reason is None for r in results), results
 
 
@@ -213,7 +212,7 @@ def test_exploit_t01_008_invalid_params_is_not_pass() -> None:
     (_jwt(aud="http://127.0.0.1:9"), "http://127.0.0.1:9", "good", "names this server"),
     (_jwt(exp_in=-10), "http://127.0.0.1:9", "good", "unexpired"),
     (_jwt(exp_in=86400), "http://127.0.0.1:9", "good", "short-lived"),
-    (FOREIGN, "http://127.0.0.1:9", None, "requires --auth-token"),
+    (_jwt(), "http://127.0.0.1:9", None, "requires --auth-token"),
 ], ids=["not-jwt", "no-aud", "aud-is-target", "expired", "long-lived", "no-auth-token"])
 def test_exploit_foreign_token_garbage_is_inconclusive(
     token: str, target: str, auth: str | None, match: str,
@@ -226,7 +225,7 @@ def test_exploit_foreign_token_garbage_is_inconclusive(
 def test_exploit_foreign_token_refused_over_plain_http() -> None:
     with pytest.raises(ValueError, match="cleartext"):
         Scanner("http://mcp.example.com/mcp", categories=["T1"], engine="prober",
-                auth_token="good", foreign_audience_token=FOREIGN).run()
+                auth_token="good", foreign_audience_token=_jwt()).run()
 
 
 def test_exploit_sd04_absent_prm_not_attested() -> None:
